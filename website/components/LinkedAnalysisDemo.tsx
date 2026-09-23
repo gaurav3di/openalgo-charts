@@ -1,41 +1,44 @@
 import React from 'react';
 import RunnableExample from './RunnableExample';
+import { STOCK_BARS_SOURCE } from './synthetic-market';
 
-const code = `el.style.cssText += ';display:flex;flex-direction:column';
+const code = `${STOCK_BARS_SOURCE}
+el.style.cssText += ';display:flex;flex-direction:column';
 const controls = document.createElement('div');
 controls.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;padding:8px;font:12px system-ui,sans-serif;flex-shrink:0';
 const grid = document.createElement('div');
 grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr));grid-auto-rows:minmax(0,1fr);flex:1;min-height:0';
 const note = document.createElement('p');
-note.style.cssText = 'margin:6px 10px;font:12px system-ui,sans-serif;color:#94a3b8;flex-shrink:0';
-note.textContent = 'Synthetic bars and sample events. Drawings share time anchors; each chart computes its own volume study.';
+note.style.cssText = 'margin:6px 10px;font:12px system-ui,sans-serif;color:var(--oac-muted);flex-shrink:0';
+note.textContent = 'Simulated stock candles. Drawings share time anchors; each chart computes its own volume study.';
 el.append(controls, grid, note);
-const bars = lib.generateBars(1700000000, 100, 3600);
-const charts = [0, 1].map(index => {
+const bars = stockBars(1700000000, 100, 3600, 100, 245, 0.006, 1600);
+const hosts = [0, 1].map(() => {
   const host = document.createElement('div');
   host.style.cssText = 'min-width:0;min-height:0;height:100%';
   grid.appendChild(host);
+  return host;
+});
+const charts = hosts.map(host => {
   const widget = lib.createWidget(host, { symbol:'SAMPLE', exchange:'DEMO', interval:'1h',
-    persist:false, topbar:false, statusline:false, rail:false, timeNavigator:false });
+    persist:false, topbar:false, statusline:false, rail:false, timeNavigator:false,
+    navigation:{ defaultVisibleBars:bars.length } });
   widget.series.setData(bars);
-  widget.chart.timeScale.fitContent(bars.length);
   return widget;
 });
-const [first, second] = charts;
+const first = charts[0];
 const drawings = new lib.DrawingLinkGroup({ enabled:true });
-const views = lib.createLinkGroup({ crosshair:true, viewport:true, appearance:true });
+const views = lib.createLinkGroup({ crosshair:true, viewport:true });
 for (const widget of charts) {
   drawings.add(widget.chart, widget.draw);
-  views.add(widget.chart, { appearance: {
-    read: () => lib.readChartSettings(widget.chart),
-    apply: patch => lib.applyChartSettings(widget.chart, patch),
-  } });
+  views.add(widget.chart);
 }
+for (const widget of charts) widget.chart.timeScale.fitContent(bars.length);
 function button(label, run) {
   const button = document.createElement('button');
   button.textContent = label;
   button.type = 'button';
-  button.style.cssText = 'font:inherit;padding:5px 9px;border:1px solid #455166;border-radius:4px;background:#182233;color:#e2e8f0';
+  button.style.cssText = 'font:inherit;padding:5px 9px;border:1px solid var(--oac-card-border);border-radius:4px;background:var(--oac-card);color:var(--oac-text)';
   button.addEventListener('pointerdown', e => e.stopPropagation());
   button.addEventListener('click', run);
   controls.appendChild(button);
@@ -49,23 +52,6 @@ const sync = button('Drawing sync: on', () => {
   linked = !linked; drawings.setOptions({ enabled:linked });
   sync.textContent = 'Drawing sync: ' + (linked ? 'on' : 'off');
 });
-let bright = false;
-button('Change candle colors', () => {
-  bright = !bright;
-  lib.applyChartSettings(first.chart, { 'symbol.upColor': bright ? '#60a5fa' : '#26a69a',
-    'symbol.downColor': bright ? '#fbbf24' : '#ef5350' });
-});
-first.chart.setEventMarkerOptions({ clustering:true });
-first.chart.setEventGroups([{ id:'company', label:'Company' }]);
-first.chart.setEvents([
-  { id:'demo-results', time:bars[70].time, type:'earnings', label:'E', group:'company',
-    title:'Sample results', details:'Synthetic event data for this example.' },
-  { id:'demo-call', time:bars[70].time + 60, type:'news', label:'N', group:'company',
-    title:'Sample investor call', details:{ summary:'Select each event in the clustered marker.',
-      fields:[{ label:'Source', value:'Example data' }] } },
-]);
-let eventsVisible = true;
-button('Toggle sample events', () => first.chart.setEventGroupVisible('company', eventsVisible = !eventsVisible));
 first.draw.add({ tool:'anchored-vwap', paneIndex:0, style:{ color:'#fbbf24', lineWidth:2 },
   points:[{ time:bars[20].time, price:bars[20].close }] });
 first.draw.add({ tool:'fixed-range-volume-profile', paneIndex:0, style:{ color:'#60a5fa' },
@@ -75,5 +61,5 @@ return { destroy() { drawings.destroy(); views.destroy(); charts.forEach(widget 
 
 export default function LinkedAnalysisDemo() {
   return <div className="oac-linked-analysis"><RunnableExample code={code} tiers={['widget', 'draw']} height={540}
-    caption="Click a tool, then place anchors on the left chart. Drag a drawing to move it on both charts. Click the event count near the time axis to read sample event details." /></div>;
+    caption="Click Anchor VWAP or Range profile, then place anchors on the left chart. Drag a drawing to move it on both charts; crosshair and viewport are linked too. Turn drawing sync off to compare independent edits." /></div>;
 }

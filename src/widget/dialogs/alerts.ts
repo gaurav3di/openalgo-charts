@@ -113,6 +113,7 @@ export function mountAlertEditor(ctx: WidgetContext, anchor?: HTMLElement, opts:
     if (closed) return;
     closed = true;
     for (const dispose of off.splice(0)) dispose();
+    form?.destroy();
     panel?.close();
     opts.onClose?.();
   }
@@ -145,6 +146,7 @@ export function mountAlertEditor(ctx: WidgetContext, anchor?: HTMLElement, opts:
     availability.textContent = alertSourceFields(ctx, draft).hint ?? '';
   }
   function render(): void {
+    form?.destroy();
     const selection = alertSourceFields(ctx, draft);
     const schema = alertSettingsSchema(selection.source, draft.condition as AlertCondition | undefined);
     for (const field of schema) if (!(field.key in draft)) draft[field.key] = field.default;
@@ -154,7 +156,7 @@ export function mountAlertEditor(ctx: WidgetContext, anchor?: HTMLElement, opts:
     // Keep the host's schema translation and help while naming the draft's zone.
     if (expiryControl) expiryControl.label += ` (${expiryZone})`;
     form = renderForm(fields, [...selection.controls, ...controls], {
-      idPrefix: formId, values: draft, translate: ctx.translate, preserveInvalidNumbers: true,
+      idPrefix: formId, values: draft, translate: ctx.translate, openOverlay: ctx.openOverlay, preserveInvalidNumbers: true,
       onChange: (key, value) => {
         draft = { ...draft, ...form.values(), [key]: value };
         if (key === 'enabled') enabledChanged = true;

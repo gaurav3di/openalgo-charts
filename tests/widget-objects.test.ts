@@ -126,7 +126,7 @@ describe('mountObjectsPanel', () => {
   it('shows object state and exposes only supported actions, protecting the primary source', () => {
     const r = rig();
     const panel = mountObjectsPanel(r.ctx);
-    expect(names(panel.el)).toEqual(['Primary price', 'Trend line', 'Open interest', 'Session profile']);
+    expect(names(panel.el)).toEqual(['Primary price', 'Trend line', 'Session profile', 'Open interest']);
     expect(row(panel.el, indicator.id).textContent).toContain('Pane 2');
     expect(row(panel.el, indicator.id).textContent).toContain('Hidden');
     expect(row(panel.el, indicator.id).textContent).toContain('Loading');
@@ -144,7 +144,7 @@ describe('mountObjectsPanel', () => {
     for (const [query, expected] of [
       ['TREND', ['Trend line']], ['indicator', ['Open interest']],
       ['pane 2', ['Open interest']], ['session profile', ['Session profile']],
-      ['absent', []], ['  ', ['Primary price', 'Trend line', 'Open interest', 'Session profile']],
+      ['absent', []], ['  ', ['Primary price', 'Trend line', 'Session profile', 'Open interest']],
     ] as const) {
       search.value = query;
       fire(search, 'input');
@@ -217,7 +217,7 @@ describe('mountObjectsPanel', () => {
       ['lock', drawing.id, true], ['lock', drawing.id, false],
       ['settings', drawing.id, undefined], ['focus', drawing.id, undefined], ['remove', drawing.id, undefined],
     ]);
-    expect(names(panel.el)).toEqual(['Primary price', 'Open interest', 'Session profile']);
+    expect(names(panel.el)).toEqual(['Primary price', 'Session profile', 'Open interest']);
   });
 
   it.each(['false', 'throw'] as const)('reports a refused action (%s) without optimistic changes', failure => {

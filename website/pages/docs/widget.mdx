@@ -12,7 +12,7 @@ import { Callout } from 'nextra/components'
 with a top bar (symbol, interval, chart type, theme, settings, indicators, objects, alerts), a drawing rail
 down the left, a status line, the dialogs behind each of those buttons, keyboard shortcuts
 with a `?` panel that lists them, and optional persistence of the layout. It is one of nine
-loadable tiers (**51.06 kB** Brotli in 2.5.2) and the only tier that supplies
+loadable tiers (**59.07 kB** Brotli in 2.5.3) and the only tier that supplies
 application controls.
 
 The drawing rail includes Anchored VWAP and fixed-range Volume Profile. They use
@@ -64,6 +64,96 @@ That promise is enforced, not stated:
 Importing the module touches no DOM either; only `createWidget` does. The module can
 therefore be imported by code that also runs on a server, and called once a container
 exists.
+
+## Data and Objects panels
+
+From 2.5.3, **Data** and **Objects** share a resizable panel beside the chart.
+The panel starts closed. On a narrow host it opens as a full-size sheet with
+keyboard focus and Escape handling. Use the panel's Close button to return to
+the chart. Its width and selected view are saved in `WidgetState.panels`.
+Older saved layouts without this field still load.
+
+```ts
+widget.openDataWindow();
+widget.openObjects();
+```
+
+Data shows the hovered candle's OHLC, volume, available open interest, and named
+study readings. Linked crosshairs update it too; leaving the chart returns to the
+latest candle. Missing readings say **Unavailable**, while actual zero stays zero.
+Shifted studies report the value drawn at that candle. The timestamp uses the
+chart's timezone. Text can be selected and copied.
+
+Objects groups rows by pane. Reorder drawings and studies with drag and drop or
+the **Earlier** and **Later** controls. Move a study using its pane selector;
+its instance ID and alert references remain intact. Select drawings and create a
+named group to show, hide, lock, or remove them together. See [Objects](/docs/objects).
+
+Set `panels: false` to retain the standalone Objects popup and omit Data from
+the toolbar. This affects the widget chrome only.
+
+## Symbol search and direct typing
+
+`symbolSearch(query)` remains a host-supplied lookup. Existing results with
+`symbol`, `exchange`, and `name` still work. Add `assetClass` to expose category
+filters, `iconUrl` for a symbol image, and `contractGroup` for an explicit list of
+futures contracts. A contract's symbol and exchange come from your lookup; the
+widget does not infer them from a ticker string.
+
+```ts
+const widget = createWidget(container, {
+  symbolSearch: async query => searchInstruments(query),
+});
+// Example result from searchInstruments:
+const match = {
+  symbol: 'NOVA FUT', exchange: 'DEMO', name: 'Nova futures', assetClass: 'Futures',
+  contractGroup: { label: 'Contracts', contracts: [
+    { symbol: 'NOVA26SEP', exchange: 'DEMO', name: 'September 2026' },
+    { symbol: 'NOVA26OCT', exchange: 'DEMO', name: 'October 2026' },
+  ] },
+};
+```
+
+Images accept HTTPS URLs or root-relative host assets. On a site hosted below a
+path prefix, include that prefix in the image URL. Late search results are ignored
+after the query, chart context, or mounted control changes.
+
+Focus the chart and type an unassigned letter to search symbols, or a digit to
+enter a timeframe. `15` means 15 minutes; explicit tokens such as `1h` work too.
+Existing shortcuts, text editors, modifier keys, drawing placement, and open
+dialogs retain their own keyboard handling. Set `typingNavigation: false` if your
+host already owns direct typing.
+
+## Study instances and colour controls
+
+The Indicators picker lists **Running studies** separately from the catalogue.
+Remove a specific running instance without removing another copy of that study.
+Colour controls share a compact palette, recent colours, and a native custom
+colour chooser. Values with alpha retain it; opacity is editable for those values.
+Unsupported colour expressions remain unchanged until the user selects a colour.
+
+## Use individual controls in your own host
+
+`AlertUi.context` exposes the same widget context used by its alert dialogs.
+Custom terminals can also supply their own `WidgetContext` and compose controls:
+
+- `readDataWindow(chart, time?, options?)` returns a snapshot without mounting DOM.
+- `mountDataWindow(context, container)` mounts selectable readings; call `destroy()`
+  when closing the panel.
+- `createObjectsPanelContent(context)` returns content without popup furniture.
+- `mountPanelDock(context, stage, options)` mounts one Data or Objects view at a
+  time. Each content factory receives its container and returns a `destroy()` handle.
+- `mountSymbolPicker(context, input, options)` supplies shared search results.
+- `mountQuickEntry(context, options)` uses the host's `enabled()` callback to decide
+  which chart owns typing. Destroy it with the chart.
+- `createColorPicker(document, options)` supports `openOverlay: context.openOverlay`
+  so its palette stays above scrolling dialogs. Dispose it on unmount. For generated
+  forms, pass the same opener to `renderForm` and call the returned `destroy()`.
+
+When styles are supplied by the host, include `WIDGET_CSS` and
+`WIDGET_COMPONENT_CSS`, then apply widget theme tokens. `createWidget` and
+`createAlertUi` include these component styles automatically, including when an
+alert-only host mounts before the first complete widget.
 
 ## Translations and host storage
 
@@ -451,13 +541,13 @@ widget: a tier loaded beside it would import its own second engine. See
 
 ## Size
 
-Budgets from `.size-limit.json` and measurements from the 2.5.2 build, decimal
+Budgets from `.size-limit.json` and measurements from the 2.5.3 build, decimal
 Brotli kB, enforced by `npm run size`:
 
 | Row | Files | Budget | Measured |
 |---|---|--:|--:|
-| Widget tier | `openalgo-charts.widget.mjs` | 51.50 kB | 51.06 kB |
-| Widget terminal | base + draw + indicators + widget | 217.00 kB | 216.67 kB |
+| Widget tier | `openalgo-charts.widget.mjs` | 60.5 kB | 59.07 kB |
+| Widget terminal | base + draw + indicators + widget | 229 kB | 227.02 kB |
 
 The widget is a tier because of these rows. A host that never calls `createWidget`
 downloads none of it, and the base engine's own budget is unchanged.

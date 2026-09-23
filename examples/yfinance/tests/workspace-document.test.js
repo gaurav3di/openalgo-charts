@@ -33,6 +33,15 @@ function layout() {
 }
 
 describe('reference workspace documents', () => {
+  it('round-trips independent information dock choices and widths', () => {
+    const original = layout();
+    original.inspection = { panel: 'data', width: 280 };
+    original.secondary.inspection = { panel: 'objects', width: 340 };
+    const saved = workspaceFromLayout(original);
+    expect(layoutFromWorkspace(saved)).toMatchObject({
+      inspection: original.inspection, secondary: { inspection: original.secondary.inspection },
+    });
+  });
   it('round-trips independent legend button sizes and defaults legacy layouts', () => {
     const original = layout();
     original.legendIconSize = 24;

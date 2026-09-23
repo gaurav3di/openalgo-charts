@@ -1,6 +1,6 @@
 import * as engine from '/dist/openalgo-charts.mjs';
 import { el, esc } from './ui.js';
-import { renderInputRows } from './indicators.js';
+import { renderInputRows, destroyInputRows } from './indicators.js';
 import { descriptionOf, exchangeOf, marketStatusReading, previousSessionClose } from './status.js';
 import { syncTimezoneFromChart } from './timezone.js';
 import { exitReplay } from './replay.js';
@@ -263,6 +263,7 @@ function settingsOwner() {
 }
 
 function discardChartSettings() {
+  destroyInputRows(el('cset-body'));
   disposeSettings?.();
   disposeSettings = null;
   el('chartset').hidden = true;

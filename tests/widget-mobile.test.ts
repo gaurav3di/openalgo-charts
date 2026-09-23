@@ -103,7 +103,7 @@ describe('mobile mode', () => {
 
     container.clientWidth = 640;
     container.rect = { left: 0, top: 0, width: 640, height: 700 };
-    ResizeObserverDouble.instances[0].fire();
+    for (const observer of ResizeObserverDouble.instances) observer.fire();
 
     expect(root.classList.contains('is-mobile')).toBe(true);
     expect(w.chart).toBe(chart);

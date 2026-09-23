@@ -145,11 +145,13 @@ for (const name of selected) {
           const after = await saved(values);
           assert.equal(after.commits, 1, `${key}: release commits exactly once`);
           const expected = before[key] + (key === 'study' ? 10 : key === 'upper' ? -5 : 5);
-          // Browser pointers can quantize CSS coordinates. Compare in pixels,
-          // since one pixel can span more than one study unit on a small pane.
+          // Browser pointers quantize CSS coordinates; price alerts then round
+          // to the demo's 0.25 tick. Account for both independent rounding steps.
           const unitsPerPixel = Math.abs((expected - before[key]) / (coordinates.targetY - coordinates.y));
-          assert.ok(Math.abs(after[key] - expected) <= unitsPerPixel + 1e-6,
-            `${key}: ${after[key]} must land within one source-axis pixel of ${expected} (${unitsPerPixel} units/px)`);
+          const halfTick = key === 'study' ? 0 : 0.125;
+          if (key !== 'study') assert.equal(after[key] * 4, Math.round(after[key] * 4), `${key}: commit must snap to the 0.25 price tick`);
+          assert.ok(Math.abs(after[key] - expected) <= unitsPerPixel + halfTick + 1e-6,
+            `${key}: ${after[key]} must land within one pointer pixel plus half a tick of ${expected} (${unitsPerPixel} units/px)`);
           for (const other of ['price', 'lower', 'upper', 'study'].filter(item => item !== key)) {
             assert.equal(after[other], before[other], `${key}: release must preserve ${other}`);
           }

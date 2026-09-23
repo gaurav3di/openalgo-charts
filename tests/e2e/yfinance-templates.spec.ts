@@ -1,10 +1,12 @@
 import { test, expect, type Page } from '@playwright/test';
 
+const ORIGIN = `http://127.0.0.1:${process.env.OAC_E2E_DEMO_PORT || '8124'}`;
+
 test.use({ viewport: { width: 1360, height: 900 }, hasTouch: true });
 test.beforeEach(async ({ page, request }) => {
-  const up = await request.get('http://127.0.0.1:8124/api/history?symbol=AAPL&interval=1d&period=1mo').then(r => r.ok(), () => false);
+  const up = await request.get(ORIGIN + '/api/history?symbol=AAPL&interval=1d&period=1mo').then(r => r.ok(), () => false);
   test.skip(!up, 'the yfinance fixture server is not available');
-  await page.goto('http://127.0.0.1:8124/examples/yfinance/index.html?test=1');
+  await page.goto(ORIGIN + '/examples/yfinance/index.html?test=1');
   await page.waitForFunction(() => (window as any).__oac?.app.chart && !(window as any).__oac.app.loading);
 });
 

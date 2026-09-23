@@ -168,9 +168,17 @@ export const DRAWING_STATE_VERSION = 2;
  * What `toJSON` returns and `ChartState.drawings` carries. Versioned so a 1.9.x
  * save (a bare `Drawing[]`) is recognisable and upgraded rather than misread.
  */
+/** A named set of drawing ids. A drawing belongs to at most one group. */
+export interface DrawingGroup {
+  id: string;
+  name: string;
+  members: string[];
+}
+
 export interface DrawingsDocument {
   version: 2;
   drawings: Drawing[];
+  groups?: DrawingGroup[];
 }
 
 /** A point mapped to the pane, in media px. */

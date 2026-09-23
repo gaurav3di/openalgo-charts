@@ -1,6 +1,7 @@
 import * as engine from '/dist/openalgo-charts.mjs';
 import { createChart, PaneLegend } from '/dist/openalgo-charts.mjs';
 import { attachAlerts, detachAlerts } from './alerts.js';
+import { attachInspection, detachInspection } from './inspection.js';
 import { DrawingController, DrawingLinkGroup } from '/dist/openalgo-charts.draw.mjs';
 import { el, fmt, fmtVol, UP, DOWN, chartTheme, chartMotionOptions, toast } from './ui.js';
 import { clipboardPort } from './clipboard.js';
@@ -187,6 +188,7 @@ export function closeSplit() {
   app.loading2 = false;
   app.loadFailed2 = false;
   if (app.chart2) {
+    detachInspection(app, 2);
     detachAlerts(app, 2);
     if (app.linkGroup) app.linkGroup.remove(app.chart2);
     if (app.draw2) { app.draw2.destroy(); app.draw2 = null; }
@@ -225,6 +227,7 @@ export async function restoreSecondaryLayout(saved, selected = 1) {
     app.p2 = { symbol: req.symbol, interval: req.interval, period: req.period, chartType, pfmode,
       legendIconSize: normalizeLegendIconSize(saved.legendIconSize),
       timezone: saved.state?.timezone || app.chartTimezone };
+    app.inspectionState2 = saved.inspection || { panel: null, width: 300 };
     if (Number.isFinite(saved.width)) el('pane2').style.flexBasis = Math.max(18, Math.min(78, saved.width)) + '%';
     const legacyVisible = saved.state?.series?.find(series => series.type === 'histogram')?.style?.visible !== false;
     applyVolumeSettings(2, volumeValues(saved.volumeSettings || { 'volume.visible': legacyVisible }));
@@ -256,6 +259,7 @@ export function buildChart2({ keepView = true, typeChanged = false, state } = {}
   const previous = state || app.chart2?.getState();
   const saved = previous && (keepView ? previous : stripView(previous));
   const decorations = chartDecorationsForRebuild(app.chart2);
+  detachInspection(app, 2);
   detachAlerts(app, 2);
   const dataContext = referenceDataContext(app.p2, app.chart2?.getDataContext());
   if (app.chart2) { if (app.linkGroup) app.linkGroup.remove(app.chart2); app.chart2.destroy(); }
@@ -329,6 +333,7 @@ export function buildChart2({ keepView = true, typeChanged = false, state } = {}
   });
   joinLink();
   attachTimeline(app, 2, bars2);
+  attachInspection(app, 2);
 }
 
 export async function loadPane2() {

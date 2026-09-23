@@ -17,6 +17,8 @@ import { el, inTextField } from './ui.js';
 import { attachTip } from './hover.js';
 import { openTextEditor, EDITOR_CSS } from './text-editor.js';
 import { buildLevelEditor, LEVEL_CSS } from './level-editor.js';
+import { createColorPicker, applyTokens, widgetTokens } from '/dist/openalgo-charts.widget.mjs';
+import { currentTheme, chartTheme } from './ui.js';
 
 /** Where the bar's dragged position is kept between sessions. */
 export const PROPBAR_POS_KEY = 'oa-charts-propbar';
@@ -213,6 +215,7 @@ export function mountPropertiesBar(app, anchorEl) {
   let schema = null;   // the fields shared by every selected tool
   let pinned = loadPos();
   let pop = null;      // { el, for } while a popover is open
+  let colorPickerHandle = null;
   let editor = null;   // the inline text editor while one is open
   let off = [];        // unsubscribers on the chart the bar last attached to
   let syncers = [];    // refresh each control's state from the model
@@ -313,6 +316,8 @@ export function mountPropertiesBar(app, anchorEl) {
   // ── popovers ───────────────────────────────────────────────────────────
   function closePop() {
     if (!pop) return;
+    colorPickerHandle?.destroy();
+    colorPickerHandle = null;
     pop.el.remove();
     pop = null;
   }
@@ -421,6 +426,20 @@ export function mountPropertiesBar(app, anchorEl) {
           grid.appendChild(s);
         }
         p.appendChild(grid);
+        p.classList.add('oac-widget', 'host-drawing-widget');
+        applyTokens(p, widgetTokens(chartTheme(), currentTheme()));
+        colorPickerHandle = createColorPicker(document, {
+          id: `pb-shared-${field.path.replace(/[^a-z0-9]/gi, '-')}`,
+          label: `${opts.tip || field.label} picker`, value: current(),
+          openOverlay: app.alertUi?.context.openOverlay,
+          onChange: next => apply(toggle ? { [field.path]: next, [toggle.path]: true } : { [field.path]: next }),
+        });
+        const shared = document.createElement('div');
+        shared.className = 'pb-row pb-shared-color';
+        const sharedLabel = document.createElement('span');
+        sharedLabel.textContent = 'Palette, recent and custom';
+        shared.append(sharedLabel, colorPickerHandle.el);
+        p.appendChild(shared);
         const custom = document.createElement('div');
         custom.className = 'pb-row';
         const inp = document.createElement('input');

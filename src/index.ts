@@ -21,7 +21,7 @@ export { Pane } from './core/pane';
 export { ChartObjects } from './model/chart-objects';
 export type {
   ChartObjectKind, ChartObjectCapabilities, ChartObjectSnapshot, ChartObjectDefinition,
-  ChartObjectProvider, ChartObjectDrawing, ChartObjectDrawingSource, ChartObjectsOptions,
+  ChartObjectProvider, ChartObjectDrawing, ChartObjectDrawingSource, ChartObjectDrawingGroup, ChartObjectsOptions,
 } from './model/chart-objects';
 export { darkTheme, lightTheme, DEFAULT_THEME } from './theme';
 export type { ChartTheme } from './theme';

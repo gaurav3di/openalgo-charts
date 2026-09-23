@@ -2,6 +2,45 @@
 
 All notable changes to OpenAlgo Charts.
 
+## 2.5.3
+
+2026-09-23
+
+### Added
+
+- Data and Objects share a resizable information panel. Data follows local and
+  linked crosshairs with OHLC, volume, open interest and named study readings.
+  Missing observations stay unavailable. Narrow hosts use a focused sheet.
+- Object ordering changes actual rendering. Studies can move between panes while
+  retaining their instance IDs and alert references. Named drawing groups support
+  selection, visibility, locking, deletion, undo and saved layouts.
+- Symbol search accepts asset classes, safe image URLs and explicit futures
+  contract groups. Direct typing opens symbol or timeframe entry on the focused
+  chart, while existing shortcuts and editors retain their keys.
+- The indicator picker lists running instances with individual removal controls.
+  Generated forms share compact palettes, recent colours and alpha-aware controls.
+  Nested colour popups use the host overlay stack and dispose with their forms.
+- Reusable data-window, panel-dock, search, typing and colour components, with a
+  complete component stylesheet and AlertUi.context for custom hosts.
+- The yfinance reference host demonstrates the new controls with per-pane state.
+
+### Changed
+
+- Website examples progress from simple charts to advanced integrations. Sine-wave
+  sample prices are replaced with seeded stock-like candles, pullbacks, gaps and
+  varied volume. Sample events have their own rich-detail example.
+- The website and API reference use a wider responsive layout, neutral light/dark
+  themes and shared typography. Prose stays readable while charts use the available
+  space.
+- Homepage indicator and drawing illustrations are clearer, and website links
+  include a social preview of linked anchored VWAP and volume-profile charts.
+
+Old symbol-search results and saved layouts remain valid. Optional panel state and
+named drawing groups are additive. Set panels: false for the previous Objects popup
+or typingNavigation: false when the host owns direct typing. No runtime dependencies
+or package tiers were added.
+TypeScript hosts with exhaustive `ChartObjectKind` maps must add the `group` kind.
+
 ## 2.5.2
 
 2026-09-23

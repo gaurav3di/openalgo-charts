@@ -41,12 +41,16 @@ import { mountToasts, type ToastHandle, type ToastKind, type Toaster } from './t
 import { applyTokens, themeMode, widgetTokens, type WidgetThemeName } from './tokens';
 import { injectWidgetStyles } from './styles';
 import { mountDataStatus, type DataStatusHandle } from './data-status';
-import { attachContextMenu, DIALOG_CSS, mountIndicatorSettings, mountDrawingProperties, mountAlertsPanel, type OrderRequest, type PanelHandle } from './dialogs/index';
-import { mountObjectsPanel, OBJECTS_PANEL_CSS } from './objects-panel';
+import { attachContextMenu, mountIndicatorSettings, mountDrawingProperties, mountAlertsPanel, type OrderRequest, type PanelHandle } from './dialogs/index';
+import { mountObjectsPanel, createObjectsPanelContent } from './objects-panel';
 import { mountMobile, type MobileHandle, type MobileMode } from './mobile';
 import { widgetText, type WidgetTranslator } from './localization';
-import { EventDetailsPopup, EVENT_DETAILS_CSS, type EventDetailsPopupOptions } from './event-details';
+import { EventDetailsPopup, type EventDetailsPopupOptions } from './event-details';
 import type { ChartEventClick } from 'openalgo-charts';
+import { mountDataWindow } from './data-window';
+import { mountPanelDock, sanitizePanelDockState, type PanelDockHandle, type PanelDockState } from './panel-dock';
+import { mountQuickEntry, type QuickEntryHandle } from './quick-entry';
+import { WIDGET_COMPONENT_CSS } from './component-styles';
 
 /** The intervals offered when the host names none: the registry's codes are appended. */
 export const DEFAULT_INTERVALS: readonly string[] = ['1m', '5m', '15m', '1h', '1d', '1w'];
@@ -59,6 +63,10 @@ export const STATE_KEY = 'state';
 export const WIDGET_STATE_VERSION = 1;
 
 export interface WidgetOptions extends Omit<ChartOptions, 'theme'> {
+  /** Docked Data and Objects panels. False retains the original Objects dialog. Default true. */
+  panels?: boolean;
+  /** Unclaimed letters and digits open symbol and interval entry on the focused chart. Default true. */
+  typingNavigation?: boolean;
   /** Event marker clicks open details. Set false to provide a host-owned view. */
   eventDetails?: false | EventDetailsPopupOptions;
   /** Where bars come from. Without one the chart shows what the host sets on `widget.series` itself. */
@@ -126,6 +134,8 @@ export interface WidgetState {
   theme: WidgetThemeName;
   chart: WidgetChartState;
   rail: RailPrefs | null;
+  /** Optional in older records. Width is bounded when restored. */
+  panels?: PanelDockState;
 }
 
 export interface WidgetRestoreReport {
@@ -165,6 +175,8 @@ export interface Widget {
   openIndicatorPicker(): boolean;
   /** Open the searchable object inventory. False after destruction. */
   openObjects(): boolean;
+  /** Show candle and study readings. False when panels are disabled or after destruction. */
+  openDataWindow(): boolean;
   /** Open trader alerts and their lifecycle states. False after destruction. */
   openAlerts(): boolean;
   getState(): WidgetState;
@@ -185,6 +197,7 @@ const WIDGET_ONLY_KEYS: ReadonlyArray<keyof WidgetOptions> = [
   'mobile', 'loading', 'persist', 'storage', 'locale', 'translate', 'indicators', 'symbolSearch', 'lookbackBars', 'now', 'onOrder', 'styleNonce',
   'tradingCapabilities', 'tradingMode', 'tradingLocked',
   'eventDetails',
+  'panels', 'typingNavigation',
 ];
 
 /**
@@ -304,6 +317,8 @@ class WidgetImpl implements Widget {
   private _statusline: StatuslineHandle | null = null;
   private _mobile: MobileHandle | null = null;
   private _objectsPanel: PanelHandle | null = null;
+  private _dock: PanelDockHandle | null = null;
+  private _quickEntry: QuickEntryHandle | null = null;
   private _alertsPanel: PanelHandle | null = null;
   private readonly _intervals: string[];
 
@@ -334,7 +349,7 @@ class WidgetImpl implements Widget {
     }) : null;
     const doc = options.document ?? container.ownerDocument;
     this._doc = doc;
-    injectWidgetStyles(doc, DIALOG_CSS + OBJECTS_PANEL_CSS + EVENT_DETAILS_CSS, options.styleNonce);
+    injectWidgetStyles(doc, WIDGET_COMPONENT_CSS, options.styleNonce);
 
     // ── persisted facts, before anything is built from them ────────────
     const ns = typeof options.persist === 'string' ? options.persist : 'default';
@@ -464,6 +479,17 @@ class WidgetImpl implements Widget {
       this._cleanups.push(() => eventDetails.destroy());
     }
     this._dataStatus = mountDataStatus(this.context, stage, this.dataController, () => { void this.reload(); });
+    if (options.panels !== false) {
+      this._dock = mountPanelDock(this.context, stage, {
+        data: host => mountDataWindow(this.context, host),
+        objects: host => {
+          const content = createObjectsPanelContent(this.context);
+          host.appendChild(content.element);
+          return content;
+        },
+        onChange: () => { this._bus.emit('layout', { reason: 'panels' }); this._scheduleSave(); },
+      });
+    }
     // The right-click menu is the one dialog nothing in the chrome opens, so
     // the shell subscribes it to the chart itself.
     this._cleanups.push(attachContextMenu(this.context, {
@@ -492,6 +518,7 @@ class WidgetImpl implements Widget {
         onSettings: (anchor) => this._openDialog('settings', anchor),
         onIndicators: (anchor) => this._openDialog('indicatorPicker', anchor),
         onObjects: (anchor) => this._openObjects(anchor),
+        onDataWindow: options.panels === false ? undefined : () => this._dock?.toggle('data'),
         onAlerts: (anchor) => this._openAlerts(anchor),
         settingsAvailable: () => widgetDialog('settings') !== null,
         indicatorsAvailable: () => widgetDialog('indicatorPicker') !== null,
@@ -515,6 +542,7 @@ class WidgetImpl implements Widget {
       onSettings: (anchor) => this._openDialog('settings', anchor),
       onIndicators: (anchor) => this._openDialog('indicatorPicker', anchor),
       onObjects: (anchor) => this._openObjects(anchor),
+      onDataWindow: options.panels === false ? undefined : () => this._dock?.toggle('data'),
       onAlerts: (anchor) => this._openAlerts(anchor),
       onProperties: (anchor) => this._openDialog('drawingProperties', anchor),
       settingsAvailable: () => widgetDialog('settings') !== null,
@@ -523,6 +551,14 @@ class WidgetImpl implements Widget {
 
     this._installKeys();
     this._keymap.attach(doc);
+    if (options.typingNavigation !== false) {
+      this._quickEntry = mountQuickEntry(this.context, {
+        enabled: () => !this._destroyed && this._doc.activeElement !== null
+          && this._chartEl.contains(this._doc.activeElement) && this.draw.selection().length === 0,
+        onSymbol: (symbol, exchange) => this.setSymbol(symbol, exchange),
+        onInterval: code => this.setInterval(code), search: options.symbolSearch,
+      });
+    }
     this._trackPointer();
     this._followChart();
 
@@ -538,6 +574,7 @@ class WidgetImpl implements Widget {
       }
     }
     if (saved?.rail && this._rail !== null) this._rail.restorePrefs(saved.rail);
+    if (saved?.panels) this._dock?.restore(saved.panels);
 
     if (this.dataController !== null) {
       this._cleanups.push(this.dataController.subscribe(state => this._applyData(state)));
@@ -647,6 +684,11 @@ class WidgetImpl implements Widget {
   public openIndicatorPicker(): boolean { return this._openDialog('indicatorPicker'); }
 
   public openObjects(): boolean { return this._openObjects(); }
+  public openDataWindow(): boolean {
+    if (this._destroyed || !this._dock) return false;
+    this._dock.open('data');
+    return true;
+  }
   public openAlerts(): boolean { return this._openAlerts(); }
 
   private _openAlerts(anchor?: HTMLElement): boolean {
@@ -658,6 +700,7 @@ class WidgetImpl implements Widget {
 
   private _openObjects(anchor?: HTMLElement): boolean {
     if (this._destroyed) return false;
+    if (this._dock) { this._dock.open('objects'); return true; }
     if (this._objectsPanel?.isOpen()) { this._objectsPanel.el.focus(); return true; }
     this._objectsPanel = mountObjectsPanel(this.context, anchor, { onClose: () => { this._objectsPanel = null; } });
     return true;
@@ -757,6 +800,7 @@ class WidgetImpl implements Widget {
       theme: this._themeName,
       chart: this.chart.getState(),
       rail: this._rail?.prefs() ?? null,
+      panels: this._dock?.state(),
     };
   }
 
@@ -768,6 +812,7 @@ class WidgetImpl implements Widget {
     if (state.theme === 'dark' || state.theme === 'light') this.setTheme(state.theme);
     if (typeof state.chartType === 'string' && registeredChartTypes().includes(state.chartType)) this.setChartType(state.chartType);
     if (state.rail !== undefined && this._rail !== null) this._rail.restorePrefs(state.rail);
+    if (state.panels !== undefined) this._dock?.restore(state.panels);
     const symbol = typeof state.symbol === 'string' ? state.symbol.toUpperCase() : this._symbol;
     const exchange = typeof state.exchange === 'string' ? state.exchange : this._exchange;
     const interval = typeof state.interval === 'string' && isKnownInterval(state.interval) ? state.interval : this._interval;
@@ -818,6 +863,7 @@ class WidgetImpl implements Widget {
       theme: raw.theme === 'light' ? 'light' : 'dark',
       chart: isRecord(raw.chart) ? (raw.chart as unknown as WidgetChartState) : (undefined as unknown as WidgetChartState),
       rail: isRecord(raw.rail) ? (raw.rail as unknown as RailPrefs) : null,
+      panels: sanitizePanelDockState(raw.panels),
     };
     return out;
   }
@@ -982,6 +1028,8 @@ class WidgetImpl implements Widget {
     if (this._destroyed) return;
     this._saveNow();
     this._destroyed = true;
+    this._quickEntry?.destroy();
+    this._dock?.destroy();
     this.dataController?.destroy();
     this._dataStatus.destroy();
     this._mobile?.destroy();

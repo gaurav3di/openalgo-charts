@@ -30,7 +30,8 @@ async function paint(page: Page): Promise<void> {
 async function addSample(page: Page, pane: Pane): Promise<string> {
   await page.locator(pane === 1 ? '#chart' : '#chart2').focus();
   await page.getByRole('button', { name: 'Add an indicator', exact: true }).click();
-  await page.getByRole('button', { name: SAMPLE, exact: true }).click();
+  await expect(page.locator('.oac-pick')).toHaveCount(1);
+  await page.locator(`.oac-pick__row[data-id="${SAMPLE_ID}"]`).click();
   return page.evaluate(({ pane, id }) => {
     const app = (window as unknown as DemoWindow).__oac.app;
     const studies = (pane === 1 ? app.chart : app.chart2!).indicators().filter(study => study.indicatorId === id);

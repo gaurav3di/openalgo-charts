@@ -37,6 +37,7 @@ import { initClipboard } from './clipboard.js';
 import { initMenus, openContextMenu } from './menus.js';
 import { initPersist, datasetKey, applyLayout, stripView, autosave, restorePrimarySelection, primaryLayoutSelection } from './persist.js';
 import { attachAlerts, detachAlerts } from './alerts.js';
+import { initInspection, attachInspection, detachInspection } from './inspection.js';
 import { initToolbar, renderToolbar } from './toolbar.js';
 import { initRail, buildRail, initMobile, focusChart, setMagnetMode, setStayMode } from './rail.js';
 import { initWorkspaceHost } from './workspace-host.js';
@@ -172,6 +173,7 @@ function render({ keepView = true, state } = {}) {
   if (state) decorations.legendIconSize = normalizeLegendIconSize(state.legendIconSize);
   const dataContext = referenceDataContext(app.req, app.chart?.getDataContext());
   if (app.offBranding) { app.offBranding(); app.offBranding = null; }
+  detachInspection(app);
   detachAlerts(app);
   if (app.draw) { app.draw.destroy(); app.draw = null; }
   if (app.chart) app.chart.destroy();
@@ -349,6 +351,7 @@ function render({ keepView = true, state } = {}) {
   // chart-type switch is the failure this call exists to prevent.
   joinLink();
   attachTimeline(app, 1, app.currentBars);
+  attachInspection(app);
   window.__chart = () => app.chart;
   window.__draw = () => app.draw;
   window.__chart2 = () => app.chart2;
@@ -377,6 +380,8 @@ function installWorkspace({ layout, bars }) {
   app.idxByTime.clear();
   app.currentBars.forEach((bar, index) => app.idxByTime.set(bar.time, index));
   app.activeIndicators = (layout.indicators || []).map(study => ({ ...study, settings: { ...study.settings } }));
+  app.inspectionState1 = layout.inspection || { panel: null, width: 300 };
+  app.inspectionState2 = layout.secondary?.inspection || { panel: null, width: 300 };
   applyVolumeSettings(1, layout.volumeSettings || { 'volume.visible': layout.volume !== false });
   restoreComparisons(layout, 1);
   restoreState(app.req.symbol);
@@ -550,6 +555,7 @@ el('hgrid').addEventListener('change', applyGrid);
 // price scale, so switching it back on is instant.
 el('volshow').addEventListener('change', () => setVolumeShown(el('volshow').checked, 1));
 initPersist(app);
+initInspection(app);
 
 // Escape is the overlay stack's (ui.js): one layer per press, each closed
 // through its own close control, so chart settings still revert.

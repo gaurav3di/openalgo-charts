@@ -115,6 +115,7 @@ describe('the properties bar', () => {
     const b = line(draw);
     draw.select([a.id, b.id]);
     const p = open('[data-path="style.color"][data-pop]');
+    expect(p.querySelector('.oac-color')).not.toBeNull();
     const swatches = p.querySelectorAll('.pb-grid button');
     expect(swatches.length).toBe(PALETTE.length);
     swatches.find((s) => s.getAttribute('aria-label') === '#f23645').click();

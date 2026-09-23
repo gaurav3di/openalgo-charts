@@ -33,6 +33,28 @@ expiry. New drafts start two calendar months ahead; clear the expiry for an
 indefinite alert. Saving another field preserves an existing alert's expiry.
 The editor keeps its opening timezone throughout the draft.
 
+The toolbar's **Data** and **Objects** controls open a resizable information
+dock for the selected chart. Data follows the crosshair and lists the candle
+and running study values. Objects groups sources, studies and drawings by pane
+and exposes only actions each object supports. Each chart keeps its own dock
+choice and width through rebuilds and saved layouts. A narrow chart shows the
+dock as a sheet. The host mounts the library's `mountPanelDock`,
+`mountDataWindow` and `createObjectsPanelContent` with a `ChartObjects` model;
+it does not maintain a second object tree.
+
+**Change symbol** searches the reference catalog by ticker or description.
+The catalog provides a venue or asset class only for entries with explicit
+metadata; `/api/history` supplies bars, not an instrument master. When no
+catalog match exists, a raw yfinance ticker can still be entered after the
+search finishes. The shared picker handles result selection and stale queries.
+The shared **Indicators** picker searches categories and manages each running
+instance separately. Generated chart and study settings use the shared color
+picker, including alpha-bearing values; the drawing palette also offers it.
+With a chart focused, typing a letter opens symbol entry and typing a number
+opens interval entry. Text fields, dialogs, replay, pending loads, drawing
+tools and registered shortcuts retain priority. The reference feed accepts
+only the intervals listed in its toolbar.
+
 ## Run
 
 ```bash

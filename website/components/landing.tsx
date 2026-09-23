@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
 import Link from 'next/link';
 import BtcUsdChart from './BtcUsdChart';
 
@@ -11,34 +11,12 @@ function Arrow({ diagonal = false }: { diagonal?: boolean }) {
 }
 
 function Reveal({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || !('IntersectionObserver' in window) || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    if (el.getBoundingClientRect().top < window.innerHeight) return;
-    el.dataset.reveal = 'waiting';
-    const observer = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting) {
-        el.dataset.reveal = 'visible';
-        observer.disconnect();
-      }
-    }, { threshold: 0.08 });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-  return <div ref={ref} className={`oac-reveal ${className}`}>{children}</div>;
+  return <div className={`oac-reveal ${className}`}>{children}</div>;
 }
 
 export function Hero() {
   return (
     <section className="oac-hero" aria-labelledby="hero-title">
-      <div className="oac-hero__atmosphere" aria-hidden="true">
-        <div className="oac-hero__halo" />
-        <svg className="oac-hero__trace" viewBox="0 0 1440 680" preserveAspectRatio="none">
-          <path d="M-40 610 110 560 215 578 340 463 430 491 555 370 650 396 810 238 900 284 1090 99 1190 130 1470 -15" />
-          <path d="M-40 650 130 595 240 612 350 510 475 528 590 430 710 448 870 316 990 358 1120 225 1260 230 1470 84" />
-        </svg>
-      </div>
       <div className="oac-hero__copy">
         <div className="oac-eyebrow oac-intro oac-intro--eyebrow"><span className="oac-status-dot" /> THE OPENALGO CHARTING EXPERIENCE</div>
         <h1 id="hero-title" className="oac-hero__title">
@@ -52,7 +30,6 @@ export function Hero() {
           <a className="oac-action oac-action--primary" href="#playground">Try the live chart <Arrow /></a>
           <a className="oac-action oac-action--secondary" href="#possibilities">Explore the possibilities <Arrow diagonal /></a>
         </div>
-        <p className="oac-hero__note oac-intro oac-intro--actions">Free to explore. Open source by nature.</p>
       </div>
       <BtcUsdChart />
       <div className="oac-capability-strip" aria-label="Chart capabilities">
@@ -65,34 +42,74 @@ export function Hero() {
   );
 }
 
+type MiniBar = readonly [open: number, high: number, low: number, close: number];
+
+const INDICATOR_BARS: readonly MiniBar[] = [
+  [96, 99, 94, 98], [98, 100, 95, 97], [97, 101, 96, 100], [100, 102, 97, 99],
+  [99, 103, 98, 101], [101, 104, 99, 100], [100, 102, 96, 97], [97, 100, 95, 99],
+  [99, 104, 98, 103], [103, 106, 101, 105], [105, 107, 102, 104], [104, 109, 103, 108],
+  [108, 111, 106, 110], [110, 112, 107, 109], [109, 114, 108, 113], [113, 117, 111, 116],
+  [116, 118, 112, 114], [114, 117, 111, 115],
+];
+const EMA_VALUES = [96, 97, 98, 99, 99, 99, 99, 99, 100, 101, 102, 103, 104, 105, 106, 108, 109, 110];
+const RSI_VALUES = [48, 52, 46, 54, 50, 47, 38, 44, 55, 62, 59, 68, 70, 63, 71, 76, 64, 68];
+const DRAWING_BARS: readonly MiniBar[] = [
+  [94, 98, 91, 96], [96, 99, 93, 95], [95, 100, 94, 98], [98, 101, 96, 100],
+  [100, 103, 98, 99], [99, 103, 97, 102], [102, 105, 100, 104], [104, 107, 101, 102],
+  [102, 108, 100, 106], [106, 109, 103, 107], [107, 110, 104, 105], [105, 111, 104, 109],
+  [109, 112, 106, 108], [108, 115, 107, 113], [113, 116, 110, 112], [112, 117, 110, 115],
+  [115, 118, 112, 114], [114, 119, 111, 117],
+];
+
+function miniPriceY(price: number): number { return 116 - (price - 90) * 3; }
+function miniPath(values: readonly number[], y: (value: number) => number): string {
+  return values.map((value, index) => `${index === 0 ? 'M' : 'L'}${18 + index * 18} ${y(value).toFixed(1)}`).join(' ');
+}
+function MiniCandles({ bars, muted = false }: { bars: readonly MiniBar[]; muted?: boolean }) {
+  return <g opacity={muted ? 0.7 : 1}>{bars.map(([open, high, low, close], index) => {
+    const x = 18 + index * 18;
+    const top = Math.min(miniPriceY(open), miniPriceY(close));
+    const color = close >= open ? '#31a99e' : '#e66c66';
+    return <g key={index} fill={color} stroke={color}>
+      <line x1={x} y1={miniPriceY(high)} x2={x} y2={miniPriceY(low)} strokeWidth="1.25" />
+      <rect x={x - 3.5} y={top} width="7" height={Math.max(2, Math.abs(miniPriceY(open) - miniPriceY(close)))} strokeWidth="0" />
+    </g>;
+  })}</g>;
+}
+
 function FeatureArt({ type }: { type: 'indicators' | 'drawings' | 'views' }) {
   if (type === 'indicators') return (
     <div className="oac-feature-art oac-feature-art--indicators" aria-hidden="true">
-      <span className="oac-art-label">A little more insight.</span>
+      <span className="oac-art-label">PRICE / INDICATOR STUDY</span>
       <svg viewBox="0 0 360 175" fill="none">
-        <path className="oac-art-grid" d="M0 35H360M0 80H360M0 125H360M50 0V175M130 0V175M210 0V175M290 0V175" />
-        <path className="oac-art-band" d="M0 138Q38 113 70 124T137 97T205 95T270 59T360 35L360 84Q310 104 270 106T205 136T137 139T70 164T0 170Z" />
-        <path className="oac-art-average" d="M0 154Q38 130 70 144T137 118T205 114T270 82T360 61" />
-        <path className="oac-art-signal" d="M0 152 17 144 29 149 42 126 58 139 72 131 88 148 100 124 114 129 126 110 141 119 153 98 164 106 177 100 190 120 204 103 218 111 230 87 244 96 259 67 273 84 288 60 300 69 311 46 325 56 341 41 360 47" />
-        <circle cx="311" cy="46" r="5" fill="var(--oac-accent-2)" /><circle cx="311" cy="46" r="12" stroke="var(--oac-accent-2)" opacity=".25" />
+        <path className="oac-art-grid" d="M0 28H360M0 72H360M0 116H360M0 143H360M72 0V175M144 0V175M216 0V175M288 0V175" />
+        <MiniCandles bars={INDICATOR_BARS} />
+        <path d={miniPath(EMA_VALUES, miniPriceY)} stroke="#d4ac63" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+        <line x1="0" y1="122" x2="360" y2="122" stroke="var(--oac-card-border)" />
+        <path d={miniPath(RSI_VALUES, value => 159 - (value - 30) * .62)} stroke="var(--oac-text)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        <text x="300" y="17" fill="#d4ac63" fontSize="9" fontWeight="700">EMA 20</text>
+        <text x="18" y="138" fill="var(--oac-muted)" fontSize="9" fontWeight="700">RSI 14</text>
       </svg>
-      <span className="oac-art-tag"><i /> Trend, momentum &amp; beyond</span>
+      <span className="oac-art-tag"><i /> Overlay + lower study</span>
     </div>
   );
   if (type === 'drawings') return (
     <div className="oac-feature-art oac-feature-art--drawings" aria-hidden="true">
-      <span className="oac-art-label">Room for your next idea.</span>
+      <span className="oac-art-label">DRAWING / SELECTED CHANNEL</span>
       <svg viewBox="0 0 360 175" fill="none">
-        <path className="oac-art-grid" d="M0 35H360M0 80H360M0 125H360M50 0V175M130 0V175M210 0V175M290 0V175" />
-        <path d="M45 155 300 45 300 93 45 203Z" fill="var(--oac-accent)" opacity=".07" />
-        <path d="M24 127 42 120 54 136 73 116 90 120 108 104 127 115 140 94 161 101 178 83 193 96 212 79 234 82 250 63 271 70 289 49 310 57 336 33" stroke="var(--oac-muted)" strokeWidth="1.7" opacity=".7" />
-        <path d="M46 155 300 45M46 185 300 75" stroke="var(--oac-accent)" strokeWidth="1.5" />
-        <path d="M210 0V175M0 82H360" stroke="var(--oac-accent)" strokeDasharray="3 5" opacity=".3" />
-        <circle cx="46" cy="155" r="4" fill="var(--oac-card)" stroke="var(--oac-accent)" strokeWidth="2" />
-        <circle cx="300" cy="45" r="4" fill="var(--oac-card)" stroke="var(--oac-accent)" strokeWidth="2" />
-        <path d="m213 85 3 23 5-8 9-3Z" fill="var(--oac-text)" stroke="var(--oac-card)" strokeWidth="2" />
+        <path className="oac-art-grid" d="M0 28H360M0 72H360M0 116H360M72 0V175M144 0V175M216 0V175M288 0V175" />
+        <MiniCandles bars={DRAWING_BARS} muted />
+        <path d="M35 100 330 44 330 71 35 127Z" fill="var(--oac-text)" opacity=".085" />
+        <path d="M35 100 330 44M35 127 330 71" stroke="var(--oac-text)" strokeWidth="2" strokeLinecap="round" />
+        <path d="M35 114 330 58" stroke="#d4ac63" strokeWidth="1.4" strokeDasharray="5 5" opacity=".9" />
+        <circle cx="35" cy="100" r="5" fill="var(--oac-card)" stroke="var(--oac-text)" strokeWidth="2" />
+        <circle cx="330" cy="44" r="5" fill="var(--oac-card)" stroke="var(--oac-text)" strokeWidth="2" />
+        <circle cx="35" cy="127" r="5" fill="var(--oac-card)" stroke="var(--oac-text)" strokeWidth="2" />
+        <circle cx="330" cy="71" r="5" fill="var(--oac-card)" stroke="var(--oac-text)" strokeWidth="2" />
+        <path d="m249 75 3 20 4-7 7-3Z" fill="var(--oac-text)" stroke="var(--oac-card)" strokeWidth="2" />
+        <text x="39" y="152" fill="var(--oac-muted)" fontSize="9" fontWeight="700">2 PARALLEL BOUNDARIES</text>
       </svg>
-      <span className="oac-art-tag">Trend lines · Channels · Fibonacci</span>
+      <span className="oac-art-tag"><i /> Selected channel · drag handles</span>
     </div>
   );
   return (

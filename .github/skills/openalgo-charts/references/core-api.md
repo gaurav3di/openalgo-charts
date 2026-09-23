@@ -515,3 +515,18 @@ rules in [primitives-and-plugins](primitives-and-plugins.md).
 synchronously as `branding:changed` after `setBranding`. Host-accessible links subscribe
 to this event and unsubscribe on teardown, so disabling or replacing a logo cannot leave
 an old destination in the toolbar.
+
+
+## Study movement and object order (2.5.3)
+
+`chart.moveIndicator(instanceId, paneIndex)` moves a study without replacing its
+instance ID or plot handles. Alerts keep their references and move with the study.
+`chart.reorderIndicator(instanceId, direction)` takes -1 or 1 and changes actual
+paint/legend order. Both return false for unavailable actions. Empty source study
+panes are pruned after owned visuals relocate.
+
+`ChartObjects` adds reorder(id, direction), move(id, paneIndex), canGroup(),
+createGroup(name, ids), renameGroup(id, name), and ungroup(id). Object snapshots
+can have kind group and optional groupId. Providers may add reorder/move callbacks;
+missing callbacks keep those optional capabilities unavailable. Use inventory IDs
+for ChartObjects actions and native IDs for Chart/DrawingController methods.

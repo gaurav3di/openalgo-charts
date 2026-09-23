@@ -3,7 +3,7 @@ import { fakeDom, flatBar } from './helpers.js';
 
 vi.mock('../src/feed.js', () => ({ fetchBars: vi.fn(), abortFetch: vi.fn() }));
 vi.mock('../src/toolbar.js', () => ({ renderToolbar: vi.fn(), ticon: () => '' }));
-vi.mock('../src/status.js', () => ({ setLegend: vi.fn(), barStamp: () => '' }));
+vi.mock('../src/status.js', async importOriginal => ({ ...await importOriginal(), setLegend: vi.fn(), barStamp: () => '' }));
 import { fetchBars, abortFetch } from '../src/feed.js';
 import { initReplay, enterReplay, startReplayAt, exitReplay, loadReplaySubBars } from '../src/replay.js';
 

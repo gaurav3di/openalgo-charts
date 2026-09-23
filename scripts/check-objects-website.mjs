@@ -12,7 +12,7 @@ const browser = await chromium.launch();
 async function checkBounds(widget, panel) {
   const host = await widget.boundingBox();
   const bounds = await panel.boundingBox();
-  const done = await panel.getByRole('button', { name: 'Done', exact: true }).boundingBox();
+  const done = await panel.getByRole('button', { name: 'Close', exact: true }).boundingBox();
   assert.ok(host && bounds && done);
   assert.ok(bounds.x >= host.x - 1 && bounds.x + bounds.width <= host.x + host.width + 1,
     'Objects panel must fit the chart width');
@@ -35,15 +35,15 @@ try {
       has: page.getByRole('button', { name: 'Open Objects', exact: true }),
     });
     const widget = demo.locator('.oac-widget');
-    const panel = widget.locator('.oac-objects');
+    const panel = widget.locator('.oac-panel-dock');
     const shot = name => join(output, `objects-${route.replace('/', '-')}-${name}.png`);
     const open = async () => {
       await demo.getByRole('button', { name: 'Open Objects', exact: true }).click();
       await expect(panel.getByRole('searchbox')).toBeFocused();
     };
     const close = async () => {
-      await panel.getByRole('button', { name: 'Done', exact: true }).click();
-      await expect(panel).toHaveCount(0);
+      await panel.getByRole('button', { name: 'Close', exact: true }).click();
+      await expect(panel).toBeHidden();
     };
     await expect(widget.locator('canvas').first()).toBeVisible();
     await open();

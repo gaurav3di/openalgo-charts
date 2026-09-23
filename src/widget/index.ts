@@ -28,8 +28,18 @@ export type { WidgetBuiltinMessage, WidgetMessageKey, WidgetMessageValues, Widge
 
 export { createWidget, stripView, resolveTheme, loadWindow, DEFAULT_INTERVALS, DEFAULT_LOOKBACK_BARS, SAVE_DEBOUNCE_MS, STATE_KEY, WIDGET_STATE_VERSION } from './widget';
 export type { Widget, WidgetOptions, WidgetState, WidgetChartState, WidgetRestoreReport, WidgetEventName } from './widget';
-export { mountObjectsPanel, OBJECTS_PANEL_CSS } from './objects-panel';
-export type { ObjectsPanelOptions } from './objects-panel';
+export { mountObjectsPanel, createObjectsPanelContent, OBJECTS_PANEL_CSS } from './objects-panel';
+export type { ObjectsPanelOptions, ObjectsPanelContent } from './objects-panel';
+export { readDataWindow, mountDataWindow, DATA_WINDOW_CSS } from './data-window';
+export type { DataWindowRow, DataWindowSection, DataWindowSnapshot, DataWindowOptions, DataWindowHandle } from './data-window';
+export { mountPanelDock, sanitizePanelDockState, PANEL_DOCK_CSS } from './panel-dock';
+export type { PanelDockId, PanelDockState, PanelDockContent, PanelDockOptions, PanelDockHandle } from './panel-dock';
+export { mountSymbolPicker, safeSymbolIconUrl, SYMBOL_PICKER_CSS } from './symbol-picker';
+export type { SymbolPickerOptions, SymbolPickerHandle } from './symbol-picker';
+export { mountQuickEntry, QUICK_ENTRY_CSS } from './quick-entry';
+export type { QuickEntryOptions, QuickEntryHandle } from './quick-entry';
+export { createColorPicker, COLOR_PICKER_CSS } from './color-picker';
+export type { ColorPickerOptions, ColorPickerHandle } from './color-picker';
 
 export {
   WidgetBus, WidgetStorage, STORAGE_PREFIX, defaultStorage,
@@ -68,6 +78,7 @@ export {
 export type { WidgetThemeName, WidgetTokens, Rgba } from './tokens';
 
 export { WIDGET_CSS, WIDGET_STYLE_ID, injectWidgetStyles } from './styles';
+export { WIDGET_COMPONENT_CSS } from './component-styles';
 export { mountMobile } from './mobile';
 export type { MobileMode, MobileOptions, MobileHandle } from './mobile';
 

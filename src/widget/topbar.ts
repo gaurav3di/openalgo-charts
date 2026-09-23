@@ -16,20 +16,10 @@ import { registeredChartTypes, getChartType, exportChartDataCsv } from 'openalgo
 import { chromeIconSvg } from 'openalgo-charts/draw';
 import { h, glyph, type WidgetContext } from './context';
 import type { WidgetThemeName } from './tokens';
-
-/** One hit from a host's symbol search. */
-export interface SymbolMatch {
-  symbol: string;
-  exchange?: string;
-  /** Long name, shown muted after the symbol. */
-  name?: string;
-}
-
-/** A host's symbol lookup, called as the user types. Sync or async. */
-export type SymbolSearch = (query: string) => Promise<readonly SymbolMatch[]> | readonly SymbolMatch[];
-
-/** Milliseconds of quiet before the search callback runs. */
-export const SEARCH_DEBOUNCE_MS = 150;
+import { mountSymbolPicker, type SymbolPickerHandle } from './symbol-picker';
+export { SEARCH_DEBOUNCE_MS } from './symbol-picker';
+export type { SymbolMatch, SymbolSearch } from './symbol-picker';
+import type { SymbolSearch } from './symbol-picker';
 
 /** Labels for the built-in chart types; anything else is read from its id. */
 export const CHART_TYPE_LABELS: Readonly<Record<string, string>> = {
@@ -212,6 +202,8 @@ export interface TopbarOptions {
   onIndicators(anchor: HTMLElement): boolean;
   /** A text control for the host's object inventory, omitted without a handler. */
   onObjects?(anchor: HTMLElement): boolean;
+  /** Open the docked data window, omitted without a handler. */
+  onDataWindow?(anchor: HTMLElement): void | boolean;
   onAlerts?(anchor: HTMLElement): boolean;
   settingsAvailable(): boolean;
   indicatorsAvailable(): boolean;
@@ -300,80 +292,27 @@ export function mountTopbar(ctx: WidgetContext, host: HTMLElement, opts: TopbarO
   host.appendChild(symWrap);
   host.appendChild(sep());
 
-  let results: { close: () => void; rows: HTMLElement[]; matches: readonly SymbolMatch[] } | null = null;
-  let searchTimer: ReturnType<typeof setTimeout> | 0 = 0;
-  let searchSeq = 0;
-  const closeResults = (): void => { results?.close(); results = null; };
+  let picker: SymbolPickerHandle | null = null;
   const commit = (symbol: string, exchange?: string): void => {
-    closeResults();
+    picker?.close();
     const s = symbol.trim().toUpperCase();
     if (s === '') { refresh(); return; }
     opts.onSymbol(s, exchange);
     symInput.blur();
   };
-  const showResults = (matches: readonly SymbolMatch[]): void => {
-    closeResults();
-    if (matches.length === 0) return;
-    const m = h(doc, 'div', 'oac-menu oac-sym__results', { role: 'listbox', 'aria-label': widgetText(ctx, 'Symbols') });
-    const rows: HTMLElement[] = [];
-    matches.forEach((hit, i) => {
-      const b = h(doc, 'button', 'oac-menu__row' + (i === 0 ? ' is-active' : ''), { type: 'button', role: 'option' });
-      const label = h(doc, 'span', 'oac-menu__label');
-      label.textContent = hit.exchange ? `${hit.exchange}:${hit.symbol}` : hit.symbol;
-      b.appendChild(label);
-      if (hit.name) {
-        const sub = h(doc, 'span', 'oac-menu__sub');
-        sub.textContent = hit.name;
-        b.appendChild(sub);
-      }
-      b.addEventListener('click', (e) => { e.stopPropagation(); commit(hit.symbol, hit.exchange); });
-      rows.push(b);
-      m.appendChild(b);
-    });
-    // The input keeps the caret: the list is driven from the keyboard there.
-    const close = ctx.openOverlay(m, { anchor: symWrap, placement: 'below', initialFocus: null, onClose: () => { if (results !== null && results.rows === rows) results = null; } });
-    results = { close, rows, matches };
-  };
-  const activeIndex = (): number => (results === null ? -1 : results.rows.findIndex((r) => r.classList.contains('is-active')));
-  const setActive = (i: number): void => {
-    if (results === null) return;
-    const n = results.rows.length;
-    const k = ((i % n) + n) % n;
-    results.rows.forEach((r, j) => r.classList.toggle('is-active', j === k));
-  };
-  const runSearch = (q: string): void => {
-    if (!opts.search) return;
-    const seq = ++searchSeq;
-    Promise.resolve(opts.search(q)).then((hits) => {
-      // A slower answer for an earlier query must not land under a later one.
-      if (seq !== searchSeq || doc.activeElement !== symInput) return;
-      showResults(hits);
-    }).catch(() => { closeResults(); });
-  };
-  symInput.addEventListener('input', () => {
-    if (!opts.search) return;
-    if (searchTimer !== 0) clearTimeout(searchTimer);
-    const q = symInput.value.trim();
-    if (q === '') { closeResults(); return; }
-    searchTimer = setTimeout(() => { searchTimer = 0; runSearch(q); }, SEARCH_DEBOUNCE_MS);
+  if (opts.search) picker = mountSymbolPicker(ctx, symInput, {
+    search: opts.search, onSelect: commit,
+    context: () => `${opts.state().exchange}:${opts.state().symbol}:${opts.state().interval}`,
   });
   symInput.addEventListener('keydown', (e) => {
     const ke = e as KeyboardEvent;
     if (ke.key === 'Enter') {
       ke.preventDefault();
-      const at = activeIndex();
-      if (results !== null && at >= 0) { const hit = results.matches[at]; commit(hit.symbol, hit.exchange); return; }
       commit(symInput.value);
-    } else if (ke.key === 'ArrowDown' && results !== null) { ke.preventDefault(); setActive(activeIndex() + 1); }
-    else if (ke.key === 'ArrowUp' && results !== null) { ke.preventDefault(); setActive(activeIndex() - 1); }
-    else if (ke.key === 'Escape') {
-      // With the list open the overlay stack takes this; with it closed the
-      // typed text is abandoned and the box shows the symbol again.
-      if (results === null) { refresh(); symInput.blur(); }
-    }
+    } else if (ke.key === 'Escape') { refresh(); symInput.blur(); }
   });
   symInput.addEventListener('focus', () => { symInput.select(); });
-  symInput.addEventListener('blur', () => { if (results === null) refresh(); });
+  symInput.addEventListener('blur', () => { refresh(); });
 
   // ── intervals ────────────────────────────────────────────────────────
   const pills = h(doc, 'div', 'oac-pills', { role: 'radiogroup', 'aria-label': widgetText(ctx, 'Interval') });
@@ -433,6 +372,12 @@ export function mountTopbar(ctx: WidgetContext, host: HTMLElement, opts: TopbarO
     objects.setAttribute('aria-haspopup', 'dialog');
     objects.addEventListener('click', () => { opts.onObjects?.(objects); });
     host.appendChild(objects);
+  }
+  if (opts.onDataWindow) {
+    const data = btn(widgetText(ctx, 'schema.ui.dataWindow', {}, 'Data'), 'oac-topbar__data');
+    data.textContent = widgetText(ctx, 'schema.ui.dataWindow', {}, 'Data');
+    data.addEventListener('click', () => { opts.onDataWindow?.(data); });
+    host.appendChild(data);
   }
   if (opts.onAlerts) {
     const alerts = btn(widgetText(ctx, 'Alerts'), 'oac-topbar__alerts');
@@ -558,8 +503,7 @@ export function mountTopbar(ctx: WidgetContext, host: HTMLElement, opts: TopbarO
     focusSymbol: () => { symInput.focus(); },
     destroy: () => {
       offBranding();
-      if (searchTimer !== 0) clearTimeout(searchTimer);
-      closeResults();
+      picker?.destroy();
       host.textContent = '';
     },
   };

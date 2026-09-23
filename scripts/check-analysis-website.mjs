@@ -34,7 +34,9 @@ for (const name of (process.env.OAC_WEBSITE_BROWSERS ?? 'chromium,firefox,webkit
     const after = await ink();
     expect(after[0]).not.toBe(before[0]);
     expect(after[1]).not.toBe(before[1]);
-    const eventPoint = await demo.locator('.oac-widget').first().evaluate(widget => {
+    const events = page.locator('.oac-timeline-events');
+    await events.scrollIntoViewIfNeeded();
+    const eventPoint = await events.locator('.oac-widget').evaluate(widget => {
       for (const canvas of widget.querySelectorAll('canvas')) {
         const pixels = canvas.getContext('2d')?.getImageData(0, 0, canvas.width, canvas.height).data;
         const rect = canvas.getBoundingClientRect();
@@ -55,12 +57,13 @@ for (const name of (process.env.OAC_WEBSITE_BROWSERS ?? 'chromium,firefox,webkit
     });
     expect(eventPoint).not.toBeNull();
     await page.mouse.click(eventPoint.x, eventPoint.y);
-    await expect(demo.getByRole('dialog')).toContainText('Sample results');
-    await expect(demo.getByRole('dialog')).toContainText('Sample investor call');
-    await expect(demo.locator('.oac-event-details__heading')).toHaveCSS('font-size', '12px');
-    await demo.screenshot({ path: join(output, `analysis-252-${name}.png`) });
-    await page.keyboard.press('Escape');
-    await expect(demo.getByRole('dialog')).toHaveCount(0);
+    await expect(events.locator('.oac-timeline-events__detail')).toContainText('Sample results');
+    await expect(events.getByRole('button', { name: 'Sample investor call', exact: true })).toBeVisible();
+    await events.getByRole('button', { name: 'Sample investor call', exact: true }).click();
+    await expect(events.locator('.oac-timeline-events__detail')).toContainText('Investor Q&A');
+    await events.screenshot({ path: join(output, `events-253-${name}.png`) });
+    await demo.scrollIntoViewIfNeeded();
+    await demo.screenshot({ path: join(output, `analysis-253-${name}.png`) });
     await page.setViewportSize({ width: 390, height: 844 });
     await demo.scrollIntoViewIfNeeded();
     const overflow = await demo.evaluate(el => el.scrollWidth > el.clientWidth + 1);
@@ -73,7 +76,7 @@ for (const name of (process.env.OAC_WEBSITE_BROWSERS ?? 'chromium,firefox,webkit
       });
     });
     expect(clippedCharts).toBe(false);
-    await demo.screenshot({ path: join(output, `analysis-252-${name}-narrow.png`) });
+    await demo.screenshot({ path: join(output, `analysis-253-${name}-narrow.png`) });
     expect(errors).toEqual([]);
     console.log(`${name}: linked studies, undo, event details and narrow layout passed`);
   } finally { await browser.close(); }

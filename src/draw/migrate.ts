@@ -30,7 +30,7 @@
  * Idempotent on a version 2 document, so a host can call it on every load.
  */
 import type {
-  Drawing, DrawingPoint, DrawingStyle, DrawingText, DrawingsDocument, FibLevel,
+  Drawing, DrawingPoint, DrawingStyle, DrawingText, DrawingsDocument, DrawingGroup, FibLevel,
 } from './types';
 import { DRAWING_STATE_VERSION } from './types';
 import { cycleColor, levelColor } from './levels';
@@ -94,7 +94,31 @@ export function migrateDrawings(input: unknown): DrawingsDocument {
     seen.add(d.id);
     drawings.push(d);
   }
-  return { version: DRAWING_STATE_VERSION, drawings };
+  const groups = migrateGroups(isRecord(input) ? input.groups : undefined, drawings);
+  return { version: DRAWING_STATE_VERSION, drawings, ...(groups.length ? { groups } : {}) };
+}
+
+/** Ignore stale or malformed group records, with the first valid membership winning. */
+export function migrateGroups(input: unknown, drawings: readonly Drawing[]): DrawingGroup[] {
+  if (!Array.isArray(input)) return [];
+  const live = new Set(drawings.map(d => d.id));
+  const ids = new Set<string>();
+  const assigned = new Set<string>();
+  const groups: DrawingGroup[] = [];
+  for (const raw of input) {
+    if (!isRecord(raw) || typeof raw.id !== 'string' || !raw.id.trim() || ids.has(raw.id)
+      || typeof raw.name !== 'string' || !raw.name.trim() || !Array.isArray(raw.members)) continue;
+    const members: string[] = [];
+    for (const member of raw.members) {
+      if (typeof member !== 'string' || !live.has(member) || assigned.has(member)) continue;
+      members.push(member);
+      assigned.add(member);
+    }
+    if (!members.length) continue;
+    ids.add(raw.id);
+    groups.push({ id: raw.id, name: raw.name.trim(), members });
+  }
+  return groups;
 }
 
 /** One entry of either shape into a v2 drawing, or null when it cannot be drawn. */

@@ -65,7 +65,7 @@ describe('the frame', () => {
     const opener = root.querySelector('.oac-topbar__objects')!;
     expect(opener).not.toBeNull();
     fire(opener, 'click');
-    expect(root.querySelector('.oac-objects')).not.toBeNull();
+    expect(root.querySelector('.oac-objects-content')).not.toBeNull();
     expect(doc.head.children[0].textContent).toContain('.oac-objects__row');
     expect(w.objects.openSettings('drawing:' + drawing.id)).toBe(true);
     expect(root.querySelector('.oac-props')).not.toBeNull();

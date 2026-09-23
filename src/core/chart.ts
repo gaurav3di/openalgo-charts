@@ -797,6 +797,7 @@ export class Chart {
   private _primary: { api: SeriesApi; record: SeriesRecord } | null = null;
   private readonly _seriesRecords = new WeakMap<SeriesApi, SeriesRecord>();
   private readonly _indicators: IndicatorInstance[] = [];
+  private readonly _seriesOwners = new WeakMap<SeriesApi, { pane: Pane; priceFormat?: AddSeriesOptions['priceFormat'] }>();
   private _dataContext: Readonly<ChartDataContext> | undefined;
   private _barsProvider: IndicatorBarsProvider | null = null;
   /** Guards indicator recompute against re-entry via its own `series.setData`. */
@@ -1185,20 +1186,9 @@ export class Chart {
      * Panes move around their series, so the object stays correct through both
      * operations and the index never has to be patched.
      */
-    const pane = this._panes[paneIndex];
-    const scale = pane.scaleOf(record);
-    if (options.priceFormat) {
-      const pf = options.priceFormat;
-      if (pf.type === 'custom') scale.setPriceFormatter(pf.formatter);
-      else if (pf.type === 'volume') scale.setPriceFormatter(compactVolume);
-      else if (pf.type === 'percent') {
-        const digits = pf.precision ?? 2;
-        scale.setPriceFormatter((v) => `${v.toFixed(digits)}%`);
-      } else {
-        const minMove = pf.minMove ?? (pf.precision !== undefined ? Math.pow(10, -pf.precision) : undefined);
-        if (minMove !== undefined) scale.setOptions({ minMove });
-      }
-    }
+    const owner = { pane: this._panes[paneIndex], priceFormat: options.priceFormat };
+    const scale = owner.pane.scaleOf(record);
+    this._applySeriesPriceFormat(scale, options.priceFormat);
     if (record.style.precision !== undefined) this._applyPrecision(scale, record.style.precision);
 
     const api: SeriesApi = {
@@ -1211,13 +1201,13 @@ export class Chart {
         // Precision is a label override on the scale, not a style the renderer
         // reads, so it needs pushing across when it changes (including back to
         // "Default", which is the key present and undefined).
-        if ('precision' in patch) this._applyPrecision(pane.scaleOf(record), patch.precision);
+        if ('precision' in patch) this._applyPrecision(owner.pane.scaleOf(record), patch.precision);
         this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
         if (this._primary?.record === record) this.emit('objects:change', {});
       },
       remove: (): void => {
         const primary = this._primary?.record === record;
-        pane.removeSeries(record);
+        owner.pane.removeSeries(record);
         this._dataLayer.removeSeries(dataId);
         if (this._firstDataId.value === dataId) this._firstDataId.value = null;
         if (this._primary?.record === record) this._primary = null;
@@ -1229,12 +1219,12 @@ export class Chart {
           this.emit('objects:change', {});
         }
       },
-      priceScale: (): PriceScale => pane.scaleOf(record),
+      priceScale: (): PriceScale => owner.pane.scaleOf(record),
       createMarkers: (fallbackBars?: () => readonly Bar[]): SeriesMarkers => {
-        const m = new SeriesMarkers(dataId, fallbackBars, () => pane.scaleOf(record));
+        const m = new SeriesMarkers(dataId, fallbackBars, () => owner.pane.scaleOf(record));
         // Resolved now, not at creation: primitives are addressed by slot, and
         // this series' slot may have shifted since.
-        this._addPrimitive(this._panes.indexOf(pane), m);
+        this._addPrimitive(this._panes.indexOf(owner.pane), m);
         return m;
       },
     };
@@ -1243,7 +1233,22 @@ export class Chart {
       this.emit('objects:change', {});
     }
     this._seriesRecords.set(api, record);
+    this._seriesOwners.set(api, owner);
     return api;
+  }
+
+  private _applySeriesPriceFormat(scale: PriceScale, pf: AddSeriesOptions['priceFormat']): void {
+    if (pf) {
+      if (pf.type === 'custom') scale.setPriceFormatter(pf.formatter);
+      else if (pf.type === 'volume') scale.setPriceFormatter(compactVolume);
+      else if (pf.type === 'percent') {
+        const digits = pf.precision ?? 2;
+        scale.setPriceFormatter((v) => `${v.toFixed(digits)}%`);
+      } else {
+        const minMove = pf.minMove ?? (pf.precision !== undefined ? Math.pow(10, -pf.precision) : undefined);
+        if (minMove !== undefined) scale.setOptions({ minMove });
+      }
+    }
   }
 
   /**
@@ -1429,7 +1434,7 @@ export class Chart {
   }
 
   /**
-   * Every live indicator instance, in the order they were added.
+   * Every live indicator instance, in renderer stacking order.
    *
    * Flushes any pending recompute first. Indicator maths is deferred to the
    * frame, so a caller that updates a bar and reads a value back in the same
@@ -1438,6 +1443,96 @@ export class Chart {
   public indicators(): readonly IndicatorApi[] {
     this._flushIndicators();
     return this._indicators;
+  }
+
+  /** Move an existing study to an existing pane or a new pane at panes().length. */
+  public moveIndicator(instanceId: string, paneIndex: number): boolean {
+    const instance = this._indicators.find(item => item.id === instanceId);
+    if (this.isDestroyed || !instance || !Number.isInteger(paneIndex) || paneIndex < 0 || paneIndex > this._panes.length || instance.paneIndex === paneIndex) return false;
+    const previous = instance.paneIndex;
+    this._ensurePane(paneIndex);
+    const target = this._panes[paneIndex];
+    const resources = instance.renderResources();
+    for (const { api, overlay } of resources.series) {
+      if (overlay) continue;
+      const owner = this._seriesOwners.get(api);
+      const record = this._seriesRecords.get(api);
+      if (!owner || !record || owner.pane === target) continue;
+      const scale = owner.pane.scaleOf(record);
+      const options = scale.options;
+      owner.pane.removeSeries(record);
+      target.addSeries(record);
+      owner.pane = target;
+      if (target.series().filter(item => item.scaleId === record.scaleId).length === 1) target.scaleOf(record).setOptions(options);
+      this._applySeriesPriceFormat(target.scaleOf(record), owner.priceFormat);
+      if (record.style.precision !== undefined) this._applyPrecision(target.scaleOf(record), record.style.precision);
+    }
+    for (const { primitive, overlay } of resources.primitives) {
+      if (overlay) continue;
+      this._panes.find(pane => pane.hasPrimitive(primitive))?.transferPrimitive(primitive, target);
+    }
+    instance.relocate(paneIndex);
+    if (paneIndex === 0 || this._indicators.filter(item => item.paneIndex === paneIndex).length > 1) target.priceScale.setFixedRange(null);
+    this._syncLegendPanes();
+    // Alert visuals resolve the instance's new pane before we decide whether its old pane is empty.
+    this.emit('objects:change', {});
+    // Retain a pane holding drawings or host visuals even after its last plot moves.
+    const source = this._panes[previous];
+    if (previous > 0 && source.series().length === 0 && source.primitives().every(primitive => primitive === this._timeNav || this._anchored.some(entry => entry.primitive === primitive))) this.removePane(previous);
+    this._reorderIndicatorResources();
+    this._recomputeAxisColumns();
+    this._relayout();
+    this.invalidate(m => m.invalidateGlobal(InvalidationLevel.Full));
+    this.emit('objects:change', {});
+    return true;
+  }
+
+  /** Change study stacking order among studies on the same pane. */
+  public reorderIndicator(instanceId: string, direction: -1 | 1): boolean {
+    if (direction !== -1 && direction !== 1) return false;
+    const index = this._indicators.findIndex(item => item.id === instanceId);
+    if (this.isDestroyed || index < 0) return false;
+    const paneIndex = this._indicators[index].paneIndex;
+    let target = index + direction;
+    while (target >= 0 && target < this._indicators.length && this._indicators[target].paneIndex !== paneIndex) target += direction;
+    if (target < 0 || target >= this._indicators.length) return false;
+    [this._indicators[index], this._indicators[target]] = [this._indicators[target], this._indicators[index]];
+    this._reorderIndicatorResources();
+    this.invalidate(m => m.invalidateGlobal(InvalidationLevel.Full));
+    this.emit('objects:change', {});
+    return true;
+  }
+
+  private _reorderIndicatorResources(): void {
+    for (const instance of this._indicators) instance.refreshBarColors();
+    const resources = this._indicators.map(instance => instance.renderResources());
+    const records = resources.flatMap(resource => resource.series.flatMap(({ api }) => {
+      const record = this._seriesRecords.get(api);
+      return record ? [record] : [];
+    }));
+    const primitives = resources.flatMap(resource => resource.primitives.map(item => item.primitive));
+    for (const pane of this._panes) { pane.reorderSeries(records); pane.reorderPrimitives(primitives); }
+    const legends = this._indicators.flatMap(instance => instance.legend() ? [instance.legend()!] : []);
+    const owned = new Set(legends);
+    let index = 0;
+    for (const entry of this._legends) if (owned.has(entry.legend)) entry.legend = legends[index++];
+    this._syncLegendPanes();
+  }
+
+  private _syncLegendPanes(): void {
+    for (const entry of this._legends) entry.paneIndex = this._panes.findIndex(pane => pane.hasPrimitive(entry.legend));
+    this._restackLegends();
+    const owned = new Set(this._indicators.map(instance => instance.legend()));
+    for (const entry of this._legends) {
+      if (!owned.has(entry.legend)) continue;
+      const options = entry.legend.options();
+      const actions: PaneLegendAction[] = (options.actions ?? []).filter(action => action !== 'up' && action !== 'down' && action !== 'maximize');
+      if (entry.paneIndex > 0 && options.row === 0) {
+        const close = actions.indexOf('close');
+        actions.splice(close < 0 ? actions.length : close, 0, 'up', 'down', 'maximize');
+      }
+      entry.legend.setOptions({ actions });
+    }
   }
 
   /** Remove one indicator instance by its handle id. Returns true if it existed. */
@@ -1565,6 +1660,7 @@ export class Chart {
       legendIndex: () => this._readoutIndex(),
       indicatorRemoved: (id): void => this._forgetIndicator(id),
       flushIndicators: (): void => this._flushIndicators(),
+      resourcesChanged: (): void => this._reorderIndicatorResources(),
       // The scale that draws the ladder is the one that decides how a number on
       // that pane is written, floor, tick, custom formatter and all.
       formatPrice: (paneIndex: number, value: number): string | undefined =>
@@ -1678,7 +1774,8 @@ export class Chart {
         // Declared, not measured: the scale remembers the band so a later
         // auto-fit request comes back to it instead of re-measuring an
         // oscillator against its own values (see `PriceScale.setFixedRange`).
-        pane.priceScale.setFixedRange(range);
+        const shared = paneIndex === 0 || this._indicators.filter(item => item.paneIndex === paneIndex).length > 1;
+        pane.priceScale.setFixedRange(shared ? null : range);
         if (range === null) pane.priceScale.setAutoScale(true);
       },
     };
@@ -1816,8 +1913,10 @@ export class Chart {
     for (const indicator of this._indicators) indicator.updateLegendValues(index ?? undefined);
     const bar = index === null || this._firstDataId.value === null ? null
       : this._dataLayer.visibleBars(this._firstDataId.value, index, index)[0]?.bar ?? null;
-    this._crosshairCb?.({ source: 'linked', time, index,
-      bar, price: null, point: null, paneIndex: null });
+    const readout: CrosshairMoveEvent = { source: 'linked', time, index,
+      bar, price: null, point: null, paneIndex: null };
+    this._crosshairCb?.(readout);
+    this.emit('crosshair:readout', readout);
   }
 
   private _readoutIndex(): number | undefined {
@@ -2474,7 +2573,7 @@ export class Chart {
       // linked grid. Read per call rather than captured at attach: `zOrder()`
       // is a method, and a primitive is free to change layer.
       requestUpdate: (): void =>
-        this.invalidate((m) => m.invalidatePane(paneIndex, {
+        this.invalidate((m) => m.invalidatePane(this._panes.findIndex(pane => pane.hasPrimitive(primitive)), {
           level: primitive.zOrder() === 'top' ? InvalidationLevel.Cursor : InvalidationLevel.Light,
           autoScale: false,
         })),
@@ -2768,6 +2867,7 @@ export class Chart {
     // changes the numbers and not just the axis under them.
     this._invalidateIndicators();
     this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
+    this.emit('timezone:changed', { timezone: next });
   }
 
   /**
@@ -3341,6 +3441,7 @@ export class Chart {
     this._relayout();
     this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
     this._rehomeAnchored();
+    this._syncLegendPanes();
     this.emit('paneRemoved', { paneIndex: index });
     return true;
   }
@@ -3370,6 +3471,7 @@ export class Chart {
     this._relayout();
     this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
     this._rehomeAnchored();
+    this._syncLegendPanes();
     this.emit('paneMoved', { from: index, to: target });
     return true;
   }
@@ -4314,6 +4416,7 @@ export class Chart {
       for (const indicator of this._indicators) indicator.updateLegendValues();
       const cleared = { time: null, index: null, price: null, bar: null, point: null, paneIndex: null };
       this._crosshairCb?.(cleared);
+      this.emit('crosshair:readout', cleared);
       this.emit('crosshair:move', cleared);
     }
   };
@@ -4670,7 +4773,7 @@ export class Chart {
     for (const indicator of this._indicators) indicator.updateLegendValues(index);
     // global crosshair → repaint every pane's overlay (cheap; base untouched)
     this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Cursor));
-    if (this._crosshairCb !== null || this._listeners.get('crosshair:move') !== undefined) {
+    if (this._crosshairCb !== null || this._listeners.get('crosshair:move') !== undefined || this._listeners.get('crosshair:readout') !== undefined) {
       const time = this._dataLayer.indexToTime(index);
       const move: CrosshairMoveEvent = {
         time: time ?? null,
@@ -4689,6 +4792,7 @@ export class Chart {
         ...(this._pointers.size > 0 ? { samples: this._dragSamples(source) } : {}),
       };
       this._crosshairCb?.(move);
+      this.emit('crosshair:readout', move);
       this.emit('crosshair:move', move);
     }
   }

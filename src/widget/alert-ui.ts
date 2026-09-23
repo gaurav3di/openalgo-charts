@@ -2,8 +2,7 @@ import { darkTheme, lightTheme, type AlertController, type Chart, type ChartThem
 import type { DrawingController } from 'openalgo-charts/draw';
 import { createOverlayStack, createTipController, h, WidgetBus, WidgetStorage, type WidgetContext } from './context';
 import { mountAlertEditor, mountAlertsPanel, type AlertEditorOptions } from './dialogs/alerts';
-import { DIALOG_CSS } from './dialogs/index';
-import { OBJECTS_PANEL_CSS } from './objects-panel';
+import { WIDGET_COMPONENT_CSS } from './component-styles';
 import type { PanelHandle } from './form';
 import { Keymap } from './keymap';
 import { injectWidgetStyles } from './styles';
@@ -25,6 +24,8 @@ export interface AlertUiOptions extends WidgetTranslationOptions {
 
 export interface AlertUi {
   readonly root: HTMLElement;
+  /** Shared theme, overlays and controls for a custom host. Owned by this UI's lifetime. */
+  readonly context: WidgetContext;
   openList(anchor?: HTMLElement): boolean;
   openEditor(options?: AlertEditorOptions): boolean;
   isOpen(): boolean;
@@ -37,7 +38,7 @@ export interface AlertUi {
 /** Mount shared alert dialogs over a custom host's positioned chart container. */
 export function createAlertUi(container: HTMLElement, options: AlertUiOptions): AlertUi {
   const doc = container.ownerDocument;
-  injectWidgetStyles(doc, DIALOG_CSS + OBJECTS_PANEL_CSS, options.styleNonce);
+  injectWidgetStyles(doc, WIDGET_COMPONENT_CSS, options.styleNonce);
   const root = h(doc, 'div', 'oac-widget oac-alert-host');
   container.appendChild(root);
   const overlays = createOverlayStack(root, doc);
@@ -76,7 +77,7 @@ export function createAlertUi(container: HTMLElement, options: AlertUiOptions): 
   root.addEventListener('keydown', stopKeys);
   const offDestroy = options.chart.on('destroy', () => ui.destroy());
   const ui: AlertUi = {
-    root,
+    root, context: ctx,
     openList: anchor => {
       if (destroyed) return false;
       if (list?.isOpen()) { list.el.focus(); return true; }

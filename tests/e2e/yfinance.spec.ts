@@ -308,6 +308,7 @@ test('a symbol the source cannot serve leaves the shell up and says so', async (
   const sym = page.getByPlaceholder('Symbol or expression');
   await expect(sym).toBeFocused();
   await sym.fill('FAIL');
+  await expect(sym).toHaveAttribute('aria-expanded', 'false');
   await sym.press('Enter');
 
   // The feed gives a gateway failure one retry before it reports, so the

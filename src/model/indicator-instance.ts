@@ -147,6 +147,8 @@ export interface IndicatorHost {
    * interface: one that recomputes eagerly has nothing to flush.
    */
   flushIndicators?(): void;
+  /** Restore the host's study stack after settings replace series or attached visuals. */
+  resourcesChanged?(): void;
   /** Bars of the primary price series — the calculation input. */
   sourceBars(): readonly Bar[];
   /** Selected candle after native or linked hover; absent means latest. */
@@ -287,6 +289,7 @@ export class IndicatorInstance implements IndicatorApi {
   private _lastTime = 0;
   private _removed = false;
   private readonly _store: IndicatorStore = {};
+  private readonly _attachedPrimitives = new Set<IPrimitive>();
   private _detach: (() => void) | null = null;
   private readonly _lifetime = new AbortController();
   private _dataStatus: Readonly<IndicatorDataStatus> | null = null;
@@ -452,6 +455,30 @@ export class IndicatorInstance implements IndicatorApi {
   public shiftPane(delta: number): void {
     this.paneIndex += delta;
   }
+
+  /** Owned render resources, with explicit price overlays left on pane zero. */
+  public renderResources(): { series: { api: SeriesApi; overlay: boolean }[]; primitives: { primitive: IPrimitive; overlay: boolean }[] } {
+    const series = this._d.plots.flatMap(plot => {
+      const api = this._series.get(plot.key);
+      return api ? [{ api, overlay: plot.overlay === true }] : [];
+    });
+    const primitives = this._fills.map((primitive, index) => ({ primitive: primitive as IPrimitive, overlay: this._d.fills?.[index].overlay === true }));
+    for (const primitive of [this._legend, ...this._levels, this._markers, this._table, this._draws, this._background, ...this._attachedPrimitives]) {
+      if (primitive !== null) primitives.push({ primitive, overlay: primitive === this._markers && (this._markerSeries === this._host.primarySeries?.() || series.some(item => item.api === this._markerSeries && item.overlay)) });
+    }
+    return { series, primitives };
+  }
+
+  /** Move the existing instance without rerunning its external attach lifecycle. */
+  public relocate(paneIndex: number): void {
+    if (this._ownPane) this._host.setPaneRange(this.paneIndex, null);
+    this.paneIndex = paneIndex;
+    this._applyRange();
+    this._syncMarkers(this._host.sourceBars());
+  }
+
+  /** Republish candle colors after a change in instance stacking order. */
+  public refreshBarColors(): void { this._syncBarColors(this._host.sourceBars()); }
 
   /** The legend row, for the host to add pane-level actions to the first one. */
   public legend(): PaneLegend | null {
@@ -773,8 +800,8 @@ export class IndicatorInstance implements IndicatorApi {
       timezone: () => this._host.timezone?.() ?? DEFAULT_TIMEZONE,
       now: () => this._host.now?.() ?? Date.now() / 1000,
       paneIndex: () => this.paneIndex,
-      addPrimitive: (p: IPrimitive) => { this._host.addIndicatorPrimitive?.(p, this.paneIndex); },
-      removePrimitive: (p: IPrimitive) => { this._host.removeIndicatorPrimitive?.(p); },
+      addPrimitive: (p: IPrimitive) => { this._attachedPrimitives.add(p); this._host.addIndicatorPrimitive?.(p, this.paneIndex); },
+      removePrimitive: (p: IPrimitive) => { this._attachedPrimitives.delete(p); this._host.removeIndicatorPrimitive?.(p); },
       emit: (event: string, payload: unknown) => { this._host.emit?.(event, payload); },
     });
     this._detach = typeof detach === 'function' ? detach : null;
@@ -878,6 +905,7 @@ export class IndicatorInstance implements IndicatorApi {
     this.recompute();
     this._detach?.();
     this._attach();
+    this._host.resourcesChanged?.();
     this._host.emit?.('objects:change', {});
   }
 
@@ -1096,6 +1124,8 @@ export class IndicatorInstance implements IndicatorApi {
     this._dataListeners.clear();
     try { this._detach?.(); } catch { /* External cleanup cannot retain the indicator's chart resources. */ }
     this._detach = null;
+    for (const primitive of this._attachedPrimitives) this._host.removeIndicatorPrimitive?.(primitive);
+    this._attachedPrimitives.clear();
     if (this._legend !== null) { this._host.removeIndicatorLegend(this._legend); this._legend = null; }
     for (const line of this._levels) this._host.removeIndicatorLevel(line);
     this._levels = [];
