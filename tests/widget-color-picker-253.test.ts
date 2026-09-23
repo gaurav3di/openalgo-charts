@@ -20,6 +20,69 @@ function mount(values: Record<string, unknown>, live = false) {
 }
 
 describe('shared colour picker', () => {
+  it('preserves supported hex, comma and space/slash colours and their alpha', () => {
+    const { doc } = installDom();
+    const changes: string[] = [];
+    const picker = createColorPicker(doc as unknown as Document, {
+      id: 'formats', label: 'Color', value: undefined, onChange: value => changes.push(value),
+    });
+    const samples = [
+      ['#AbC', '#aabbcc', '#aabbcc'],
+      ['#AbC8', '#aabbcc', '#aabbcc88'],
+      ['#12345678', '#123456', '#12345678'],
+      ['rgb(38, 166, 154)', '#26a69a', '#26a69a'],
+      ['RGBA(38,166,154,.4)', '#26a69a', 'rgba(38,166,154,0.4)'],
+      ['rgba(38,166,154)', '#26a69a', '#26a69a'],
+      ['rgb(38 166 154)', '#26a69a', '#26a69a'],
+      ['rgba(38 166 154 / .4)', '#26a69a', 'rgba(38,166,154,0.4)'],
+      ['rgb(38 166 154 / 1.)', '#26a69a', 'rgba(38,166,154,1)'],
+      ['\trgb(38\t166\n154 / 0)\n', '#26a69a', 'rgba(38,166,154,0)'],
+      ['rgb(000 001 255)', '#0001ff', '#0001ff'],
+    ];
+    for (const [raw, hex, painted] of samples) {
+      picker.write(raw);
+      expect(picker.read()).toBe(raw);
+      expect(picker.input.value).toBe(hex);
+      expect(picker.trigger.style.backgroundColor).toBe(painted);
+    }
+    expect(changes).toEqual([]);
+    picker.destroy();
+  });
+
+  it('retains malformed and missing raw colours without interpreting incomplete components', () => {
+    const { doc } = installDom();
+    const changes: string[] = [];
+    const picker = createColorPicker(doc as unknown as Document, {
+      id: 'invalid', label: 'Color', value: undefined, onChange: value => changes.push(value),
+    });
+    const invalid = [
+      undefined, null, 42, '', 'rgb(1,2,3,)', 'rgb(1 2 3 /)',
+      'rgb(1,2 3)', 'rgb(1 2,3)', 'rgba(1 2 3 .4)', 'rgb(1,2,300)',
+      'rgb(1 2 3 /.4.2)', 'rgb(1 2 3 /1.1)', 'rgb(1 2 3 /NaN)',
+      'rgb(1 2 3 /0x1)', 'rgb(1 2 3 /1e-1)', 'rgb(1 2 3 / .5 / .6)',
+    ];
+    for (const raw of invalid) {
+      picker.write(raw);
+      expect(picker.read()).toBe(raw);
+      expect(picker.input.value, String(raw)).toBe('#000000');
+    }
+    expect(changes).toEqual([]);
+    picker.destroy();
+  });
+
+  it('rejects oversized colour input before parsing or trimming while retaining the raw value', () => {
+    const { doc } = installDom();
+    const picker = createColorPicker(doc as unknown as Document, {
+      id: 'bounded', label: 'Color', value: '#123456', onChange: () => {},
+    });
+    for (const raw of [`rgb(38,166,154${' '.repeat(300)})`, `${' '.repeat(300)}#123456`, `rgba(38 166 154 / .${'0'.repeat(300)}4)`]) {
+      picker.write(raw);
+      expect(picker.read()).toBe(raw);
+      expect(picker.input.value).toBe('#000000');
+    }
+    picker.destroy();
+  });
+
   it('paints the visible face and palette independently of native colour input support', () => {
     const { doc } = installDom();
     const changes: string[] = [];

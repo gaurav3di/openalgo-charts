@@ -1,5 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 import { useTheme } from 'next-themes';
 import { useConfig } from 'nextra-theme-docs';
 
@@ -60,6 +61,7 @@ const config = {
   },
   head: function Head() {
     const { frontMatter, title } = useConfig();
+    const pagePath = useRouter().asPath.split(/[?#]/, 1)[0];
     const { resolvedTheme } = useTheme();
     const pageTitle = title && title !== 'OpenAlgo Charts' ? `${title} - OpenAlgo Charts` : 'OpenAlgo Charts — Every move. A clearer view.';
     const description =
@@ -74,7 +76,9 @@ const config = {
         <meta property="og:description" content={description} />
         <meta property="og:type" content="website" />
         <meta property="og:site_name" content="OpenAlgo Charts" />
+        <meta property="og:url" content={`https://marketcalls.github.io/openalgo-charts${pagePath}`} />
         <meta property="og:image" content={SHARE_IMAGE} />
+        <meta property="og:image:type" content="image/png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
         <meta property="og:image:alt" content="Linked OpenAlgo charts with stock candles, anchored VWAP and volume profiles" />

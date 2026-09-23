@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1520" viewBox="0 0 1280 1520" role="img" aria-labelledby="architecture-title architecture-description">
 <title id="architecture-title">OpenAlgo Charts 2.5.3 architecture</title>
-<desc id="architecture-description">A host application supplies UI, market-data adapters and instrument metadata, selects charts and activates workspaces. The base engine contains shared data loading, a DataLayer and time scale, independent price scales, custom study and primitive contracts, Canvas 2D rendering, alerts, grouped timeline events, replay groups and appearance linking. The host applies loading snapshots through series APIs. Each pane has a base and an overlay canvas. Open interest is optional: aggregation retains the last reading, never a sum, and missing is not zero. Alert gestures preview without saving and commit once; events go to the host for delivery. Shared replay uses observation availability. Eight optional ESM tiers add built-in indicators, drawing tools with anchored volume analysis and synchronization, profiles, transforms, trading tools, workspace documents and storage, WebGL2 series rendering and the widget UI with a Data/Objects dock, rich symbol lookup and reusable colour controls. The base object model supports stable study ordering and movement; the drawing controller owns named groups. Study and profile calculations stay on the CPU; axes, text and primitives stay on Canvas 2D. Broker execution and external notifications remain host responsibilities. Nine entry points, zero runtime dependencies. Decimal Brotli sizes measured on 2.5.3: base 96.54 kB, indicators 29.84 kB, draw 41.56 kB, profile 14.96 kB, transform 4.50 kB, trade 8.01 kB, workspace 5.55 kB, webgl 6.39 kB, widget 59.07 kB, all tiers 266.43 kB.</desc>
+<desc id="architecture-description">A host application supplies UI, market-data adapters and instrument metadata, selects charts and activates workspaces. The base engine contains shared data loading, a DataLayer and time scale, independent price scales, custom study and primitive contracts, Canvas 2D rendering, alerts, grouped timeline events, replay groups and appearance linking. The host applies loading snapshots through series APIs. Each pane has a base and an overlay canvas. Open interest is optional: aggregation retains the last reading, never a sum, and missing is not zero. Alert gestures preview without saving and commit once; events go to the host for delivery. Shared replay uses observation availability. Eight optional ESM tiers add built-in indicators, drawing tools with anchored volume analysis and synchronization, profiles, transforms, trading tools, workspace documents and storage, WebGL2 series rendering and the widget UI with a Data/Objects dock, rich symbol lookup and reusable colour controls. The base object model supports stable study ordering and movement; the drawing controller owns named groups. Study and profile calculations stay on the CPU; axes, text and primitives stay on Canvas 2D. Broker execution and external notifications remain host responsibilities. Nine entry points, zero runtime dependencies. Decimal Brotli sizes measured on 2.5.3: base 96.54 kB, indicators 29.84 kB, draw 41.56 kB, profile 14.96 kB, transform 4.50 kB, trade 8.01 kB, workspace 5.55 kB, webgl 6.39 kB, widget 59.22 kB, all tiers 266.57 kB.</desc>
 <defs>
   <marker id="flow-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M1 1L8 5L1 9" fill="none" stroke="#5cd3c5" stroke-width="1.6"/></marker>
 </defs>
@@ -180,14 +180,14 @@
 <g id="tier-widget" data-panel="true">
 <rect x="954" y="1238" width="278" height="164" rx="12" fill="#121724" stroke="#34364e" />
 <text x="974" y="1275" class="tier-title" >/widget</text>
-<text x="1212" y="1275" class="tier-size" text-anchor="end">59.07 kB</text>
+<text x="1212" y="1275" class="tier-size" text-anchor="end">59.22 kB</text>
 <path d="M974 1291h238" stroke="#34364e"/>
 <text x="974" y="1324" class="tier-body" >Packaged chart interface</text>
 <text x="974" y="1352" class="tier-body" >Toolbar, dialogs + event details</text>
 <text x="974" y="1380" class="tier-body" >Uses the public chart API</text>
 </g>
 <text x="48" y="1438" class="footer" >Base + optional capabilities. One shared contract.</text>
-<text x="1232" y="1438" class="host-title" text-anchor="end">266.43 kB Brotli / all tiers</text>
+<text x="1232" y="1438" class="host-title" text-anchor="end">266.57 kB Brotli / all tiers</text>
 <path d="M48 1460h1184" stroke="#273849"/>
 <text x="48" y="1492" class="footer" >Capability map, not an import graph.</text>
 <text x="1232" y="1492" class="footer" text-anchor="end">Default timezone: Asia/Kolkata</text>

@@ -8,23 +8,45 @@ const recent: string[] = [];
 type ColorFormat = 'hex' | 'hexAlpha' | 'rgba';
 
 function parse(value: unknown): { hex: string; alpha: number; format: ColorFormat } | null {
-  if (typeof value !== 'string') return null;
-  const hex = /^#([\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})$/i.exec(value.trim());
+  // Host values may be untrusted; colour literals need only a short, bounded scan.
+  if (typeof value !== 'string' || value.length > 256) return null;
+  const literal = value.trim();
+  const hex = /^#([\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})$/i.exec(literal);
   if (hex !== null) {
     let digits = hex[1].toLowerCase();
     if (digits.length <= 4) digits = digits.split('').map(c => c + c).join('');
     const alpha = digits.length === 8 ? parseInt(digits.slice(6), 16) / 255 : 1;
     return { hex: `#${digits.slice(0, 6)}`, alpha, format: digits.length === 8 ? 'hexAlpha' : 'hex' };
   }
-  const rgb = /^rgba?\(\s*(\d{1,3})(?:\s*,\s*|\s+)(\d{1,3})(?:\s*,\s*|\s+)(\d{1,3})(?:\s*[,/]\s*|\s+)?([\d.]+)?\s*\)$/i.exec(value.trim());
-  if (rgb === null) return null;
-  const channels = rgb.slice(1, 4).map(Number);
+  const lower = literal.toLowerCase();
+  const start = lower.startsWith('rgba(') ? 5 : lower.startsWith('rgb(') ? 4 : 0;
+  if (start === 0 || !literal.endsWith(')')) return null;
+  const body = literal.slice(start, -1);
+  let components: string[];
+  let alphaToken: string | undefined;
+  if (body.includes(',')) {
+    const parts = body.split(',').map(part => part.trim());
+    if (parts.length !== 3 && parts.length !== 4) return null;
+    components = parts.slice(0, 3);
+    alphaToken = parts[3];
+  } else {
+    const parts = body.split('/');
+    if (parts.length > 2) return null;
+    components = parts[0].trim().split(/\s+/);
+    alphaToken = parts[1]?.trim();
+  }
+  if (components.length !== 3 || components.some(part => !/^\d{1,3}$/.test(part))) return null;
+  const channels = components.map(Number);
   if (channels.some(n => n > 255)) return null;
-  const alpha = rgb[4] === undefined ? 1 : Number(rgb[4]);
+  if (alphaToken !== undefined) {
+    const decimal = alphaToken.split('.');
+    if (decimal.length > 2 || decimal.every(part => part === '') || decimal.some(part => /\D/.test(part))) return null;
+  }
+  const alpha = alphaToken === undefined ? 1 : Number(alphaToken);
   if (!Number.isFinite(alpha) || alpha < 0 || alpha > 1) return null;
   return {
     hex: `#${channels.map(n => n.toString(16).padStart(2, '0')).join('')}`,
-    alpha, format: rgb[4] === undefined ? 'hex' : 'rgba',
+    alpha, format: alphaToken === undefined ? 'hex' : 'rgba',
   };
 }
 

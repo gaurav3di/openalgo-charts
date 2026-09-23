@@ -12,7 +12,7 @@ with no runtime dependencies.
 [![npm version](https://img.shields.io/npm/v/openalgo-charts.svg?color=cb3837&label=npm)](https://www.npmjs.com/package/openalgo-charts)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![npm downloads](https://img.shields.io/npm/dm/openalgo-charts.svg?color=0ea5e9&label=npm%20downloads)](https://www.npmjs.com/package/openalgo-charts)
-[![tests](https://img.shields.io/badge/engine%20tests-6092%20passing-brightgreen.svg)](#develop)
+[![tests](https://img.shields.io/badge/engine%20tests-6095%20passing-brightgreen.svg)](#develop)
 [![dependencies](https://img.shields.io/badge/runtime%20deps-0-brightgreen.svg)](#principles)
 
 [**Documentation**](https://marketcalls.github.io/openalgo-charts/) &nbsp;·&nbsp; [**Live examples**](https://marketcalls.github.io/openalgo-charts/examples) &nbsp;·&nbsp; [**Getting started**](./docs/getting-started.md) &nbsp;·&nbsp; [**Migrating to 2.0**](./docs/migrating-to-2.md) &nbsp;·&nbsp; [**Architecture**](./ARCHITECTURE.md)
@@ -164,10 +164,10 @@ Unused optional tiers stay out of the base chart download.
 | `openalgo-charts/profile` | Volume Profile, Market Profile (TPO) with compact pixel letters, Footprint, order flow | 14.96 kB |
 | `openalgo-charts/trade` | Order, position and bracket tools, plus a depth-of-market ladder | 8.01 kB |
 | `openalgo-charts/webgl` | GPU drawing for supported series, with Canvas 2D fallback | 6.39 kB |
-| `openalgo-charts/widget` | `createWidget`: toolbar, Data and Objects dock, symbol search, dialogs, mobile controls, shortcuts and optional layout persistence | 59.07 kB |
+| `openalgo-charts/widget` | `createWidget`: toolbar, Data and Objects dock, symbol search, dialogs, mobile controls, shortcuts and optional layout persistence | 59.22 kB |
 | `openalgo-charts/workspace` | Validated workspace and indicator-template documents, named catalogs with revision checks, asynchronous storage and an IndexedDB adapter; no DOM | 5.55 kB |
 
-Everything together is **266.43 kB Brotli**; a widget terminal with built-in indicators (base + draw + indicators + widget) is 227.02 kB. Figures are measured from the 2.5.3 release build. The trade tier is 8.01 kB on its own; base + trade costs 104.55 kB. Sizes use decimal kB.
+Everything together is **266.57 kB Brotli**; a widget terminal with built-in indicators (base + draw + indicators + widget) is 227.16 kB. Figures are measured from the 2.5.3 release build. The trade tier is 8.01 kB on its own; base + trade costs 104.55 kB. Sizes use decimal kB.
 
 ## What's built
 
@@ -496,10 +496,10 @@ Enforced in CI by [`size-limit`](./.size-limit.json). Nothing is excluded, becau
 | Transform tier | 6 kB | 4.50 kB |
 | Profile tier | 15 kB | 14.96 kB |
 | WebGL2 tier | 7 kB | 6.39 kB |
-| Widget tier | 60.5 kB | 59.07 kB |
-| Widget terminal (base + draw + indicators + widget) | 229 kB | 227.02 kB |
+| Widget tier | 60.5 kB | 59.22 kB |
+| Widget terminal (base + draw + indicators + widget) | 229 kB | 227.16 kB |
 | Workspace tier | 6 kB | 5.55 kB |
-| **Everything** | 269 kB | 266.43 kB |
+| **Everything** | 269 kB | 266.57 kB |
 
 ## Documentation
 
@@ -544,7 +544,7 @@ See [Contributing](./CONTRIBUTING.md) for setup, targeted checks, documentation 
 ```bash
 npm install        # install dev toolchain
 npm run typecheck  # strict TypeScript check
-npm test           # engine unit tests (Vitest): 6092 across 268 files
+npm test           # engine unit tests (Vitest): 6095 across 268 files
 npm run test:demo  # reference-host tests: 424 across 35 files
 npm run test:endurance # node endurance-harness tests: 7 cases
 npm run build      # Rollup -> dist/ (minified ESM per tier + types)
