@@ -150,6 +150,36 @@ usual overlay stack and theme furniture. Include `OBJECTS_PANEL_CSS` alongside
 
 ## Persistence and lifecycle
 
+### Ordering, study panes, and drawing groups
+
+The default widget places Objects in its information dock. Rows are organized by
+pane. Drag a study or drawing onto a compatible row to change its order, or use
+**Earlier** and **Later**. Reordering changes the rendered order as well as the list.
+Use a study's pane selector to move it to an existing pane or a new one. On touch
+or keyboard, Select/Deselect controls let you select several drawings for a group.
+
+```ts
+widget.chart.reorderIndicator(study.id, -1);
+widget.chart.moveIndicator(study.id, targetPaneIndex);
+const group = widget.draw.createGroup('Morning levels', [support.id, resistance.id]);
+if (group) widget.draw.renameGroup(group.id, 'Session levels');
+```
+
+Moving a study retains its instance ID, plots, attached visuals, and alert
+references. Empty study panes are removed after their contents move. Named drawing
+groups round-trip in `DrawingsDocument.groups`; documents without groups still
+load. Group changes participate in drawing undo/redo.
+
+For custom inventories, `ChartObjects.reorder(id, direction)` and
+`move(id, paneIndex)` respect optional `reorder` and `move` capabilities.
+`createGroup(name, ids)`, `renameGroup(id, name)`, and `ungroup(id)` use inventory
+IDs. Group rows have `kind: 'group'`; child rows may carry `groupId`. A provider can
+offer `reorder` or `move` callbacks, or omit both to retain its existing behavior.
+
+`createObjectsPanelContent(context, options?)` returns `element`, `initialFocus`,
+and `destroy()` for embedding in an existing panel. It does not create a heading
+or close button. `mountObjectsPanel` remains available for a standalone popup.
+
 Indicator visibility round-trips in chart and widget layouts. Older layouts without
 the optional `visible` field restore indicators as visible. Drawing visibility and
 lock state remain part of the drawing document. A restored indicator can receive a

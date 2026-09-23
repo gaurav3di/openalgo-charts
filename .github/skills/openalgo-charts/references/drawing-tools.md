@@ -720,3 +720,14 @@ Golden variants use all enabled Fibonacci levels. Supersonic tools also read
 Dense labels on advanced geometry use bounded vertical spacing. Labels with no
 room in a tiny plot are omitted without changing saved anchors, level values or
 hit regions. Zoom in or disable unneeded levels to inspect crowded values.
+
+
+## Named drawing groups (2.5.3)
+
+`DrawingGroup` contains an id, name and drawing ids. `DrawingController.groups()`,
+`createGroup(name, ids)`, `renameGroup(id, name)`, and
+`removeGroup(id, removeDrawings = false)` manage membership. A drawing belongs to
+at most one group. Invalid/missing members are discarded on restore. Optional
+`DrawingsDocument.groups` preserves old drawing documents and round-trips named
+groups. Group changes participate in undo/redo. `ChartObjectDrawingGroup` is the
+base tier's structural view, avoiding an import from the draw tier.

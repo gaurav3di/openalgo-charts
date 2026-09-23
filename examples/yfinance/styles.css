@@ -820,3 +820,28 @@ body[data-fullscreen-pane="2"] #chart2 { left: 42px; }
   color: var(--mut); font-size: 12px; line-height: 1; cursor: pointer; user-select: none; }
 .symkey:hover { background: var(--elev, #1a1f2c); border-color: var(--bd); color: var(--tx); }
 .symkey:focus-visible { outline: 2px solid var(--acc, #4f8cff); outline-offset: 1px; }
+
+/* A chart and its information dock share one measured plot row. The widget
+   scope supplies component tokens without imposing the standalone shell grid. */
+.inspect-layout.oac-widget { position: absolute; inset: 0; display: flex; min-width: 0;
+  width: auto; height: auto; grid-template: none; background: transparent; overflow: hidden; }
+.stage.has-rail .inspect-layout { left: 42px; }
+.stage.has-rail .inspect-layout #chart,
+.p2plot .inspect-layout #chart2 { position: relative; inset: auto; flex: 1 1 auto; min-width: 0; height: 100%; }
+body[data-fullscreen-pane="2"] .p2plot .inspect-layout { left: 42px; }
+.oac-widget .host-symbol-search { min-width: 245px; padding: 7px; }
+.oac-widget .host-symbol-search > input { width: 100%; height: 32px; padding: 0 8px;
+  background: var(--oac-elev); border: 1px solid var(--oac-bd); border-radius: 5px; }
+.set-body.host-form-widget.oac-widget { width: auto; height: auto; background: transparent;
+  display: grid; overflow: auto; }
+.set-body.host-form-widget.oac-widget:has(.oac-color__popover:not([hidden])) { overflow: visible; }
+.set-card:has(.oac-color__popover:not([hidden])),
+.cset-card:has(.oac-color__popover:not([hidden])) { overflow: visible; }
+.pb-pop.host-drawing-widget.oac-widget { display: block; width: auto; height: auto;
+  overflow: visible; background: var(--panel); }
+.pb-shared-color { justify-content: space-between; }
+.pb-pop .pb-shared-color .oac-color { flex: 0 0 27px; }
+@media (max-width: 900px) {
+  .stage.has-rail .inspect-layout { left: 0; bottom: 52px; }
+  body[data-fullscreen-pane="2"] .p2plot .inspect-layout { left: 0; bottom: 50px; }
+}

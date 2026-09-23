@@ -282,6 +282,24 @@ describe('mountSettingsDialog', () => {
 // ── indicator picker ──────────────────────────────────────────────────────
 
 describe('mountIndicatorPicker', () => {
+  it('lists running study instances separately and removes only the selected duplicate', () => {
+    const rig = makeRig();
+    const first = rig.chart.addIndicator('test-ma');
+    const second = rig.chart.addIndicator('test-ma');
+    const handle = mountIndicatorPicker(rig.ctx);
+    const running = rig.qa('.oac-pick__running-row');
+    expect(running.map(row => row.dataset.instanceId)).toEqual([first.id, second.id]);
+    const find = rig.q('.oac-pick__find') as FakeElement;
+    find.value = 'no such study';
+    find.fire('input');
+    expect(rig.qa('.oac-pick__running-row').length).toBe(2);
+    (running[1].querySelector('.oac-pick__remove') as FakeElement).click();
+    expect(rig.chart.indicators().map(inst => inst.id)).toEqual([first.id]);
+    expect(rig.qa('.oac-pick__running-row').map(row => row.dataset.instanceId)).toEqual([first.id]);
+    rig.chart.removeIndicator(first.id);
+    expect(rig.q('.oac-pick__running-empty')?.textContent).toBe('No running studies');
+    handle.close();
+  });
   it('lists the registry by category, filters as you type, and adds on click or Enter', () => {
     const rig = makeRig();
     const added: string[] = [];
@@ -512,6 +530,16 @@ describe('mountDrawingProperties', () => {
 // ── level editor ──────────────────────────────────────────────────────────
 
 describe('mountLevelEditor', () => {
+  it('uses the shared palette for level colours and keeps each edit in the level list', () => {
+    const rig = makeRig();
+    const f = fib(rig.draw);
+    rig.draw.select(f.id);
+    mountLevelEditor(rig.ctx);
+    const row = rig.qa('.oac-levels__row')[0];
+    (row.querySelector('.oac-color__trigger') as FakeElement).click();
+    (rig.q('.oac-color__palette button') as FakeElement).click();
+    expect(rig.draw.get(f.id)?.style.levels?.[0].color).toBe('#4f8cff');
+  });
   it('draws one row per level and writes the whole list back on every edit', () => {
     const rig = makeRig();
     const f = fib(rig.draw);
@@ -868,5 +896,45 @@ describe('mountContextMenu', () => {
     const menu = rig.q('.oac-ctx') as FakeElement;
     expect(menu.style.left).toBe('500px');
     expect(menu.querySelectorAll('[data-act]').map((r) => r.dataset.act)).toEqual(['draw-paste', 'chart-fit', 'chart-indicators', 'chart-settings']);
+  });
+});
+
+describe('nested color overlay lifecycle', () => {
+  it('keeps chart settings open on picker Escape and releases the picker on tab change or parent close', () => {
+    const rig = makeRig();
+    const panel = mountSettingsDialog(rig.ctx, undefined, { tab: 'appearance' });
+    (rig.q('.oac-color__trigger') as FakeElement).click();
+    expect(rig.stack.size()).toBe(2);
+    escape(rig);
+    expect(rig.stack.size()).toBe(1); expect(panel.isOpen()).toBe(true);
+    (rig.q('.oac-color__trigger') as FakeElement).click();
+    (rig.q('[data-tab="price"]') as FakeElement).click();
+    expect(rig.stack.size()).toBe(1);
+    (rig.q('.oac-color__trigger') as FakeElement).click();
+    panel.close(); expect(rig.stack.size()).toBe(0);
+  });
+  it('disposes indicator settings color overlays with their parent', () => {
+    const rig = makeRig(); const study = rig.chart.addIndicator('test-ma');
+    const panel = mountIndicatorSettings(rig.ctx, undefined, { instanceId: study.id, tab: 'style' });
+    (rig.q('.oac-color__trigger') as FakeElement).click();
+    expect(rig.stack.size()).toBe(2);
+    panel.close(); expect(rig.stack.size()).toBe(0);
+  });
+  it('disposes drawing properties color overlays on selection replacement and parent dismissal', () => {
+    const rig = makeRig(); const first = rect(rig.draw); const second = line(rig.draw);
+    rig.draw.select(first.id); const panel = mountDrawingProperties(rig.ctx);
+    (rig.q('.oac-color__trigger') as FakeElement).click(); expect(rig.stack.size()).toBe(2);
+    rig.draw.select(second.id); expect(rig.stack.size()).toBe(1);
+    (rig.q('.oac-color__trigger') as FakeElement).click();
+    panel.close(); expect(rig.stack.size()).toBe(0);
+  });
+  it('keeps level colors in the shared stack and disposes them on close', () => {
+    const rig = makeRig();
+    const drawing = rig.draw.add({ tool: 'fib-retracement', paneIndex: 0, style: {}, points: [{ time: T0, price: 90 }, { time: T0 + 60, price: 110 }] });
+    const panel = mountLevelEditor(rig.ctx, undefined, { ids: [drawing.id] });
+    (rig.q('.oac-color__trigger') as FakeElement).click(); expect(rig.stack.size()).toBe(2);
+    escape(rig); expect(panel.isOpen()).toBe(true); expect(rig.stack.size()).toBe(1);
+    (rig.q('.oac-color__trigger') as FakeElement).click();
+    panel.close(); expect(rig.stack.size()).toBe(0);
   });
 });

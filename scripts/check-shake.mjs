@@ -71,7 +71,11 @@ const BUNDLE = new URL('../dist/openalgo-charts.mjs', import.meta.url).pathname.
 // 2.5.0 measures 53.36 KiB; optional tiers and the alert controller must still shake out.
 // Grouped event markers and appearance notifications serve headless chart hosts.
 // 2.5.2 measures 54.67 KiB; drawing calculations and the details popup stay optional.
-const LIMIT_BYTES = 55 * 1024;
+// Identity-preserving study movement, renderer stacking and crosshair readout
+// events in 2.5.3 also serve raw chart hosts. Against 253ae71, the chart-only
+// build grows from 54.67 to 55.58 KiB (929 bytes Brotli); allow 55.75 KiB.
+// Drawing groups, widget controls and the optional controllers still shake out.
+const LIMIT_BYTES = 55.75 * 1024;
 
 // Absent from a chart-only build. Each is a string that appears in the adapter
 // source and nowhere in the rendering core.

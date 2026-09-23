@@ -16,7 +16,8 @@ import {
 } from 'openalgo-charts/draw';
 import type { Drawing, DrawingTool, FibLevel, SettingsSchema } from 'openalgo-charts/draw';
 import type { WidgetContext } from '../context';
-import { button, el, openPanel, placePanel, selectionPoint, stopOwnKeys, toHexColor, type PanelHandle } from '../form';
+import { button, el, openPanel, placePanel, selectionPoint, stopOwnKeys, type PanelHandle } from '../form';
+import { createColorPicker, type ColorPickerHandle } from '../color-picker';
 
 export interface LevelEditorOptions {
   /** The drawings to edit. Default: the controller's selection. */
@@ -134,6 +135,7 @@ export function mountLevelEditor(ctx: WidgetContext, anchor?: HTMLElement, opts:
 
   const rows = el(doc, 'div', 'oac-levels__rows');
   root.appendChild(rows);
+  let pickers: ColorPickerHandle[] = [];
 
   function row(lv: FibLevel, i: number): HTMLElement {
     const r = el(doc, 'div', 'oac-levels__row' + (lv.enabled === false ? ' is-off' : ''));
@@ -166,12 +168,15 @@ export function mountLevelEditor(ctx: WidgetContext, anchor?: HTMLElement, opts:
     });
     r.appendChild(ratio);
 
-    const color = el(doc, 'input');
-    color.type = 'color';
-    color.value = toHexColor(lv.color) ?? toHexColor(primary.style.color) ?? toHexColor(levelColor(lv.ratio)) ?? LEVEL_NEUTRAL;
-    color.setAttribute('aria-label', widgetText(ctx, 'Color'));
-    color.addEventListener('change', () => { list[i].color = color.value; emit(); });
-    r.appendChild(color);
+    const color = createColorPicker(doc, {
+      id: `oac-level-${primary.id}-${i}`,
+      label: widgetText(ctx, 'Color'),
+      value: lv.color ?? primary.style.color ?? levelColor(lv.ratio) ?? LEVEL_NEUTRAL,
+      translate: ctx.translate, openOverlay: ctx.openOverlay,
+      onChange: value => { list[i].color = value; emit(); },
+    });
+    pickers.push(color);
+    r.appendChild(color.el);
 
     const label = el(doc, 'input');
     label.type = 'text';
@@ -196,6 +201,8 @@ export function mountLevelEditor(ctx: WidgetContext, anchor?: HTMLElement, opts:
   }
 
   function paint(): void {
+    pickers.forEach(picker => picker.destroy());
+    pickers = [];
     rows.innerHTML = '';
     if (list.length === 0) {
       rows.appendChild(el(doc, 'div', 'oac-empty', widgetText(ctx, 'No levels. Add one, or reset to the defaults.')));
@@ -235,16 +242,17 @@ export function mountLevelEditor(ctx: WidgetContext, anchor?: HTMLElement, opts:
     if (handle.isOpen() && ctx.draw.get(primary.id) === undefined) handle.close();
   });
 
+  const cleanup = (): void => { pickers.forEach(picker => picker.destroy()); offUpdate(); offRemove(); };
   const handle = openPanel(
     ctx, root,
     anchor === undefined ? { placement: 'below', dismissOnOutside: true } : { anchor, placement: 'below' },
-    () => {},
+    cleanup,
   );
   if (anchor === undefined) placePanel(ctx.root, root, { point: selectionPoint(ctx.root, ctx.chart, drawings) });
   const close = handle.close;
   return {
     el: root,
     isOpen: handle.isOpen,
-    close: () => { offUpdate(); offRemove(); close(); },
+    close: () => { cleanup(); close(); },
   };
 }

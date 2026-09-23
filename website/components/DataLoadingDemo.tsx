@@ -1,6 +1,8 @@
 import RunnableExample from './RunnableExample';
+import { STOCK_BARS_SOURCE } from './synthetic-market';
 
-const code = `el.style.display = 'flex';
+const code = `${STOCK_BARS_SOURCE}
+el.style.display = 'flex';
 el.style.flexDirection = 'column';
 const controls = document.createElement('div');
 controls.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;padding:8px;min-height:48px;flex-shrink:0';
@@ -8,10 +10,8 @@ const stage = document.createElement('div');
 stage.style.cssText = 'flex:1;min-height:0';
 el.append(controls, stage);
 const now = 1789093800;
-const price = value => Math.round((23800 + (value - 100) * 4) * 20) / 20;
-const bars = lib.generateBars(now - 359 * 60, 360, 60).map(bar => ({
-  ...bar, open: price(bar.open), high: price(bar.high),
-  low: price(bar.low), close: price(bar.close),
+const bars = stockBars(now - 359 * 60, 360, 60, 23800, 7133, 0.0005, 6500).map(bar => ({
+  ...bar,
   volume: Math.round(bar.volume / 65) * 65,
 }));
 let failNext = false;

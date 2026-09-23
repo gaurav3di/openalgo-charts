@@ -3,9 +3,10 @@ import { registeredDrawingTools } from 'openalgo-charts/draw';
 import { h, type WidgetContext } from './context';
 import type { RailHandle } from './rail';
 import {
-  SEARCH_DEBOUNCE_MS, chartTypeChoices, chartTypeLabel, intervalLabel,
-  brandingLink, type SymbolMatch, type SymbolSearch, type TopbarState,
+  chartTypeChoices, chartTypeLabel, intervalLabel,
+  brandingLink, type SymbolSearch, type TopbarState,
 } from './topbar';
+import { mountSymbolPicker, type SymbolPickerHandle } from './symbol-picker';
 
 export type MobileMode = 'auto' | 'always' | 'never';
 
@@ -26,6 +27,7 @@ export interface MobileOptions {
   onSettings(anchor: HTMLElement): boolean;
   onIndicators(anchor: HTMLElement): boolean;
   onObjects(anchor: HTMLElement): boolean;
+  onDataWindow?(anchor: HTMLElement): void | boolean;
   onAlerts?(anchor: HTMLElement): boolean;
   onProperties(anchor: HTMLElement): boolean;
   settingsAvailable(): boolean;
@@ -51,8 +53,6 @@ interface ActionIdentity {
   chartType?: string;
 }
 
-let mobileSearchId = 0;
-
 /** Mount the narrow widget controls against the same chart and controllers as the desktop chrome. */
 export function mountMobile(ctx: WidgetContext, opts: MobileOptions): MobileHandle {
   const doc = ctx.document;
@@ -63,13 +63,7 @@ export function mountMobile(ctx: WidgetContext, opts: MobileOptions): MobileHand
   let destroyed = false;
   let mobile = false;
   let modeApplied = false;
-  let searchTimer: ReturnType<typeof setTimeout> | 0 = 0;
-  let searchSequence = 0;
-  let searchQuery: string | null = null;
-  let searchPanel: HTMLElement | null = null;
-  let searchList: HTMLElement | null = null;
-  let searchClose: (() => void) | null = null;
-  let closingSearch = false;
+  let picker: SymbolPickerHandle | null = null;
   let symbolInput: HTMLInputElement | null = null;
   let sheet: OpenSheet | null = null;
   const offs: Array<() => void> = [];
@@ -113,26 +107,7 @@ export function mountMobile(ctx: WidgetContext, opts: MobileOptions): MobileHand
     current?.close();
   };
 
-  const invalidateSearch = (): void => {
-    if (searchTimer !== 0) { clearTimeout(searchTimer); searchTimer = 0; }
-    searchSequence++;
-    searchQuery = null;
-  };
-
-  const clearSearch = (): void => {
-    invalidateSearch();
-    const close = searchClose;
-    searchClose = null;
-    searchPanel = null;
-    searchList = null;
-    symbolInput?.setAttribute('aria-expanded', 'false');
-    symbolInput?.removeAttribute('aria-controls');
-    if (close !== null) {
-      closingSearch = true;
-      close();
-      closingSearch = false;
-    }
-  };
+  const clearSearch = (): void => picker?.close();
 
   const openSheet = (
     title: string,
@@ -185,11 +160,6 @@ export function mountMobile(ctx: WidgetContext, opts: MobileOptions): MobileHand
     symbolInput = h(doc, 'input', 'oac-mobile__symbol', {
       type: 'text', 'aria-label': widgetText(ctx, 'Symbol'), placeholder: widgetText(ctx, 'Symbol'), autocomplete: 'off', spellcheck: 'false',
     });
-    if (opts.search !== undefined) {
-      symbolInput.setAttribute('aria-autocomplete', 'list');
-      symbolInput.setAttribute('aria-haspopup', 'listbox');
-      symbolInput.setAttribute('aria-expanded', 'false');
-    }
     intervalButton = makeAction('interval', '', (anchor) => {
       openSheet(widgetText(ctx, 'Interval'), anchor, (body, close) => {
         for (const code of opts.intervals) {
@@ -211,95 +181,18 @@ export function mountMobile(ctx: WidgetContext, opts: MobileOptions): MobileHand
       refresh();
       symbolInput?.blur();
     };
-    const ensureSearchPanel = (): HTMLElement => {
-      if (searchPanel !== null) return searchPanel;
-      const panel = h(doc, 'section', 'oac-mobile-results', { role: 'region', 'aria-label': widgetText(ctx, 'Symbol search results') });
-      const head = h(doc, 'div', 'oac-mobile-results__head');
-      const title = h(doc, 'strong');
-      title.textContent = widgetText(ctx, 'Symbols');
-      head.append(title, makeAction('close-search', widgetText(ctx, 'Close'), () => clearSearch()));
-      const list = h(doc, 'div', 'oac-mobile-results__list', { role: 'listbox' });
-      list.id = `oac-mobile-results-${++mobileSearchId}`;
-      panel.append(head, list);
-      searchPanel = panel;
-      searchList = list;
-      symbolInput?.setAttribute('aria-controls', list.id);
-      let entryClose: () => void = () => {};
-      entryClose = ctx.openOverlay(panel, {
-        anchor: symbolInput ?? undefined,
-        placement: 'below',
-        initialFocus: null,
-        dismissOnOutside: true,
-        onClose: () => {
-          if (searchPanel === panel) {
-            searchPanel = null;
-            searchList = null;
-            searchClose = null;
-          }
-          symbolInput?.setAttribute('aria-expanded', 'false');
-          symbolInput?.removeAttribute('aria-controls');
-          if (!closingSearch) invalidateSearch();
-        },
-      });
-      searchClose = entryClose;
-      return panel;
-    };
-    const showSearching = (): void => {
-      ensureSearchPanel();
-      if (searchList === null) return;
-      searchList.textContent = '';
-      const status = h(doc, 'div', 'oac-mobile-results__status', { role: 'status' });
-      status.textContent = widgetText(ctx, 'Searching');
-      searchList.appendChild(status);
-    };
-    const showMatches = (matches: readonly SymbolMatch[]): void => {
-      if (matches.length === 0) { clearSearch(); return; }
-      ensureSearchPanel();
-      if (searchList === null) return;
-      searchList.textContent = '';
-      for (const match of matches) {
-        const label = match.exchange ? `${match.exchange}:${match.symbol}` : match.symbol;
-        const button = makeAction('pick-symbol', label, () => commitSymbol(match.symbol, match.exchange));
-        button.setAttribute('role', 'option');
-        if (match.name) {
-          const detail = h(doc, 'small');
-          detail.textContent = match.name;
-          button.appendChild(detail);
-        }
-        searchList.appendChild(button);
-      }
-    };
+    if (opts.search !== undefined) picker = mountSymbolPicker(ctx, symbolInput, {
+      search: opts.search,
+      onSelect: commitSymbol,
+      context: () => `${opts.state().exchange}:${opts.state().symbol}:${opts.state().interval}`,
+      variant: 'mobile',
+    });
     symbolInput.addEventListener('keydown', (event) => {
       if ((event as KeyboardEvent).key === 'Enter') {
         event.preventDefault();
         commitSymbol(symbolInput?.value ?? '');
       }
     });
-    if (opts.search !== undefined) {
-      symbolInput.addEventListener('input', () => {
-        invalidateSearch();
-        const query = symbolInput?.value.trim() ?? '';
-        if (query === '') { clearSearch(); return; }
-        const sequence = ++searchSequence;
-        searchQuery = query;
-        showSearching();
-        searchTimer = setTimeout(() => {
-          searchTimer = 0;
-          Promise.resolve(opts.search?.(query) ?? []).then((matches) => {
-            const active = doc.activeElement as HTMLElement | null;
-            const interactionActive = active === symbolInput || (active !== null && searchPanel?.contains(active) === true);
-            if (!destroyed && mobile && sequence === searchSequence && searchQuery === query
-              && symbolInput?.value.trim() === query && interactionActive) showMatches(matches);
-          }).catch(() => {
-            if (sequence === searchSequence && searchQuery === query) clearSearch();
-          });
-        }, SEARCH_DEBOUNCE_MS);
-      });
-      symbolInput.addEventListener('blur', (event) => {
-        const next = (event as FocusEvent).relatedTarget as Node | null;
-        if (next === null || searchPanel?.contains(next) !== true) clearSearch();
-      });
-    }
     header.append(symbolInput, intervalButton);
     root.appendChild(header);
   }
@@ -368,6 +261,7 @@ export function mountMobile(ctx: WidgetContext, opts: MobileOptions): MobileHand
   }
   if (opts.topbar) {
     bar.appendChild(makeAction('objects', widgetText(ctx, 'Objects'), (anchor) => { opts.onObjects(anchor); }));
+    if (opts.onDataWindow) bar.appendChild(makeAction('data-window', widgetText(ctx, 'schema.ui.dataWindow', {}, 'Data'), (anchor) => { opts.onDataWindow?.(anchor); }));
     bar.appendChild(makeAction('more', widgetText(ctx, 'More'), (anchor) => {
       openSheet(widgetText(ctx, 'More'), anchor, (body, close) => {
         if (opts.onAlerts) body.appendChild(makeAction('alerts', widgetText(ctx, 'Alerts'), () => {
@@ -485,7 +379,7 @@ export function mountMobile(ctx: WidgetContext, opts: MobileOptions): MobileHand
     destroy: () => {
       if (destroyed) return;
       destroyed = true;
-      clearSearch();
+      picker?.destroy();
       closeSheet();
       observer?.disconnect();
       observer = null;

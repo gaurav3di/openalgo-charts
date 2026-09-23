@@ -20,7 +20,7 @@ function create(state) {
   api.widget?.destroy();
   const widget = createWidget(document.querySelector('#host'), {
     symbol: 'OBJECTS SIM', interval: '1m', intervals: ['1m'], theme: 'dark',
-    rail: false, statusline: false, navigation: { defaultVisibleBars: 100 },
+    rail: false, statusline: false, panels: false, navigation: { defaultVisibleBars: 100 },
     onOrder: () => { api.orderCalls++; },
   });
   api.widget = widget;

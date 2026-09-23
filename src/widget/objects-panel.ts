@@ -10,7 +10,7 @@ export interface ObjectsPanelOptions {
   onClose?: () => void;
 }
 
-type Action = keyof ChartObjectSnapshot['capabilities'];
+type Action = 'select' | 'visibility' | 'lock' | 'settings' | 'focus' | 'remove';
 interface ObjectRow {
   el: HTMLElement;
   summary: HTMLElement;
@@ -19,20 +19,26 @@ interface ObjectRow {
   status: HTMLElement;
   actions: HTMLElement;
   selectable: boolean;
-  buttons: Map<Action, HTMLButtonElement>;
+  buttons: Map<string, HTMLButtonElement>;
+  move?: HTMLSelectElement;
+  members?: HTMLElement;
 }
 
-const KINDS = { source: 'Source', indicator: 'Indicator', drawing: 'Drawing', profile: 'Profile' };
+const KINDS = { source: 'Source', indicator: 'Indicator', drawing: 'Drawing', profile: 'Profile', group: 'Group' };
 const ACTIONS = ['visibility', 'lock', 'settings', 'focus', 'remove'] as const;
 const STATUS = { loading: 'Loading', ready: 'Ready', empty: 'No data', unsupported: 'Unsupported', error: 'Could not load' };
 const FAILURES = { select: 'Could not select {name}', visibility: 'Could not change visibility for {name}', lock: 'Could not change lock for {name}', settings: 'Could not open settings for {name}', focus: 'Could not focus {name}', remove: 'Could not remove {name}' } as const;
 
 let rowSequence = 0;
 
-/** Open a searchable inventory backed by the host's live object model. */
-export function mountObjectsPanel(
-  ctx: WidgetContext, anchor?: HTMLElement, opts: ObjectsPanelOptions = {},
-): PanelHandle {
+export interface ObjectsPanelContent {
+  element: HTMLElement;
+  initialFocus: HTMLElement;
+  destroy(): void;
+}
+
+/** Searchable object tree for a host-owned dock or sheet. */
+export function createObjectsPanelContent(ctx: WidgetContext, opts: ObjectsPanelOptions = {}): ObjectsPanelContent {
   const resolved = opts.objects ?? ctx.objects;
   if (resolved === undefined) throw new Error(widgetText(ctx, 'Objects panel requires an object model'));
   const objects = resolved;
@@ -43,9 +49,13 @@ export function mountObjectsPanel(
   let all: readonly ChartObjectSnapshot[] = [];
   const rows = new Map<string, ObjectRow>();
 
-  const frame = dialogFrame(doc, { translate: ctx.translate, title: widgetText(ctx, 'Objects'), className: 'oac-objects', onClose: () => handle.close() });
-  frame.closeButton.textContent = widgetText(ctx, 'Close');
-  frame.closeButton.classList.remove('oac-btn--icon');
+  const content = el(doc, 'div', 'oac-objects-content');
+  const stopPointer = (event: Event): void => event.stopPropagation();
+  content.addEventListener('pointerdown', stopPointer);
+  const sections = new Map<number, { element: HTMLElement; rows: HTMLElement }>();
+  let draggedId: string | null = null;
+  const text = (key: string, fallback: string, values: Record<string, string | number> = {}): string =>
+    widgetText(ctx, `schema.ui.objects.${key}`, values, fallback);
   const search = el(doc, 'input', 'oac-objects__find');
   search.type = 'search';
   search.placeholder = widgetText(ctx, 'Search name, type or pane');
@@ -58,9 +68,50 @@ export function mountObjectsPanel(
   empty.setAttribute('role', 'status');
   const count = el(doc, 'span', 'oac-objects__count');
   count.setAttribute('role', 'status');
-  frame.body.append(search, list, empty);
-  frame.lead.appendChild(count);
-  frame.actions.appendChild(button(doc, { label: widgetText(ctx, 'Done'), variant: 'primary', onClick: () => handle.close() }));
+  content.append(search, list, empty, count);
+  const groupName = el(doc, 'input', 'oac-objects__group-name');
+  groupName.type = 'text';
+  groupName.dataset.action = 'group-name';
+  groupName.placeholder = text('groupName', 'Group name');
+  groupName.setAttribute('aria-label', text('groupName', 'Group name'));
+  const groupButton = button(doc, { label: text('group', 'Group selected'), onClick: () => {
+    if (closed) return;
+    const ids = all.filter(item => item.kind === 'drawing' && item.selected).map(item => item.id);
+    if (objects.createGroup(groupName.value, ids)) groupName.value = '';
+    paint();
+  } });
+  groupButton.dataset.action = 'group';
+  if (objects.canGroup?.()) {
+    const grouping = el(doc, 'div', 'oac-objects__grouping');
+    grouping.append(groupName, groupButton);
+    content.insertBefore(grouping, list);
+  }
+  const updateGroupButton = (): void => {
+    groupButton.disabled = !groupName.value.trim() || !all.some(item => item.kind === 'drawing' && item.selected);
+  };
+  groupName.addEventListener('input', updateGroupButton);
+
+  function moveTo(id: string, paneIndex: number): void {
+    if (closed) return;
+    if (!objects.move(id, paneIndex)) ctx.toast(text('moveFailed', 'Could not move object'), 'error');
+    paint();
+  }
+
+  function dropOn(id: string): void {
+    if (closed || draggedId === null || draggedId === id) return;
+    const source = objects.get(draggedId);
+    const target = objects.get(id);
+    if (!source || !target || source.kind !== target.kind) return;
+    if (source.paneIndex !== target.paneIndex && !objects.move(source.id, target.paneIndex)) return;
+    // Re-read after every step because model listeners publish synchronously.
+    for (let n = 0; n < all.length; n++) {
+      const peers = objects.list().filter(item => item.kind === source.kind && item.paneIndex === objects.get(source.id)?.paneIndex);
+      const from = peers.findIndex(item => item.id === source.id);
+      const to = peers.findIndex(item => item.id === target.id);
+      if (from < 0 || to < 0 || from === to || !objects.reorder(source.id, from < to ? 1 : -1)) break;
+      if (Math.abs(from - to) === 1) break;
+    }
+  }
 
   function act(action: Action, id: string, event?: MouseEvent): void {
     if (closed) return;
@@ -85,6 +136,19 @@ export function mountObjectsPanel(
     const node = el(doc, 'div', 'oac-objects__row');
     node.dataset.objectId = item.id;
     node.setAttribute('role', 'listitem');
+    node.addEventListener('dragstart', event => {
+      if (closed || !objects.get(item.id)?.capabilities.reorder) { event.preventDefault(); return; }
+      event.stopPropagation();
+      draggedId = item.id;
+      event.dataTransfer?.setData('text/plain', item.id);
+      if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+    });
+    node.addEventListener('dragend', () => { draggedId = null; });
+    node.addEventListener('dragover', event => { if (draggedId !== null) event.preventDefault(); });
+    node.addEventListener('drop', event => {
+      event.preventDefault(); event.stopPropagation();
+      dropOn(item.id); draggedId = null;
+    });
     const summary = item.capabilities.select
       ? button(doc, { label: '', onClick: event => act('select', item.id, event) })
       : el(doc, 'div');
@@ -100,14 +164,20 @@ export function mountObjectsPanel(
     summary.append(name, meta, status);
     const actions = el(doc, 'div', 'oac-objects__actions');
     node.append(summary, actions);
-    return { el: node, summary, name, meta, status, actions, selectable: item.capabilities.select, buttons: new Map() };
+    const members = item.kind === 'group' ? el(doc, 'div', 'oac-objects__members') : undefined;
+    if (members) { members.setAttribute('role', 'list'); node.appendChild(members); }
+    return { el: node, summary, name, meta, status, actions, selectable: item.capabilities.select, buttons: new Map(), members };
   }
 
   function updateRow(row: ObjectRow, item: ChartObjectSnapshot): void {
     row.name.textContent = item.name;
+    row.el.draggable = item.capabilities.reorder === true;
+    row.el.dataset.groupId = item.groupId ?? '';
+    row.el.classList.toggle('is-group-member', item.groupId !== undefined);
     const meta = [kindLabel(item), paneLabel(item), item.visible ? widgetText(ctx, 'Visible') : widgetText(ctx, 'Hidden')];
     if (item.locked !== undefined) meta.push(item.locked ? widgetText(ctx, 'Locked') : widgetText(ctx, 'Unlocked'));
     if (item.selected) meta.push(widgetText(ctx, 'Selected'));
+    if (item.groupId) { const group = all.find(row => row.id === item.groupId); if (group) meta.push(group.name); }
     row.meta.textContent = meta.join(', ');
     row.el.classList.toggle('is-selected', item.selected);
     if (row.selectable) {
@@ -139,13 +209,68 @@ export function mountObjectsPanel(
       if (row.actions.children[index] !== control) row.actions.insertBefore(control, row.actions.children[index] ?? null);
       index++;
     }
+    if (item.kind === 'drawing' && item.id === 'drawing:' + item.sourceId && objects.canGroup?.()) {
+      let control = row.buttons.get('add-selection');
+      if (!control) {
+        control = button(doc, { label: '', variant: 'ghost', onClick: () => {
+          if (!closed) objects.select(item.id, true);
+        } });
+        control.dataset.action = 'add-selection';
+        row.buttons.set('add-selection', control);
+      }
+      control.textContent = text(item.selected ? 'deselect' : 'selectMore', item.selected ? 'Deselect' : 'Select');
+      control.setAttribute('aria-label', text(item.selected ? 'deselectLabel' : 'selectMoreLabel', item.selected ? 'Remove {name} from selection' : 'Add {name} to selection', { name: item.name }));
+      control.setAttribute('aria-pressed', String(item.selected));
+      if (row.actions.children[index] !== control) row.actions.insertBefore(control, row.actions.children[index] ?? null);
+      index++;
+    }
+    for (const [action, direction] of [['earlier', -1], ['later', 1]] as const) {
+      let control = row.buttons.get(action);
+      if (!item.capabilities.reorder) { control?.remove(); row.buttons.delete(action); continue; }
+      if (!control) {
+        control = button(doc, { label: '', variant: 'ghost', onClick: () => {
+          if (closed) return;
+          if (!objects.reorder(item.id, direction)) ctx.toast(text('reorderFailed', 'Could not reorder object'), 'error');
+        } });
+        control.dataset.action = action;
+        row.buttons.set(action, control);
+      }
+      control.textContent = text(action, direction === -1 ? 'Earlier' : 'Later');
+      control.setAttribute('aria-label', text(action + 'Label', direction === -1 ? 'Move {name} earlier' : 'Move {name} later', { name: item.name }));
+      control.disabled = objects.canReorder ? !objects.canReorder(item.id, direction) : false;
+      if (row.actions.children[index] !== control) row.actions.insertBefore(control, row.actions.children[index] ?? null);
+      index++;
+    }
+    if (item.capabilities.move) {
+      if (!row.move) {
+        row.move = el(doc, 'select', 'oac-objects__move');
+        row.move.dataset.action = 'move';
+        row.move.addEventListener('change', () => moveTo(item.id, Number(row.move!.value)));
+      }
+      row.move.setAttribute('aria-label', text('movePane', 'Move {name} to pane', { name: item.name }));
+      const total = objects.paneCount();
+      if (row.move.children.length !== total + 1) {
+        row.move.replaceChildren();
+        for (let pane = 0; pane <= total; pane++) {
+          const option = el(doc, 'option');
+          option.value = String(pane);
+          option.textContent = pane === total ? text('newPane', 'New pane') : widgetText(ctx, 'Pane {number}', { number: pane + 1 });
+          row.move.appendChild(option);
+        }
+      }
+      row.move.value = String(item.paneIndex);
+      if (row.actions.children[index] !== row.move) row.actions.insertBefore(row.move, row.actions.children[index] ?? null);
+      index++;
+    } else { row.move?.remove(); row.move = undefined; }
     row.actions.hidden = index === 0;
   }
 
   function paint(): void {
     if (closed) return;
     const query = search.value.trim().toLowerCase();
-    const shown = all.filter(item => `${item.name} ${kindLabel(item)} ${paneLabel(item)}`.toLowerCase().includes(query));
+    const matches = new Set(all.filter(item => `${item.name} ${kindLabel(item)} ${paneLabel(item)}`.toLowerCase().includes(query)).map(item => item.id));
+    for (const item of all) if (item.groupId && matches.has(item.groupId)) matches.add(item.id);
+    const shown = all.filter(item => matches.has(item.id) || all.some(member => member.groupId === item.id && matches.has(member.id)));
     const kept = new Set(shown.map(item => item.id));
     const focused = doc.activeElement as HTMLElement | null;
     const heldFocus = focused !== null && list.contains(focused);
@@ -154,7 +279,31 @@ export function mountObjectsPanel(
       row.el.remove();
       rows.delete(id);
     }
-    shown.forEach((item, index) => {
+    const paneIndices = [...new Set(shown.map(item => item.paneIndex))].sort((a, b) => a - b);
+    for (const [pane, section] of sections) if (!paneIndices.includes(pane)) { section.element.remove(); sections.delete(pane); }
+    paneIndices.forEach((pane, index) => {
+      let section = sections.get(pane);
+      if (!section) {
+        const element = el(doc, 'section', 'oac-objects__pane');
+        element.dataset.paneIndex = String(pane);
+        element.setAttribute('aria-label', widgetText(ctx, 'Pane {number}', { number: pane + 1 }));
+        const heading = el(doc, 'h3', 'oac-objects__pane-title');
+        heading.textContent = widgetText(ctx, 'Pane {number}', { number: pane + 1 });
+        const children = el(doc, 'div');
+        element.append(heading, children);
+        element.addEventListener('dragover', event => { if (draggedId !== null && objects.get(draggedId)?.capabilities.move) event.preventDefault(); });
+        element.addEventListener('drop', event => {
+          event.preventDefault();
+          if (draggedId !== null && objects.get(draggedId)?.capabilities.move) moveTo(draggedId, pane);
+          draggedId = null;
+        });
+        section = { element, rows: children };
+        sections.set(pane, section);
+      }
+      if (list.children[index] !== section.element) list.insertBefore(section.element, list.children[index] ?? null);
+    });
+    const positions = new Map<HTMLElement, number>();
+    shown.forEach(item => {
       let row = rows.get(item.id);
       if (row === undefined || row.selectable !== item.capabilities.select) {
         row?.el.remove();
@@ -164,8 +313,13 @@ export function mountObjectsPanel(
       updateRow(row, item);
       // Leave stable rows attached so canvas selection and live data updates
       // cannot interrupt a user typing or tabbing through object actions.
-      if (list.children[index] !== row.el) list.insertBefore(row.el, list.children[index] ?? null);
+      const group = item.groupId ? all.find(group => group.id === item.groupId && group.paneIndex === item.paneIndex) : undefined;
+      const parent = (group ? rows.get(group.id)?.members : undefined) ?? sections.get(item.paneIndex)!.rows;
+      const index = positions.get(parent) ?? 0;
+      if (parent.children[index] !== row.el) parent.insertBefore(row.el, parent.children[index] ?? null);
+      positions.set(parent, index + 1);
     });
+    updateGroupButton();
     empty.hidden = shown.length > 0;
     empty.textContent = all.length === 0 ? widgetText(ctx, 'No objects on this chart.') : widgetText(ctx, 'No objects match your search.');
     count.textContent = query === '' ? widgetText(ctx, '{count} objects', { count: all.length }) : widgetText(ctx, '{shown} of {count} objects', { shown: shown.length, count: all.length });
@@ -185,15 +339,29 @@ export function mountObjectsPanel(
     if (closed) return;
     closed = true;
     unsubscribe();
+    content.removeEventListener('pointerdown', stopPointer);
     search.removeEventListener('input', paint);
+    groupName.removeEventListener('input', updateGroupButton);
     rows.clear();
+    sections.clear();
+    draggedId = null;
     all = [];
     opts.onClose?.();
   };
+  return { element: content, initialFocus: search, destroy: dispose };
+}
+
+/** Open the object tree in the existing popup interface. */
+export function mountObjectsPanel(ctx: WidgetContext, anchor?: HTMLElement, opts: ObjectsPanelOptions = {}): PanelHandle {
+  const content = createObjectsPanelContent(ctx, opts);
+  const frame = dialogFrame(ctx.document, { translate: ctx.translate, title: widgetText(ctx, 'Objects'), className: 'oac-objects', onClose: () => handle.close() });
+  frame.closeButton.textContent = widgetText(ctx, 'Close');
+  frame.closeButton.classList.remove('oac-btn--icon');
+  frame.body.appendChild(content.element);
+  frame.actions.appendChild(button(ctx.document, { label: widgetText(ctx, 'Done'), variant: 'primary', onClick: () => handle.close() }));
   const handle = openPanel(ctx, frame.el, {
     ...(anchor === undefined ? { placement: 'center' as const, modal: true } : { anchor, placement: 'below' as const }),
-    initialFocus: search,
-    onClose: dispose,
+    initialFocus: content.initialFocus, onClose: () => content.destroy(),
   }, () => {});
   return handle;
 }
@@ -202,6 +370,18 @@ export function mountObjectsPanel(
 export const OBJECTS_PANEL_CSS = `
 .oac-widget .oac-objects { width: 440px; min-width: 0; }
 .oac-widget .oac-objects .oac-dialog__body { display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
+.oac-widget .oac-objects-content { display: flex; flex-direction: column; min-height: 0; gap: 8px; }
+.oac-widget .oac-objects__pane-title { margin: 6px 2px; color: var(--oac-mut); font-size: 11px; text-transform: uppercase; }
+.oac-widget .oac-objects__grouping { display: flex; gap: 4px; }
+.oac-widget .oac-objects__group-name { min-width: 0; width: 100%; }
+.oac-widget .oac-objects__move { min-width: 90px; max-width: 130px; height: 26px; font-size: 11px; }
+.oac-widget .oac-objects__row.is-group-member { margin-left: 10px; border: 0; border-left: 1px solid var(--oac-bd-soft); border-radius: 0; }
+.oac-widget .oac-objects__members { min-width: 0; }
+.oac-widget .oac-objects__list { scrollbar-width: thin; scrollbar-color: var(--oac-bd-soft) var(--oac-bg); }
+.oac-widget .oac-objects__list::-webkit-scrollbar { width: 6px; }
+.oac-widget .oac-objects__list::-webkit-scrollbar-track { background: var(--oac-bg); }
+.oac-widget .oac-objects__list::-webkit-scrollbar-thumb { background: var(--oac-bd-soft); border-radius: 3px; }
+.oac-widget .oac-objects__list::-webkit-scrollbar-thumb:hover { background: var(--oac-mut); }
 .oac-widget .oac-objects__find { width: 100%; min-width: 0; flex: none; }
 .oac-widget .oac-objects__list { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 2px; }
 .oac-widget .oac-objects__row { display: flex; flex-direction: column; gap: 4px; padding: 6px; margin-bottom: 4px;

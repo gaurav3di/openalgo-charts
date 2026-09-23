@@ -174,6 +174,7 @@ export function mountDrawingProperties(ctx: WidgetContext, anchor?: HTMLElement,
   }
 
   function renderPane(): void {
+    form?.destroy();
     pane.innerHTML = '';
     const controls = controlsFromFields(schema.fields, { translate: ctx.translate, scope: `drawing.${live[0].tool}` });
     if (controls.length === 0) {
@@ -182,7 +183,7 @@ export function mountDrawingProperties(ctx: WidgetContext, anchor?: HTMLElement,
       return;
     }
     form = renderForm(pane, controls, {
-      values: values(), translate: ctx.translate,
+      values: values(), translate: ctx.translate, openOverlay: ctx.openOverlay,
       idPrefix: 'oac-props',
       onChange: (key, value) => { apply({ [key]: value }); form?.sync(values()); },
       custom: (c) => {
@@ -254,24 +255,24 @@ export function mountDrawingProperties(ctx: WidgetContext, anchor?: HTMLElement,
     chart.on('draw:remove', refresh),
   ];
 
+  let closedOnce = false;
+  const cleanup = (): void => {
+    if (closedOnce) return;
+    closedOnce = true;
+    form?.destroy();
+    for (const dispose of off) dispose();
+    opts.onClose?.();
+  };
   const session = openPanel(
     ctx, frame.el,
-    anchor === undefined ? { placement: 'below', dismissOnOutside: true } : { anchor, placement: 'below' },
-    () => {},
+    { ...(anchor === undefined ? { placement: 'below' as const, dismissOnOutside: true } : { anchor, placement: 'below' as const }), onClose: cleanup },
+    cleanup,
   );
   if (anchor === undefined) placePanel(ctx.root, frame.el, { point: selectionPoint(ctx.root, chart, live) });
-
-  let closedOnce = false;
   const handle: PanelHandle = {
     el: frame.el,
     isOpen: session.isOpen,
-    close: () => {
-      if (closedOnce) return;
-      closedOnce = true;
-      for (const f of off) f();
-      session.close();
-      opts.onClose?.();
-    },
+    close: () => { form?.destroy(); session.close(); cleanup(); },
   };
   return handle;
 }

@@ -151,6 +151,7 @@ export type {
   DrawingInput,
   DrawingPatch,
   DrawingPoint,
+  DrawingGroup,
   DrawingStyle,
   DrawingText,
   DrawingsDocument,

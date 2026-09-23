@@ -4,6 +4,7 @@ description: Live, in-page chart demos powered by the real OpenAlgo Charts libra
 ---
 
 import RunnableExample from '../components/RunnableExample'
+import { STOCK_BARS_SOURCE } from '../components/synthetic-market'
 import { ProfileDemo, ProfileThemeGallery } from '../components/ProfileShowcase'
 import DepthLadderDemo from '../components/DepthLadderDemo'
 import DrawingToolsDemo from '../components/DrawingToolsDemo'
@@ -15,95 +16,113 @@ import AlertDragDemo from '../components/AlertDragDemo'
 import AlertLifecycleDemo from '../components/AlertLifecycleDemo'
 import TableSizingDemo from '../components/TableSizingDemo'
 import LinkedAnalysisDemo from '../components/LinkedAnalysisDemo'
+import TimelineEventsDemo from '../components/TimelineEventsDemo'
 import { RangeSwitcherCard, LegendCard, SeriesCompareCard, IndicatorsCard, ChartTypeCard, ThemeCard, DataTooltipCard, EventMarkersCard, PriceScaleCard, CustomTypesCard, ScalesFormatCard, ScalesConfigCard, DataCard, CustomPluginsCard, PositionsCard, TradeMarkersCard } from '../components/gallery'
 
 # Live examples
 
-Every chart on this page is the real library running in your browser - the code shown
-is the code that ran. Try it, copy it, ship it.
+Start with a price chart. Add indicators and drawings, then explore alerts,
+market depth, and custom integrations. Every example runs the real library in
+your browser, and the code shown is the code that runs. Market data is simulated.
 
-## Linked analysis and timeline events
+<div className="oac-example-path" aria-label="Explore examples">
 
-Place an anchored VWAP or a fixed-range volume profile, share it with a linked
-chart, and open details for clustered sample events. Appearance and drawing
-synchronization are separate opt-in controls. Volume profiles here estimate
-volume from candles.
+[Start here](#start-with-candlesticks) / [Indicators](#add-indicators) /
+[Drawings](#drawing-tools) / [Chart controls](#the-terminal-in-one-call) /
+[Alerts](#alert-threshold-dragging) / [Advanced analysis](#compact-market-profiles)
 
-<LinkedAnalysisDemo />
+</div>
 
-Jump to [depth of market](#depth-of-market), [drawing tools](#drawing-tools),
-[market profiles](#compact-market-profiles), [chart controls](#interactive),
-[trading](#trading), or [alert threshold dragging](#alert-threshold-dragging).
+## Start with candlesticks
 
-## Finished alert lines
+A price chart is the starting point. Drag to pan, scroll to zoom, and move the
+crosshair over a candle to inspect it. Open the code below to create your own.
 
-Choose whether triggered and expired alerts keep their lines. The records stay
-saved in either mode, and restoring them never fires a once-only alert again.
-See [Trader alerts](/docs/alerts#finished-alert-lines).
-
-<AlertLifecycleDemo />
-
-## Tables that fit their text
-
-Set `cellWidth: 'auto'` to fit each column to its widest reading. Fixed columns
-clip long text inside the cell. Both modes account for the font that fits the
-row. See [Tables](/docs/primitives-and-plugins#tables).
-
-<TableSizingDemo />
-
-## Open interest and instrument rules
-
-Open Interest draws a separate line pane; Open Interest Change draws a separate
-histogram. These synthetic readings deliberately contain gaps. Missing data stays
-absent, and aggregation takes the latest defined level instead of summing it.
-See the [Open Interest guide](/docs/open-interest) for feed capability and studies.
-The [instrument rules example](/demos/instruments/) lets you switch
-cash, futures and crypto metadata, inspect shortened sessions and check quantity
-steps without sending orders. See [Instrument metadata](/docs/instruments).
-
-<RunnableExample height={440} tiers={['indicators']} code={`const chart = lib.createChart(el);
-const bars = lib.generateBars(1700000000, 120, 300).map((bar, index) => ({
-  ...bar,
-  ...(index % 30 < 3 ? {} : { oi: 5000 + Math.round(200 * Math.sin(index / 9)) + index * 3 }),
-}));
-chart.setDataContext({ symbol: 'SYNTHETIC', exchange: 'DEMO', interval: '5m', hasOpenInterest: true });
+<RunnableExample height={440} caption="Simulated stock prices with mixed up and down candles, pullbacks, and changing volatility. No live feed is connected." code={`const chart = lib.createChart(el);
+const bars = lib.generateBars(1700000000, 160, 3600);
 chart.addSeries('candlestick').setData(bars);
-chart.addIndicator('open-interest');
-chart.addIndicator('open-interest-change');
 chart.fitContent();
 return chart;`} />
 
-## Branding and optional watermarks
+## Change the look
 
-The corner logo stays visible by default. The background symbol or custom text
-watermark is opt-in. Try the controls, both themes and phone width, then open
-Appearance in Chart settings. See [Branding and Watermarks](/docs/branding-and-watermarks).
+Switch chart styles, choose a theme, and change the visible range.
+These controls update the chart in place.
 
-<BrandingWatermarkDemo />
+<div className="oac-cardgrid">
+<ChartTypeCard />
+<ThemeCard />
+<RangeSwitcherCard />
+<LegendCard />
+</div>
 
-## Objects and compact dialogs
+## Add indicators
 
-Find drawings, indicators and registered profiles in one panel. Hide, lock, edit or
-remove supported objects, or focus a drawing beyond the latest candle. Change the
-host width to try compact dialogs. See the [Objects guide](/docs/objects).
+See a moving average on the price chart, then add RSI in its own pane.
+Each example uses the same synthetic candles to make the difference easy to see.
 
-<ObjectsDemo />
+<div className="oac-gallery">
 
-## Managed data loading
+<div>
+### Candlesticks + EMA
+<RunnableExample hideCode height={280} code={`const chart = lib.createChart(el);
+const bars = lib.generateBars(1700000000, 160, 3600);
+chart.addSeries('candlestick').setData(bars);
+chart.addSeries('line', { style: { color: '#f5a623', lineWidth: 2 } }).setData(lib.emaSeries(bars, 21));
+chart.timeScale.fitContent(bars.length);
+return chart;`} />
+</div>
 
-Load older history, simulate a failed refresh and retry, or hold the display while
-live updates continue. The [data-loading guide](/docs/data-loading) explains the
-shared controller for widgets and custom terminals.
+<div>
+### RSI in its own pane
+<RunnableExample hideCode height={300} code={`const chart = lib.createChart(el);
+const bars = lib.generateBars(1700000000, 200, 3600);
+chart.addSeries('candlestick').setData(bars);
+chart.addSeries('line', { paneIndex: 1, style: { color: '#e0b020' } }).setData(lib.rsiSeries(bars, 14));
+chart.addPriceLine({ price: 70, color: '#ef5350', lineWidth: 1, dashed: true, id: 'r70' }, 1);
+chart.addPriceLine({ price: 30, color: '#26a69a', lineWidth: 1, dashed: true, id: 'r30' }, 1);
+chart.timeScale.fitContent(bars.length);
+return chart;`} />
+</div>
 
-<DataLoadingDemo />
+<div>
+### Supertrend overlay
+<RunnableExample hideCode height={280} code={`const chart = lib.createChart(el);
+const bars = lib.generateBars(1700000000, 200, 3600);
+chart.addSeries('candlestick').setData(bars);
+const st = lib.supertrendSeries(bars, 10, 3);
+chart.addSeries('line', { style: { color: '#26a69a', lineWidth: 2 } }).setData(st.up);
+chart.addSeries('line', { style: { color: '#ef5350', lineWidth: 2 } }).setData(st.down);
+chart.timeScale.fitContent(bars.length);
+return chart;`} />
+</div>
 
-## Depth of market
+</div>
 
-Watch a simulated live order book, pause updates, and group multiple ticks into
-one price row. The [depth-of-market guide](/docs/depth-of-market) explains feed
-integration and price aggregation. All data and interactions here are simulated.
+## Compare markets
 
-<DepthLadderDemo />
+Put two instruments on one chart and compare how they move. Prices and returns
+use their own scales. These instruments are simulated.
+
+<div className="oac-gallery">
+
+<div>
+### Symbol comparison
+<RunnableExample hideCode height={280} code={`${STOCK_BARS_SOURCE}
+const chart = lib.createChart(el);
+const spot = lib.generateBars(1700000000, 200, 3600);
+chart.addSeries('candlestick').setData(spot);
+
+// A second instrument, two orders of magnitude away in price.
+const other = stockBars(1700000000, 200, 3600, 46000, 37, 0.002);
+lib.addComparison(chart, { symbol: 'BANKNIFTY', bars: other, color: '#f0b90b' });
+chart.fitContent();
+return chart;`} />
+</div>
+
+<SeriesCompareCard />
+
+</div>
 
 ## Drawing tools
 
@@ -115,32 +134,66 @@ of all 87 tools, including volume studies, pitchforks, harmonic patterns and adv
 
 <DrawingToolsDemo />
 
-## Compact market profiles
+## The terminal in one call
 
-**2.1.0:** inspect small TPO letters and volume values, right-click to split
-or unsplit one day, and compare Dark, Blue, Graphite, Emerald and Ivory themes.
-Lowercase `o` marks each day's open; `#` appears only on the newest session.
-The six sessions are synthetic data. The full guide is [Profile Demo & Themes](/docs/market-profile-examples).
-Use the [full-size profiles selector](/demos/phase11-profiles.html) to switch between
-Volume Profile, TPO letters and the current order-flow demo with its themes,
-text colors, lot display and optional statistics table.
+Add a toolbar, drawing tools, settings, and the Data and Objects panels with
+`createWidget`. This example uses a simulated feed so symbol and timeframe
+changes reload the chart. Search **NOVA** to try stock and futures results,
+or **BTC** for a crypto result.
 
-<ProfileDemo />
+<RunnableExample height={580} tiers={['widget']} caption="Simulated instruments and prices. Focus the chart and type an unassigned letter to search, or type 15 for a 15-minute chart. Open Data, Objects, Indicators, and Chart settings to try the controls." code={`${STOCK_BARS_SOURCE}
+const instruments = [
+  { symbol: 'NOVA', exchange: 'DEMO', name: 'Nova Industries', assetClass: 'Stock' },
+  { symbol: 'NOVA FUT', exchange: 'DEMO', name: 'Nova futures', assetClass: 'Futures',
+    contractGroup: { label: 'Contracts', contracts: [
+      { symbol: 'NOVA26SEP', exchange: 'DEMO', name: 'September 2026' },
+      { symbol: 'NOVA26OCT', exchange: 'DEMO', name: 'October 2026' },
+    ] } },
+  { symbol: 'BTCUSD', exchange: 'DEMO', name: 'Bitcoin', assetClass: 'Crypto' },
+];
+const widget = lib.createWidget(el, {
+  symbol: 'NOVA', exchange: 'DEMO', interval: '5m', persist: false,
+  intervals: ['5m', '15m', '1h', '1d'],
+  symbolSearch: query => instruments.filter(hit =>
+    (hit.symbol + ' ' + hit.name).toLowerCase().includes(query.toLowerCase())),
+  feed: {
+    getBars: async request => {
+      const seconds = { '5m': 300, '15m': 900, '1h': 3600, '1d': 86400 }[request.interval] || 300;
+      const seed = Array.from(request.symbol).reduce((n, c) => n + c.charCodeAt(0), 23);
+      return stockBars(1700000000, 180, seconds, request.symbol === 'BTCUSD' ? 64000 : 100, seed);
+    },
+    subscribeBars: () => () => {},
+  },
+});
+widget.chart.addIndicator('ema', { length: 20 });
+return widget;`} />
 
-<ProfileThemeGallery />
+Every option and event is on [The Widget Tier](/docs/widget).
+
+## Objects and compact dialogs
+
+Find drawings, indicators and registered profiles in one panel. Hide, lock, edit or
+remove supported objects, or focus a drawing beyond the latest candle. Change the
+host width to try compact dialogs. See the [Objects guide](/docs/objects).
+
+<ObjectsDemo />
+
+## Branding and optional watermarks
+
+The corner logo stays visible by default. The background symbol or custom text
+watermark is opt-in. Try the controls, both themes and phone width, then open
+Appearance in Chart settings. See [Branding and Watermarks](/docs/branding-and-watermarks).
+
+<BrandingWatermarkDemo />
 
 ## Interactive
 
-Switch tabs to reconfigure each chart live.
+Explore tooltip readings, event markers, price scales, and custom chart types.
+Switch tabs to see what each option changes.
 
 <div className="oac-cardgrid">
-<ChartTypeCard />
-<ThemeCard />
 <DataTooltipCard />
 <EventMarkersCard />
-<RangeSwitcherCard />
-<LegendCard />
-<SeriesCompareCard />
 <IndicatorsCard />
 <PriceScaleCard />
 <CustomTypesCard />
@@ -148,16 +201,6 @@ Switch tabs to reconfigure each chart live.
 <ScalesConfigCard />
 <DataCard />
 <CustomPluginsCard />
-</div>
-
-## Trading
-
-Data-driven positions, orders, TP/SL brackets, and fill markers via
-[`chart.trading`](/docs/trading-api). Drag the order lines; the pill ✕ fires cancel/close.
-
-<div className="oac-cardgrid">
-<PositionsCard />
-<TradeMarkersCard />
 </div>
 
 ## Alert threshold dragging
@@ -174,35 +217,88 @@ or replay entry also discard an unfinished drag. Armed lines carry an **Alert** 
 Drawing-owned alert levels follow their drawing and cannot be dragged separately.
 See [Trader alerts](/docs/widget#trader-alerts) for host ownership and persistence.
 
-## The terminal in one call
+## Finished alert lines
 
-`createWidget` from `openalgo-charts/widget` builds the chart with its chrome: a top bar
-(symbol, interval, chart type, indicators, capture, settings, theme), the drawing rail, a
-status line, dialogs generated from the settings schemas the engine already ships, a
-right-click menu and a keymap with a `?` panel. The engine supplies canvases and containers;
-the widget is a packaged host driving the same public API your own would. Pick a tool
-from the rail, open Indicators, change the chart type, press `?`.
+Choose whether triggered and expired alerts keep their lines. The records stay
+saved in either mode, and restoring them never fires a once-only alert again.
+See [Trader alerts](/docs/alerts#finished-alert-lines).
 
-<RunnableExample height={480} tiers={['widget']} caption="No feed is wired here, so the bars go straight on widget.series; with a feed the interval pills and the symbol box reload through it. Persistence is off unless asked for." code={`const widget = lib.createWidget(el, {
-  symbol: 'DEMO',
-  exchange: 'NSE',
-  interval: '1h',
-  intervals: ['5m', '15m', '1h', '1d'],
+<AlertLifecycleDemo />
+
+## Trading
+
+Data-driven positions, orders, TP/SL brackets, and fill markers via
+[`chart.trading`](/docs/trading-api). Drag the order lines; the line control requests cancel or close.
+
+<div className="oac-cardgrid">
+<PositionsCard />
+<TradeMarkersCard />
+</div>
+
+## Open interest and instrument rules
+
+Open Interest draws a separate line pane; Open Interest Change draws a separate
+histogram. These synthetic readings deliberately contain gaps. Missing data stays
+absent, and aggregation takes the latest defined level instead of summing it.
+See the [Open Interest guide](/docs/open-interest) for feed capability and studies.
+The [instrument rules example](/demos/instruments/) lets you switch
+cash, futures and crypto metadata, inspect shortened sessions and check quantity
+steps without sending orders. See [Instrument metadata](/docs/instruments).
+
+<RunnableExample height={440} tiers={['indicators']} code={`const chart = lib.createChart(el);
+let oi = 5000, seed = 91;
+const bars = lib.generateBars(1700000000, 120, 300).map((bar, index) => {
+  seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+  oi = Math.max(0, oi + Math.round((seed / 4294967296 - 0.46) * 130));
+  return { ...bar, ...(index % 30 < 3 ? {} : { oi }) };
 });
+chart.setDataContext({ symbol: 'SYNTHETIC', exchange: 'DEMO', interval: '5m', hasOpenInterest: true });
+chart.addSeries('candlestick').setData(bars);
+chart.addIndicator('open-interest');
+chart.addIndicator('open-interest-change');
+chart.fitContent();
+return chart;`} />
 
-// Without a feed the host puts bars on the primary series itself. A feed
-// would make setSymbol, setInterval and reload() fetch through it.
-const bars = lib.generateBars(1700000000, 240, 3600);
-widget.series.setData(bars);
-widget.chart.timeScale.fitContent(160);
+## Compact market profiles
 
-// The chrome's own facts arrive as events; the chart's bus is still there on widget.chart.
-widget.on('interval', function (e) {
-  widget.context.status('Interval ' + e.interval + ' (no feed wired, so the bars stay)');
-});
-return widget;`} />
+Inspect small TPO letters and volume values, right-click to split
+or unsplit one day, and compare Dark, Blue, Graphite, Emerald and Ivory themes.
+Lowercase `o` marks each day's open; `#` appears only on the newest session.
+The six sessions are synthetic data. The full guide is [Profile Demo & Themes](/docs/market-profile-examples).
+Use the [full-size profiles selector](/demos/phase11-profiles.html) to switch between
+Volume Profile, TPO letters and the current order-flow demo with its themes,
+text colors, lot display and optional statistics table.
 
-Every option, event and theming token is on [The Widget Tier](/docs/widget).
+<ProfileDemo />
+
+<ProfileThemeGallery />
+
+## Depth of market
+
+Watch a simulated live order book, pause updates, and group multiple ticks into
+one price row. The [depth-of-market guide](/docs/depth-of-market) explains feed
+integration and price aggregation. All data and interactions here are simulated.
+
+<DepthLadderDemo />
+
+## Sample events with rich details
+
+Click an earnings, dividend, or news marker to open its summary and named values.
+Group filters control which events are shown, and nearby markers can share a
+cluster. The event content in this example is fictional.
+
+<TimelineEventsDemo />
+
+<a id="linked-analysis-and-timeline-events"></a>
+
+## Linked analysis
+
+Place an anchored VWAP or a fixed-range volume profile and share it with a linked
+chart. Appearance and drawing synchronization are separate opt-in controls.
+Volume profiles here estimate volume from candles.
+
+<LinkedAnalysisDemo />
+
 
 ## Custom indicators
 
@@ -331,6 +427,22 @@ chart.addIndicator('demo-daily-range');
 chart.timeScale.fitContent(bars.length);
 return chart;`} />
 
+## Tables that fit their text
+
+Set `cellWidth: 'auto'` to fit each column to its widest reading. Fixed columns
+clip long text inside the cell. Both modes account for the font that fits the
+row. See [Tables](/docs/primitives-and-plugins#tables).
+
+<TableSizingDemo />
+
+## Managed data loading
+
+Load older history, simulate a failed refresh and retry, or hold the display while
+live updates continue. The [data-loading guide](/docs/data-loading) explains the
+shared controller for widgets and custom terminals.
+
+<DataLoadingDemo />
+
 ## Render backends and vector export
 
 The series pass goes through a render backend port. `renderer: 'auto'` takes the WebGL2
@@ -402,15 +514,7 @@ The options, the fallback rules and the serialising context behind the export ar
 
 <div className="oac-gallery">
 
-<div>
-### Candlesticks + EMA
-<RunnableExample hideCode height={280} code={`const chart = lib.createChart(el);
-const bars = lib.generateBars(1700000000, 160, 3600);
-chart.addSeries('candlestick').setData(bars);
-chart.addSeries('line', { style: { color: '#f5a623', lineWidth: 2 } }).setData(lib.emaSeries(bars, 21));
-chart.timeScale.fitContent(bars.length);
-return chart;`} />
-</div>
+
 
 <div>
 ### Area + baseline
@@ -421,21 +525,7 @@ chart.timeScale.fitContent(bars.length);
 return chart;`} />
 </div>
 
-<div>
-### Symbol comparison
-<RunnableExample hideCode height={280} code={`const chart = lib.createChart(el);
-const spot = lib.generateBars(1700000000, 200, 3600);
-chart.addSeries('candlestick').setData(spot);
 
-// A second instrument, two orders of magnitude away in price.
-const other = spot.map((b, i) => {
-  const c = 46000 * (1 + Math.sin(i / 13) * 0.018 + i * 0.0004);
-  return { time: b.time, open: c, high: c, low: c, close: c };
-});
-lib.addComparison(chart, { symbol: 'BANKNIFTY', bars: other, color: '#f0b90b' });
-chart.fitContent();
-return chart;`} />
-</div>
 
 <div>
 ### Linked charts
@@ -485,29 +575,9 @@ chart.destroy = () => { replay.stop(); destroy(); };
 return chart;`} />
 </div>
 
-<div>
-### Supertrend overlay
-<RunnableExample hideCode height={280} code={`const chart = lib.createChart(el);
-const bars = lib.generateBars(1700000000, 200, 3600);
-chart.addSeries('candlestick').setData(bars);
-const st = lib.supertrendSeries(bars, 10, 3);
-chart.addSeries('line', { style: { color: '#26a69a', lineWidth: 2 } }).setData(st.up);
-chart.addSeries('line', { style: { color: '#ef5350', lineWidth: 2 } }).setData(st.down);
-chart.timeScale.fitContent(bars.length);
-return chart;`} />
-</div>
 
-<div>
-### RSI in its own pane
-<RunnableExample hideCode height={300} code={`const chart = lib.createChart(el);
-const bars = lib.generateBars(1700000000, 200, 3600);
-chart.addSeries('candlestick').setData(bars);
-chart.addSeries('line', { paneIndex: 1, style: { color: '#e0b020' } }).setData(lib.rsiSeries(bars, 14));
-chart.addPriceLine({ price: 70, color: '#ef5350', lineWidth: 1, dashed: true, id: 'r70' }, 1);
-chart.addPriceLine({ price: 30, color: '#26a69a', lineWidth: 1, dashed: true, id: 'r30' }, 1);
-chart.timeScale.fitContent(bars.length);
-return chart;`} />
-</div>
+
+
 
 <div>
 ### Drawing tools (draw tier)

@@ -9,7 +9,8 @@ const CHART_FIELDS = ['version', 'timezone', 'navigation', 'canvas', 'statusLine
   'crosshairSnapToBar', 'indicators', 'alerts', 'drawings', 'panes', 'series'];
 const COMPARISON_MODES = ['percentage', 'indexed-to-100', 'none'];
 const SCALE_MODES = ['linear', 'logarithmic', 'percentage', 'indexed-to-100'];
-const HOST_SETTINGS = ['reference.pfmode', 'reference.compareMode', 'reference.compareBaseMode', 'reference.whenMissing', 'reference.legendIconSize'];
+const HOST_SETTINGS = ['reference.pfmode', 'reference.compareMode', 'reference.compareBaseMode', 'reference.whenMissing', 'reference.legendIconSize',
+  'reference.inspectionPanel', 'reference.inspectionWidth'];
 const fail = message => { throw new WorkspaceDocumentError(message); };
 
 function chartFields(state) {
@@ -23,6 +24,10 @@ function paneFromLayout(saved, state, id, rail, whenMissing) {
     'reference.pfmode': selection.pfmode || 'atr', 'reference.compareMode': saved.compareMode || 'percentage',
     'reference.whenMissing': whenMissing, 'reference.legendIconSize': normalizeLegendIconSize(saved.legendIconSize) };
   if (saved.compareBaseMode != null) settings['reference.compareBaseMode'] = saved.compareBaseMode;
+  if (saved.inspection) {
+    settings['reference.inspectionPanel'] = saved.inspection.panel || 'closed';
+    settings['reference.inspectionWidth'] = saved.inspection.width;
+  }
   const comparisons = (saved.comparisons || []).map((item, index) => ({
     id: `${id}:comparison:${index}`, symbol: item.symbol, exchange: '', visible: item.hidden !== true,
     ...(item.color === undefined ? {} : { color: item.color }),
@@ -92,6 +97,10 @@ export function validateReferenceWorkspace(input) {
     if (legendSize !== undefined && legendSize !== normalizeLegendIconSize(legendSize)) {
       fail('Invalid workspace setting: reference.legendIconSize');
     }
+    const dockPanel = pane.settings['reference.inspectionPanel'];
+    const dockWidth = pane.settings['reference.inspectionWidth'];
+    if (dockPanel !== undefined && !['closed', 'data', 'objects'].includes(dockPanel)) fail('Invalid information panel');
+    if (dockWidth !== undefined && (!Number.isInteger(dockWidth) || dockWidth < 240 || dockWidth > 480)) fail('Invalid information panel width');
     for (const key of Object.keys(VOLUME_DEFAULTS)) {
       if (pane.settings[key] !== undefined && pane.settings[key] !== normalizedVolume[key]) fail(`Invalid workspace setting: ${key}`);
     }
@@ -131,7 +140,11 @@ function paneToLayout(pane) {
     comparisons: pane.comparisons.map(item => ({ symbol: item.symbol, hidden: !item.visible,
       ...(item.color === undefined ? {} : { color: item.color }) })),
     compareMode: pane.settings['reference.compareMode'] || (pane.comparisonMode === 'price' ? 'none' : 'percentage'),
-    ...(pane.settings['reference.compareBaseMode'] === undefined ? {} : { compareBaseMode: pane.settings['reference.compareBaseMode'] }) };
+    ...(pane.settings['reference.compareBaseMode'] === undefined ? {} : { compareBaseMode: pane.settings['reference.compareBaseMode'] }),
+    ...(pane.settings['reference.inspectionPanel'] === undefined ? {} : { inspection: {
+      panel: pane.settings['reference.inspectionPanel'] === 'closed' ? null : pane.settings['reference.inspectionPanel'],
+      width: pane.settings['reference.inspectionWidth'] ?? 300,
+    } }) };
 }
 
 /** Validate the entire document before returning anything a live host can apply. */

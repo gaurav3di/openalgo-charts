@@ -1,9 +1,11 @@
 import React from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 import { useTheme } from 'next-themes';
 import { useConfig } from 'nextra-theme-docs';
 
 const REPO = 'https://github.com/marketcalls/openalgo-charts';
+const SHARE_IMAGE = 'https://marketcalls.github.io/openalgo-charts/og-chart-workspace.png';
 
 const Logo = () => (
   <span className="oac-brand">
@@ -29,8 +31,8 @@ const config = {
   logo: <Logo />,
   project: { link: REPO },
   docsRepositoryBase: `${REPO}/tree/master/website`,
-  primaryHue: 218,
-  primarySaturation: 85,
+  primaryHue: 0,
+  primarySaturation: 0,
   darkMode: true,
   nextThemes: { defaultTheme: 'dark' },
   navbar: { extraContent: <NavigationExtra /> },
@@ -53,12 +55,14 @@ const config = {
         <div className="oac-site-footer__brand"><Link href="/" aria-label="OpenAlgo Charts home"><Logo /></Link><p>A clearer view of every move.<br />An open world of possibilities.</p></div>
         <div className="oac-site-footer__group"><h2>Explore</h2><Link href="/examples">Interactive examples</Link><Link href="/examples#drawing-tools">Drawing tools</Link><Link href="/examples#custom-indicators">Indicators</Link></div>
         <div className="oac-site-footer__group"><h2>Create</h2><Link href="/docs/getting-started">Get started</Link><Link href="/docs/core-concepts">Documentation</Link><a href="/openalgo-charts/api/index.html">API reference</a><a href={REPO} target="_blank" rel="noreferrer">Contribute on GitHub ↗</a></div>
-        <div className="oac-site-footer__bottom"><Link href="/docs/release-notes#252">OpenAlgo Charts 2.5.2</Link><a href={`${REPO}/blob/master/LICENSE`} target="_blank" rel="noreferrer">Free and open source · Apache-2.0</a></div>
+        <div className="oac-site-footer__bottom"><Link href="/docs/release-notes#253">OpenAlgo Charts 2.5.3</Link><a href={`${REPO}/blob/master/LICENSE`} target="_blank" rel="noreferrer">Free and open source · Apache-2.0</a></div>
       </div>
     ),
   },
   head: function Head() {
     const { frontMatter, title } = useConfig();
+    const pagePath = useRouter().asPath.split(/[?#]/, 1)[0];
+    const { resolvedTheme } = useTheme();
     const pageTitle = title && title !== 'OpenAlgo Charts' ? `${title} - OpenAlgo Charts` : 'OpenAlgo Charts — Every move. A clearer view.';
     const description =
       (frontMatter as { description?: string }).description ??
@@ -70,7 +74,20 @@ const config = {
         <meta name="description" content={description} />
         <meta property="og:title" content={pageTitle} />
         <meta property="og:description" content={description} />
-        <meta name="theme-color" content="#080a0e" />
+        <meta property="og:type" content="website" />
+        <meta property="og:site_name" content="OpenAlgo Charts" />
+        <meta property="og:url" content={`https://marketcalls.github.io/openalgo-charts${pagePath}`} />
+        <meta property="og:image" content={SHARE_IMAGE} />
+        <meta property="og:image:type" content="image/png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta property="og:image:alt" content="Linked OpenAlgo charts with stock candles, anchored VWAP and volume profiles" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:title" content={pageTitle} />
+        <meta name="twitter:description" content={description} />
+        <meta name="twitter:image" content={SHARE_IMAGE} />
+        <meta name="twitter:image:alt" content="Linked OpenAlgo charts with stock candles, anchored VWAP and volume profiles" />
+        <meta name="theme-color" content={resolvedTheme === 'light' ? '#fcfcfc' : '#0b0b0b'} />
       </>
     );
   },

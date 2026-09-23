@@ -3,6 +3,8 @@ import type { Bar } from '../../src/model/bar';
 import type { Widget } from '../../src/widget/widget';
 import type { Chart } from '../../src/core/chart';
 
+const ORIGIN = `http://127.0.0.1:${process.env.OAC_E2E_DEMO_PORT || '8124'}`;
+
 declare global {
   interface Window { __oiDemo: { widget: Widget; bars: Bar[] } }
 }
@@ -16,7 +18,7 @@ test('reference host preserves OI and capability across a chart-type rebuild', a
     close: 101 + i, volume: 100, ...(i === 20 ? {} : { oi: i === 16 ? 0 : 1000 + i * 10 }),
   }));
   await page.route('**/api/history?**', route => route.fulfill({ json: bars }));
-  await page.goto('http://127.0.0.1:8124/examples/yfinance/index.html?test=1');
+  await page.goto(ORIGIN + '/examples/yfinance/index.html?test=1');
   await page.waitForFunction(() => Boolean((window as unknown as { __oac: { chart?: Chart } }).__oac?.chart));
   await page.evaluate(() => {
     const { chart } = (window as unknown as { __oac: { chart: Chart } }).__oac;

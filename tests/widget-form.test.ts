@@ -588,13 +588,13 @@ suite('renderForm', () => {
     up.fire('input');
     expect(quiet.changes.length).toBe(0);
     up.fire('change');
-    expect(quiet.changes).toEqual([['a.up', '#123456']]);
+    expect(quiet.changes).toEqual([['a.up', 'rgba(18,52,86,0.4)']]);
     const live = mount({ live: true });
     const up2 = live.host.querySelector('#t-a-up') as FakeElement;
     up2.value = '#abcdef';
     up2.fire('input');
     up2.fire('change');
-    expect(live.changes).toEqual([['a.up', '#abcdef']]);
+    expect(live.changes).toEqual([['a.up', 'rgba(171,205,239,0.4)']]);
   });
 
   it('draws a control with a reason disabled and titled, one option of a select included', () => {
@@ -627,7 +627,7 @@ suite('renderForm', () => {
     expect(txt.value).toBe('typing');
     expect((host.querySelector('#t-a-n') as FakeElement).value).toBe('7');
     expect((host.querySelector('input[type="range"]') as FakeElement).value).toBe('50');
-    expect(form.values()).toMatchObject({ 'a.on': true, 'a.n': 7, 'a.pairOn': false, 'a.up': '#26a69a', 'a.sel': 'y', 'a.op': 0.5, 'a.txt': 'typing' });
+    expect(form.values()).toMatchObject({ 'a.on': true, 'a.n': 7, 'a.pairOn': false, 'a.up': 'rgba(38,166,154,0.4)', 'a.sel': 'y', 'a.op': 0.5, 'a.txt': 'typing' });
     expect(form.focusFirst()).toBe(true);
   });
 

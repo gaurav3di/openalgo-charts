@@ -1,6 +1,8 @@
 import RunnableExample from './RunnableExample';
+import { STOCK_BARS_SOURCE } from './synthetic-market';
 
-const code = `el.style.cssText = 'display:flex;flex-direction:column';
+const code = `${STOCK_BARS_SOURCE}
+el.style.cssText = 'display:flex;flex-direction:column';
 const controls = document.createElement('div');
 controls.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;padding:8px 64px 8px 8px';
 const output = document.createElement('output');
@@ -13,10 +15,10 @@ el.append(controls, output, stage);
 const chart = lib.createChart(stage, { timeNavigator: false, priceAxisWidth: 64 });
 chart.setDataContext({ symbol: 'SYNTHETIC', exchange: 'DEMO', interval: '1m' });
 const series = chart.addSeries('candlestick');
-const bars = Array.from({ length: 40 }, (_, i) => {
-  const close = i === 39 ? 100 : 100 + Math.sin(i / 4);
-  return { time: 1735689600 + i * 60, open: close - 0.5, high: close + 1, low: close - 1, close };
-});
+const bars = stockBars(1735689600, 40, 60, 99, 46, 0.003, 1200);
+const previousClose = bars[38].close;
+bars[39] = { ...bars[39], open: previousClose, close: 100,
+  high: Math.max(previousClose, 100) + 0.45, low: Math.min(previousClose, 100) - 0.4 };
 series.setData(bars);
 chart.setVisibleLogicalRange({ from: -2, to: 44 });
 chart.panes()[0].priceScale.setFixedRange({ min: 90, max: 118 });

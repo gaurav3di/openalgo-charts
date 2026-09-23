@@ -1,6 +1,8 @@
 import RunnableExample from './RunnableExample';
+import { STOCK_BARS_SOURCE } from './synthetic-market';
 
-const code = `el.style.display = 'flex';
+const code = `${STOCK_BARS_SOURCE}
+el.style.display = 'flex';
 el.style.flexDirection = 'column';
 const controls = document.createElement('div');
 controls.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;padding:8px;flex-shrink:0';
@@ -19,15 +21,21 @@ el.append(controls, values, status, stage);
 lib.registerIndicator({
   id: 'website-alert-drag-study', name: 'Sample study', placement: 'pane', inputs: [],
   plots: [{ key: 'value', type: 'line', title: 'Study units', style: { color: '#a78bfa' } }],
-  calc: bars => ({ value: bars.map((bar, i) => 50 + Math.sin(i / 5) * 25) }),
+  calc: bars => ({ value: bars.map((bar, i) => {
+    if (i < 14) return 50;
+    let gains = 0;
+    let losses = 0;
+    for (let j = i - 13; j <= i; j++) {
+      const change = bars[j].close - bars[j - 1].close;
+      gains += Math.max(0, change);
+      losses += Math.max(0, -change);
+    }
+    return losses === 0 ? 100 : gains === 0 ? 0 : 100 - 100 / (1 + gains / losses);
+  }) }),
 });
 const chart = lib.createChart(stage, { timeNavigator: false, priceAxisWidth: 72 });
 chart.setDataContext({ symbol: 'SYNTHETIC', exchange: 'DEMO', interval: '5m' });
-const bars = Array.from({ length: 72 }, (_, i) => {
-  const close = 100 + Math.sin(i / 7) * 6;
-  return { time: 1735689600 + i * 300, open: close - 1,
-    high: close + 2, low: close - 2, close };
-});
+const bars = stockBars(1735689600, 72, 300, 100, 138, 0.006, 1800);
 chart.addSeries('candlestick').setData(bars);
 let study = chart.addIndicator('website-alert-drag-study');
 chart.setVisibleLogicalRange({ from: -2, to: 76 });

@@ -22,6 +22,7 @@ import { chromeIconSvg } from 'openalgo-charts/draw';
 import type { SettingsField } from 'openalgo-charts/draw';
 import type { OverlayOptions } from './context';
 import { widgetText, type WidgetTranslationOptions } from './localization';
+import { createColorPicker, type ColorPickerOptions } from './color-picker';
 
 // ── the unified control model ─────────────────────────────────────────────
 
@@ -57,6 +58,8 @@ export type FormValues = Readonly<Record<string, unknown>>;
 
 export interface FormOptions extends WidgetTranslationOptions {
   values: FormValues;
+  /** Shared overlay owner for nested colour pickers. */
+  openOverlay?: ColorPickerOptions['openOverlay'];
   /** Every edit, with the value in the control's declared type. */
   onChange(key: string, value: unknown): void;
   /**
@@ -87,6 +90,8 @@ export interface FormHandle {
   values(): Record<string, unknown>;
   /** Focus the first enabled control. */
   focusFirst(): boolean;
+  /** Dispose nested controls and any open overlays before removing the form. */
+  destroy(): void;
 }
 
 /**
@@ -262,8 +267,6 @@ export function toHexColor(input: unknown): string | null {
 export function formatNumber(n: number): string {
   return Number.isInteger(n) ? String(n) : String(Math.round(n * 1000) / 1000);
 }
-
-const DEFAULT_SWATCH = '#000000';
 
 // ── small DOM kit shared by the dialogs ───────────────────────────────────
 
@@ -650,7 +653,10 @@ interface Bound {
   /** Show `value`; `undefined` shows the control's empty state. */
   write(value: unknown): void;
   control: HTMLElement;
+  focus?: HTMLElement;
 }
+
+const activeForms = new WeakMap<HTMLElement, () => void>();
 
 /**
  * Render `controls` into `host` (emptied first). Rows sit under small
@@ -658,6 +664,9 @@ interface Bound {
  * label; everything else sits in the control column on the right.
  */
 export function renderForm(host: HTMLElement, controls: readonly FormControl[], opts: FormOptions): FormHandle {
+  activeForms.get(host)?.();
+  let destroyed = false;
+  const disposers: (() => void)[] = [];
   const doc = host.ownerDocument;
   host.innerHTML = '';
   host.classList.add('oac-form');
@@ -668,6 +677,7 @@ export function renderForm(host: HTMLElement, controls: readonly FormControl[], 
   // of the same value is not a second edit.
   const last = new Map<string, unknown>();
   const emit = (key: string, value: unknown): void => {
+    if (destroyed) return;
     if (last.has(key) && Object.is(last.get(key), value)) return;
     last.set(key, value);
     opts.onChange(key, value);
@@ -726,15 +736,14 @@ export function renderForm(host: HTMLElement, controls: readonly FormControl[], 
         break;
       }
       case 'color': {
-        const input = el(doc, 'input', 'oac-swatch-input');
-        input.type = 'color';
-        const show = (v: unknown): void => { input.value = toHexColor(v) ?? DEFAULT_SWATCH; };
-        show(value);
-        input.addEventListener('change', () => emit(key, input.value));
-        if (opts.live === true) input.addEventListener('input', () => emit(key, input.value));
-        ctl = input;
-        b = { key, control: input, read: () => input.value, write: show };
-        break;
+        const picker = createColorPicker(doc, {
+          id: idFor(key), label: spec.label, value, live: opts.live, translate: opts.translate,
+          disabledReason: why, openOverlay: opts.openOverlay, onChange: next => emit(key, next),
+        });
+        disposers.push(picker.destroy);
+        ctl = picker.el;
+        b = { key, control: picker.input, focus: picker.trigger, read: picker.read, write: picker.write };
+        return { ctl, b };
       }
       case 'opacity': {
         const range = el(doc, 'input', 'oac-range');
@@ -865,15 +874,18 @@ export function renderForm(host: HTMLElement, controls: readonly FormControl[], 
       const ctl = el(doc, 'div', 'oac-row__ctl');
       for (const half of [pair.up, pair.down]) {
         const f = field(half.key, 'color', c, opts.values[half.key]);
-        f.ctl.id = idFor(half.key);
+        f.b.control.id = idFor(half.key);
         // Which swatch is which is not obvious at 26px, and the row is too
         // tight for two more labels, so the name rides on the control.
-        f.ctl.title = (f.ctl as HTMLInputElement).disabled ? `${half.label}: ${f.ctl.title}` : half.label;
-        f.ctl.setAttribute('aria-label', `${c.label} ${half.label}`);
+        const name = (f.b.control as HTMLInputElement).disabled ? `${half.label}: ${f.b.control.title}` : half.label;
+        f.b.control.title = name;
+        if (f.b.focus !== undefined) f.b.focus.title = name;
+        f.b.control.setAttribute('aria-label', `${c.label} ${half.label}`);
+        f.b.focus?.setAttribute('aria-label', `${c.label} ${half.label}`);
         bound.push(f.b);
         ctl.appendChild(f.ctl);
       }
-      if (pair.enabled === undefined) label.htmlFor = idFor(pair.up.key);
+      if (pair.enabled === undefined) label.htmlFor = `${idFor(pair.up.key)}-trigger`;
       row.appendChild(ctl);
       host.appendChild(row);
       continue;
@@ -883,7 +895,7 @@ export function renderForm(host: HTMLElement, controls: readonly FormControl[], 
     const why = unavailable(c.key);
     if (why !== null) { row.classList.add('oac-row--off'); row.title = why; }
     f.b.control.id = idFor(c.key);
-    label.htmlFor = f.b.control.id;
+    label.htmlFor = (f.b.focus ?? f.b.control).id;
     bound.push(f.b);
     if (c.kind === 'boolean') {
       f.ctl.classList.add('oac-row__sw');
@@ -903,9 +915,17 @@ export function renderForm(host: HTMLElement, controls: readonly FormControl[], 
     host.appendChild(row);
   }
 
+  const destroy = (): void => {
+    if (destroyed) return;
+    destroyed = true;
+    for (const dispose of disposers.splice(0)) dispose();
+    if (activeForms.get(host) === destroy) activeForms.delete(host);
+  };
+  activeForms.set(host, destroy);
   return {
-    el: host,
+    el: host, destroy,
     sync: (values) => {
+      if (destroyed) return;
       const active = doc.activeElement;
       for (const b of bound) {
         if (b.control === active) continue;
@@ -919,9 +939,10 @@ export function renderForm(host: HTMLElement, controls: readonly FormControl[], 
       return out;
     },
     focusFirst: () => {
+      if (destroyed) return false;
       for (const b of bound) {
         if ((b.control as HTMLInputElement).disabled) continue;
-        b.control.focus();
+        (b.focus ?? b.control).focus();
         return true;
       }
       return false;

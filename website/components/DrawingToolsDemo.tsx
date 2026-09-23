@@ -1,9 +1,11 @@
 import React from 'react';
 import RunnableExample from './RunnableExample';
 import { highlight } from './highlight';
+import { STOCK_BARS_SOURCE } from './synthetic-market';
 
 // RunnableExample executes this same string; the source panel never has a separate demo implementation.
-const code = `// In your app: import { createChart, generateBars } from 'openalgo-charts';
+const code = `${STOCK_BARS_SOURCE}
+// In your app: import { createChart } from 'openalgo-charts';
 // import { DrawingController, getDrawingTool } from 'openalgo-charts/draw';
 // The website supplies these exports as lib and a sized container as el.
 const root = document.createElement('div');
@@ -27,7 +29,7 @@ const listeners = new AbortController();
 const listen = (node, event, handler) => node.addEventListener(event, handler, { signal: listeners.signal });
 
 const chart = lib.createChart(plot);
-const bars = lib.generateBars(1700000000, 160, 3600);
+const bars = stockBars(1700000000, 160, 3600, 100, 631, 0.006, 1800);
 chart.addSeries('candlestick').setData(bars);
 chart.timeScale.fitContent(bars.length);
 const draw = new lib.DrawingController(chart, { magnet: 'weak', stayInDrawingMode: false });

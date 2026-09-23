@@ -1,6 +1,8 @@
 import RunnableExample from './RunnableExample';
+import { STOCK_BARS_SOURCE } from './synthetic-market';
 
-const code = `el.style.display = 'flex';
+const code = `${STOCK_BARS_SOURCE}
+el.style.display = 'flex';
 el.style.flexDirection = 'column';
 const controls = document.createElement('div');
 controls.style.cssText = 'padding:8px 52px 8px 8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap';
@@ -16,7 +18,7 @@ stage.style.cssText = 'flex:1;min-height:230px;position:relative';
 controls.append(toggle, status);
 el.append(controls, stage);
 const chart = lib.createChart(stage);
-chart.addSeries('candlestick').setData(lib.generateBars(1700000000, 80, 3600));
+chart.addSeries('candlestick').setData(stockBars(1700000000, 80, 3600, 100, 811, 0.006));
 chart.fitContent();
 const table = new lib.ChartTable({
   position: 'top-left', cellWidth: 'auto', cellHeight: 22,

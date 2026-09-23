@@ -21,13 +21,13 @@
 import type { IPrimitive, DataLayer, AlertDrawingValue, AlertDrawingInfo } from 'openalgo-charts';
 import type {
   Drawing, DrawingInput, DrawingPatch, DrawingPoint, DrawingStyle, DrawingTool, DrawingsDocument,
-  MagnetMode, ScreenPoint,
+  MagnetMode, ScreenPoint, DrawingGroup,
 } from './types';
 import { DRAWING_STATE_VERSION } from './types';
 import { DrawingLayer, type DrawingPointerKind } from './layer';
 import { getDrawingTool, hasDrawingTool } from './tools';
 import { DrawingClipboard, cloneDrawing, type ClipboardPort } from './clipboard';
-import { migrateDrawings } from './migrate';
+import { migrateDrawings, migrateGroups } from './migrate';
 import { rdpSimplify } from './freehand';
 
 /**
@@ -286,6 +286,8 @@ export class DrawingController {
   private readonly _clipboard: DrawingClipboard;
   private readonly _layers = new Map<number, PaneLayers>();
   private _drawings: Drawing[] = [];
+  private _groups: DrawingGroup[] = [];
+  private _nextGroup = 1;
   private readonly _linkedPreviews = new Map<string, Drawing>();
   private _destroyed = false;
   private _tool: string | null = null;
@@ -360,7 +362,19 @@ export class DrawingController {
     // Restore anything a previous session left in the chart state. A 1.9.x
     // save is a bare array; the migration upgrades it in place.
     const saved = chart.drawingState();
-    if (saved !== undefined && saved !== null) this._drawings = migrateDrawings(saved).drawings;
+    if (saved !== undefined && saved !== null) {
+      const document = migrateDrawings(saved);
+      this._drawings = document.drawings;
+      this._groups = document.groups ?? [];
+    }
+    this._off.push(chart.on('paneRemoved', value => {
+      const { paneIndex } = value as { paneIndex: number };
+      this._remapPanes(index => index === paneIndex ? null : index > paneIndex ? index - 1 : index);
+    }));
+    this._off.push(chart.on('paneMoved', value => {
+      const { from, to } = value as { from: number; to: number };
+      this._remapPanes(index => index === from ? to : index === to ? from : index);
+    }));
     this._sync();
   }
 
@@ -430,6 +444,118 @@ export class DrawingController {
    * moves one; the list is the tie-break for equal `zIndex`, so it is also the
    * paint order within a band.
    */
+  /** Named drawing sets, returned as detached records. */
+  public groups(): readonly DrawingGroup[] {
+    return this._groups.map(group => ({ ...group, members: [...group.members] }));
+  }
+
+  /** Group live drawings, replacing any previous membership for those ids. */
+  public createGroup(name: string, ids: readonly string[]): DrawingGroup | null {
+    const members = [...new Set(ids)].filter(id => this.get(id) !== undefined);
+    if (this._destroyed || !name.trim() || !members.length) return null;
+    let id: string;
+    do { id = `group-${this._nextGroup++}`; } while (this._groups.some(group => group.id === id));
+    this._pushUndo();
+    const group = { id, name: name.trim(), members };
+    const moved = new Set(members);
+    for (const previous of this._groups) previous.members = previous.members.filter(member => !moved.has(member));
+    this._groups.push(group);
+    this._sync();
+    this._emitChange(members, 'update');
+    return { ...group, members: [...members] };
+  }
+
+  public renameGroup(id: string, name: string): boolean {
+    const group = this._groups.find(item => item.id === id);
+    if (!group || !name.trim() || this._destroyed) return false;
+    this._pushUndo();
+    group.name = name.trim();
+    this._sync();
+    this._emitChange(group.members, 'update');
+    return true;
+  }
+
+  /** Remove a group, optionally deleting all its drawings as one edit. */
+  public removeGroup(id: string, removeDrawings = false): boolean {
+    const group = this._groups.find(item => item.id === id);
+    if (!group || this._destroyed) return false;
+    this._pushUndo();
+    this._groups = this._groups.filter(item => item !== group);
+    if (removeDrawings) this._removeIds(group.members, false);
+    else { this._sync(); this._emitChange(group.members, 'update'); }
+    return true;
+  }
+
+  /** Move one step through the rendered stack, preserving the side of the series. */
+  public reorder(id: string, direction: -1 | 1): boolean {
+    const drawing = this.get(id);
+    if (!drawing || this._destroyed || (direction !== -1 && direction !== 1)) return false;
+    const band = this._drawings.filter(item => item.paneIndex === drawing.paneIndex && (item.zIndex < 0) === (drawing.zIndex < 0))
+      .sort((a, b) => a.zIndex - b.zIndex);
+    const index = band.indexOf(drawing);
+    const target = index + direction;
+    if (target < 0 || target >= band.length) return false;
+    this._pushUndo();
+    [band[index], band[target]] = [band[target], band[index]];
+    const members = new Set(band);
+    let cursor = 0;
+    this._drawings = this._drawings.map(item => members.has(item) ? band[cursor++] : item);
+    band.forEach((item, position) => { item.zIndex = drawing.zIndex < 0 ? position - band.length : position; });
+    this._sync();
+    for (const item of band) this._chart.emit('draw:update', { drawing: item });
+    this._emitChange(band.map(item => item.id), 'reorder');
+    return true;
+  }
+
+  private _remapPanes(map: (index: number) => number | null): void {
+    // Cancel without syncing to numeric slots which have already shifted.
+    const drag = this._dragStart;
+    if (drag) {
+      this._dragStart = null;
+      for (const item of drag.items) { const drawing = this.get(item.id); if (drawing) drawing.points = item.points.map(point => ({ ...point })); }
+      this._undo = drag.undo;
+      this._redo = drag.redo;
+      this._pendingHistory = null;
+      this._lifted.clear();
+      this._chart.emit('draw:preview-clear', { ids: drag.items.map(item => item.id) });
+    }
+    this._pending = [];
+    this._lastCursor = null;
+    this._linkedPreviews.clear();
+    const remapSnapshot = (value: string): string => {
+      const document = migrateDrawings(JSON.parse(value));
+      document.drawings = document.drawings.filter(drawing => {
+        const pane = map(drawing.paneIndex);
+        if (pane === null) return false;
+        drawing.paneIndex = pane;
+        return true;
+      });
+      document.groups = migrateGroups(document.groups, document.drawings);
+      return JSON.stringify(document);
+    };
+    for (const entry of new Set([...this._undo, ...this._redo])) {
+      entry.before = remapSnapshot(entry.before);
+      entry.after = remapSnapshot(entry.after);
+    }
+    const removed: Drawing[] = [];
+    this._drawings = this._drawings.filter(drawing => {
+      const pane = map(drawing.paneIndex);
+      if (pane === null) { removed.push(drawing); return false; }
+      drawing.paneIndex = pane;
+      return true;
+    });
+    const layers = [...this._layers.entries()];
+    this._layers.clear();
+    for (const [index, pair] of layers) {
+      const pane = map(index);
+      if (pane !== null) this._layers.set(pane, pair);
+    }
+    this._pruneSelection();
+    this._sync();
+    for (const drawing of removed) this._chart.emit('draw:remove', { drawing });
+    this._emitChange(this._drawings.map(drawing => drawing.id), 'update');
+  }
+
   public drawings(): readonly Drawing[] {
     return this._drawings;
   }
@@ -685,7 +811,7 @@ export class DrawingController {
 
   private _emitChange(ids: readonly string[], kind: DrawingChangeKind): void {
     if (this._pendingHistory !== null) {
-      this._pendingHistory.after = JSON.stringify(this._drawings);
+      this._pendingHistory.after = JSON.stringify(this.toJSON());
       this._pendingHistory = null;
     }
     this._chart.emit('drawing:change', { ids: ids.slice(), kind });
@@ -955,8 +1081,10 @@ export class DrawingController {
   }
 
   private _applyHistory(from: string, to: string, kind: 'undo' | 'redo'): void {
-    const before = JSON.parse(from) as Drawing[];
-    const after = JSON.parse(to) as Drawing[];
+    const beforeDocument = migrateDrawings(JSON.parse(from));
+    const afterDocument = migrateDrawings(JSON.parse(to));
+    const before = beforeDocument.drawings;
+    const after = afterDocument.drawings;
     const left = new Map(before.map(d => [d.id, d]));
     const right = new Map(after.map(d => [d.id, d]));
     const beforeOrder = before.filter(d => right.has(d.id)).map(d => d.id);
@@ -966,6 +1094,11 @@ export class DrawingController {
       || beforeOrder.indexOf(id) !== afterOrder.indexOf(id));
     const changed = new Set(ids);
     const previous = new Map(this._drawings.map(d => [d.id, d]));
+    const beforeGroups = new Map((beforeDocument.groups ?? []).map(group => [group.id, group]));
+    const afterGroups = new Map((afterDocument.groups ?? []).map(group => [group.id, group]));
+    const changedGroups = new Set([...beforeGroups.keys(), ...afterGroups.keys()].filter(id => JSON.stringify(beforeGroups.get(id)) !== JSON.stringify(afterGroups.get(id))));
+    this._groups = this._groups.filter(group => !changedGroups.has(group.id));
+    for (const id of changedGroups) { const group = afterGroups.get(id); if (group) this._groups.push(group); }
     // Property history patches in place. Removing and reinserting every edited
     // shape would also undo a later reorder performed on another chart.
     this._drawings = this._drawings.filter(d => !changed.has(d.id) || right.has(d.id))
@@ -1006,7 +1139,8 @@ export class DrawingController {
 
   /** Serialisable document, the same shape `ChartState.drawings` carries. */
   public toJSON(): DrawingsDocument {
-    return { version: DRAWING_STATE_VERSION, drawings: this._drawings.map(cloneDrawing) };
+    return { version: DRAWING_STATE_VERSION, drawings: this._drawings.map(cloneDrawing),
+      ...(this._groups.length ? { groups: this._groups.map(group => ({ ...group, members: [...group.members] })) } : {}) };
   }
 
   /**
@@ -1017,13 +1151,16 @@ export class DrawingController {
   public fromJSON(data: unknown): void {
     this.cancelDrag();
     this._linkedPreviews.clear();
-    this._drawings = migrateDrawings(data).drawings;
+    const document = migrateDrawings(data);
+    this._drawings = document.drawings;
+    this._groups = document.groups ?? [];
     this._undo = [];
     this._redo = [];
     this._pendingHistory = null;
     this._setSelection([]);
     this._sync();
     this._chart.emit('draw:restore', {});
+    this._emitChange(this._drawings.map(drawing => drawing.id), 'update');
   }
 
   public destroy(): void {
@@ -1620,6 +1757,7 @@ export class DrawingController {
 
   /** Push the current list into each pane's layers and into the chart state. */
   private _sync(): void {
+    this._groups = migrateGroups(this._groups, this._drawings);
     const byPane = new Map<number, { below: Drawing[]; above: Drawing[] }>();
     for (const committed of this._drawings) {
       const d = this._linkedPreviews.get(committed.id) ?? committed;
@@ -1711,7 +1849,7 @@ export class DrawingController {
 
   private _pushUndo(): void {
     this._onDragEnd();
-    const before = JSON.stringify(this._drawings);
+    const before = JSON.stringify(this.toJSON());
     this._pendingHistory = { before, after: before };
     this._undo.push(this._pendingHistory);
     if (this._undo.length > this._opts.historyLimit) this._undo.shift();

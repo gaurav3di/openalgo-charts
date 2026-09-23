@@ -1,7 +1,8 @@
 import { registeredIndicators, getIndicator, indicatorStyleInputs, INDICATOR_SOURCES } from '/dist/openalgo-charts.mjs';
-import { el, esc } from './ui.js';
+import { el, esc, currentTheme, chartTheme } from './ui.js';
 import { autosave } from './persist.js';
 import { capturePaneTarget } from './pane-target.js';
+import { createColorPicker, applyTokens, widgetTokens } from '/dist/openalgo-charts.widget.mjs';
 
 let app;
 
@@ -79,6 +80,7 @@ export function addIndicator(id, target = capturePaneTarget(app)) {
 let settingsFor = null; // the IndicatorApi handle being edited
 let settingsTarget = null;
 let disposeSettings = null;
+const formPickers = new WeakMap();
 
 let settingsTab = 'inputs';
 export function openSettings(instanceId, target = capturePaneTarget(app)) {
@@ -108,6 +110,10 @@ export function openSettings(instanceId, target = capturePaneTarget(app)) {
  * its value still readable rather than left live and inert.
  */
 export function renderInputRows(host, inputs, values, onChange, unavailable) {
+  destroyInputRows(host);
+  formPickers.set(host, []);
+  host.classList.add('oac-widget', 'host-form-widget');
+  applyTokens(host, widgetTokens(chartTheme(), currentTheme()));
   host.innerHTML = '';
   let group = null;
   for (const input of inputs) {
@@ -122,6 +128,11 @@ export function renderInputRows(host, inputs, values, onChange, unavailable) {
       ? colorPairRow(host, input, values, onChange, unavailable)
       : simpleRow(host, input, values, onChange, unavailable));
   }
+}
+
+export function destroyInputRows(host) {
+  for (const picker of formPickers.get(host) || []) picker.destroy();
+  formPickers.delete(host);
 }
 
 /**
@@ -153,16 +164,15 @@ function inputField(host, key, kind, spec, value, onChange, unavailable) {
     field.type = 'checkbox';
     field.checked = Boolean(value);
   } else if (kind === 'color') {
-    field = document.createElement('input');
-    field.type = 'color';
-    field.className = 'swatch';        // a 26px square, not a 140px block
-    field.value = String(value ?? '#000000');
-    // Some engines paint a text fallback for the native colour control.
-    // Keep its actual value visible as the square's background in every engine.
-    const paintColor = () => { field.style.backgroundColor = field.value; };
-    paintColor();
-    field.addEventListener('input', paintColor);
-    field.addEventListener('change', paintColor);
+    const picker = createColorPicker(document, {
+      id: host.id + '_' + key, label: spec.label || key, value,
+      disabledReason: off,
+      openOverlay: app?.['alertUi' + (app.focusPane === 2 ? '2' : '')]?.context.openOverlay,
+      onChange: next => onChange?.(key, next),
+    });
+    formPickers.get(host).push(picker);
+    field = picker.input;
+    field._colorPicker = picker;
   } else {
     field = document.createElement('input');
     field.type = kind === 'number' ? 'number' : 'text';
@@ -179,7 +189,7 @@ function inputField(host, key, kind, spec, value, onChange, unavailable) {
   field.dataset.key = key;
   field.dataset.kind = kind;
   if (off) { field.disabled = true; field.title = off; }
-  if (onChange) {
+  if (onChange && kind !== 'color') {
     for (const ev of ['input', 'change']) {
       field.addEventListener(ev, () => onChange(key, fieldValue(field)));
     }
@@ -221,7 +231,7 @@ function simpleRow(host, input, values, onChange, unavailable) {
   } else {
     const ctl = document.createElement('div');
     ctl.className = 'set-ctl';
-    ctl.appendChild(field);
+    ctl.appendChild(field._colorPicker?.el || field);
     row.append(label, ctl);
   }
   return row;
@@ -260,7 +270,7 @@ function colorPairRow(host, input, values, onChange, unavailable) {
     // tight for two more labels: the name goes on the control itself, and
     // keeps the reason alongside it when this half has nothing to paint.
     sw.title = sw.disabled ? half.label + ' - ' + sw.title : half.label;
-    ctl.appendChild(sw);
+    ctl.appendChild(sw._colorPicker?.el || sw);
   }
   row.append(label, ctl);
   return row;
@@ -269,7 +279,8 @@ function colorPairRow(host, input, values, onChange, unavailable) {
 /** A field's value in the type its input declared. */
 export function fieldValue(field) {
   const kind = field.dataset.kind;
-  return kind === 'number' ? Number(field.value) : kind === 'boolean' ? field.checked : field.value;
+  return kind === 'number' ? Number(field.value) : kind === 'boolean' ? field.checked
+    : kind === 'color' && field._colorPicker ? field._colorPicker.read() : field.value;
 }
 
 /** Every field in a generated form, as a flat patch keyed by input key. */
@@ -324,6 +335,7 @@ export function applySettings() {
 }
 
 export function closeSettings() {
+  destroyInputRows(el('set-body'));
   disposeSettings?.();
   disposeSettings = null;
   el('setmodal').hidden = true;
@@ -335,6 +347,12 @@ export function closeSettings() {
 
 export function initIndicators(a) {
   app = a;
+  document.addEventListener('oac:theme', () => {
+    for (const id of ['set-body', 'cset-body']) {
+      const host = el(id);
+      if (host?.classList.contains('host-form-widget')) applyTokens(host, widgetTokens(chartTheme(), currentTheme()));
+    }
+  });
   // Add an indicator live: no chart rebuild, no refetch. The handle it returns
   // is what a settings dialog or an objects panel would drive.
   el('indadd').addEventListener('click', () => {

@@ -96,6 +96,7 @@ export function mountSettingsDialog(
   main.appendChild(nav.el);
 
   function renderPane(): void {
+    form?.destroy();
     const tab = tabs.find((t) => t.id === activeTab);
     pane.innerHTML = '';
     form = null;
@@ -106,7 +107,7 @@ export function mountSettingsDialog(
     // Re-read on every paint: edits apply live, so a tab left and returned to
     // has to show what the chart is drawing now, not what it drew when opened.
     form = renderForm(pane, controlsFromInputs(tab.inputs, { translate: ctx.translate, scope: 'settings' }), {
-      values: readChartSettings(chart), translate: ctx.translate,
+      values: readChartSettings(chart), translate: ctx.translate, openOverlay: ctx.openOverlay,
       idPrefix: 'oac-cset',
       live: true,
       unavailable: (key, option) => key === 'statusLine.openInterest' && chart.hasOpenInterest === false
@@ -138,7 +139,7 @@ export function mountSettingsDialog(
 
   // Escape and the scrim are the shell's, and both mean Cancel.
   const offContext = chart.on('data:context', renderPane);
-  const handle = openPanel(ctx, frame.el, { placement: 'center', modal: true, onClose: offContext }, () => cancel());
+  const handle = openPanel(ctx, frame.el, { placement: 'center', modal: true, onClose: () => { offContext(); form?.destroy(); } }, () => cancel());
 
   function revert(): void {
     if (committed || dirty.size === 0) return;
@@ -154,12 +155,14 @@ export function mountSettingsDialog(
   function cancel(): void {
     if (!handle.isOpen()) return;
     revert();
+    form?.destroy();
     handle.close();
     opts.onClose?.(false);
   }
   function ok(): void {
     if (!handle.isOpen()) return;
     committed = true;
+    form?.destroy();
     handle.close();
     opts.onClose?.(true);
   }

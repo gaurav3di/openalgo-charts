@@ -1,6 +1,8 @@
 import RunnableExample from './RunnableExample';
+import { STOCK_BARS_SOURCE } from './synthetic-market';
 
-const code = `el.style.display = 'flex';
+const code = `${STOCK_BARS_SOURCE}
+el.style.display = 'flex';
 el.style.flexDirection = 'column';
 const controls = document.createElement('div');
 controls.style.cssText = 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:8px;flex-shrink:0';
@@ -11,14 +13,9 @@ stage.style.cssText = 'width:360px;max-width:100%;height:100%;min-height:0';
 stageWrap.appendChild(stage);
 el.append(controls, stageWrap);
 
-const bars = Array.from({ length: 180 }, (_, index) => {
-  const close = 100 + Math.sin(index / 9) * 3 + index * 0.025;
-  const bar = { time: 1700000000 + index * 3600, open: close - 0.35,
-    high: close + 0.9, low: close - 0.9, close, volume: 500 + index * 4 };
-  if (index === 94) bar.high = 130;
-  if (index === 97) bar.low = 74;
-  return bar;
-});
+const bars = stockBars(1700000000, 180, 3600, 100, 991, 0.006, 1000);
+bars[94].high = Math.max(bars[94].high, 130);
+bars[97].low = Math.min(bars[97].low, 74);
 
 let widget;
 let animated = true;

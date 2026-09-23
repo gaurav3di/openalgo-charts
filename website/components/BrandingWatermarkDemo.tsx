@@ -1,6 +1,8 @@
 import RunnableExample from './RunnableExample';
+import { STOCK_BARS_SOURCE } from './synthetic-market';
 
-const code = `el.style.display = 'flex';
+const code = `${STOCK_BARS_SOURCE}
+el.style.display = 'flex';
 el.style.flexDirection = 'column';
 const controls = document.createElement('div');
 controls.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;padding:8px;flex-shrink:0';
@@ -11,11 +13,7 @@ stage.style.cssText = 'width:100%;max-width:100%;height:100%;min-height:0';
 wrap.appendChild(stage);
 el.append(controls, wrap);
 
-const bars = Array.from({ length: 150 }, (_, index) => {
-  const close = 23800 + Math.sin(index / 9) * 28;
-  return { time: 1700000000 + index * 300, open: close - 3,
-    high: close + 7, low: close - 6, close, volume: 650 + index * 65 };
-});
+const bars = stockBars(1700000000, 150, 300, 23800, 173, 0.0015, 2500);
 const widget = lib.createWidget(stage, {
   symbol: 'NIFTY SIM', exchange: 'NSE', interval: '5m',
   intervals: ['5m', '15m', '1h'], persist: false,

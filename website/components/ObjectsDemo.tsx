@@ -1,13 +1,15 @@
 import RunnableExample from './RunnableExample';
+import { STOCK_BARS_SOURCE } from './synthetic-market';
 
-const code = `el.style.display = 'flex';
+const code = `${STOCK_BARS_SOURCE}
+el.style.display = 'flex';
 el.style.flexDirection = 'column';
 const controls = document.createElement('div');
 controls.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;padding:8px;flex-shrink:0';
 const stage = document.createElement('div');
 stage.style.cssText = 'flex:1;min-height:0;max-width:100%;width:100%';
 el.append(controls, stage);
-const bars = lib.generateBars(1700000000, 160, 60);
+const bars = stockBars(1700000000, 160, 60, 100, 1901, 0.005, 1800);
 const widget = lib.createWidget(stage, {
   symbol: 'OBJECTS SIM', interval: '1m', intervals: ['1m'],
   rail: false, statusline: false, topbar: false,
@@ -55,6 +57,7 @@ function button(label, action) {
   return node;
 }
 button('Open Objects', () => widget.openObjects());
+button('Open Data', () => widget.openDataWindow());
 button('Add drawing', addDrawing);
 button('Add RSI', () => widget.chart.addIndicator('rsi'));
 button('Undo drawing action', () => widget.draw.undo());
@@ -79,5 +82,5 @@ return { destroy() { unregister(); widget.destroy(); } };`;
 
 export default function ObjectsDemo() {
   return <RunnableExample height={500} tiers={['widget', 'profile']} code={code}
-    caption="Simulated stock candles with irregular moves, pullbacks and changing volume. Open Objects to manage drawings and indicators, or focus the rectangle beyond the newest bar. Try the 350 px width, or hide RSI, save the layout, show it, and restore. The profile offers only show/hide and removal; its host-owned state is separate from the saved chart layout." />;
+    caption="Simulated stock candles with irregular moves, pullbacks and changing volume. Open Data to inspect the dock as you move across the chart. In Objects, select drawings to create a named group, use Earlier/Later to change their order, or move an object to another pane. The rectangle sits beyond the newest bar. Try the 350 px width, then save and restore the layout. The profile offers show/hide and removal; its host-owned state is separate from the saved chart layout." />;
 }

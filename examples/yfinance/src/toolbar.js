@@ -13,11 +13,31 @@ import { openCacheMenu } from './feed.js';
 import { openChartSettings } from './chart-settings.js';
 import { openAlerts } from './alerts.js';
 import { capturePaneTarget, selectedPane } from './pane-target.js';
-import { LONG_NAMES } from './status.js';
 import { autosave } from './persist.js';
-import { addIndicator } from './indicators.js';
+import { rememberIndicators, renderIndicatorChips } from './indicators.js';
+import { mountSymbolPicker, mountIndicatorPicker } from '/dist/openalgo-charts.widget.mjs';
+import { referenceSymbolSearch } from './symbol-search.js';
+import { toggleInspection } from './inspection.js';
 
 let app;
+let symbolPicker = null;
+let symbolSearchClose = null;
+let indicatorPicker = null;
+
+function closeIndicatorPicker() {
+  const picker = indicatorPicker;
+  indicatorPicker = null;
+  picker?.close();
+}
+
+function closeSymbolSearch() {
+  const picker = symbolPicker;
+  symbolPicker = null;
+  picker?.destroy();
+  const close = symbolSearchClose;
+  symbolSearchClose = null;
+  close?.();
+}
 
 // ══ toolbar shell ══════════════════════════════════════════════════════
 // Buttons and popup menus rather than native <select>s: a select cannot show
@@ -161,7 +181,7 @@ function currentTarget(target) {
   return false;
 }
 
-function changeRequest(target, patch) {
+export function changeRequest(target, patch) {
   if (!currentTarget(target)) return;
   const request = { ...target.request, ...patch };
   request.period = clampPeriod(request.interval, request.period);
@@ -194,6 +214,8 @@ function changeType(target, chartType, pfmode) {
 
 /** Rebuild shared controls from their explicitly selected chart. */
 export function renderToolbar() {
+  closeSymbolSearch();
+  closeIndicatorPicker();
   syncFullscreenChrome();
   const bar = el('shellbar');
   const pane = selectedPane(app);
@@ -245,10 +267,35 @@ export function renderToolbar() {
   // symbol
   const sym = tbtn(ticon('search') + '<b>' + esc((request.symbol || '').toUpperCase()) + '</b>', 'Change symbol');
   sym.addEventListener('click', () => {
-    popupMenu(sym, Object.entries(LONG_NAMES).map(([symbol, name]) => ({
-      label: symbol + '  ' + name, on: request.symbol === symbol,
-      onSelect: () => changeRequest(target, { symbol }),
-    })), { find: 'Symbol or expression', onSubmit: symbol => changeRequest(target, { symbol }) });
+    const symbolContext = app['inspection' + pane]?.context;
+    if (!target?.current() || !symbolContext) return;
+    closeSymbolSearch();
+    const box = document.createElement('div');
+    box.className = 'oac-menu host-symbol-search';
+    const input = document.createElement('input');
+    input.type = 'search';
+    input.placeholder = 'Symbol or expression';
+    input.setAttribute('aria-label', 'Symbol or expression');
+    input.setAttribute('autocomplete', 'off');
+    input.setAttribute('spellcheck', 'false');
+    box.appendChild(input);
+    symbolSearchClose = symbolContext.openOverlay(box, {
+      anchor: sym, placement: 'below', initialFocus: input,
+      onClose: () => { symbolSearchClose = null; symbolPicker?.destroy(); symbolPicker = null; },
+    });
+    symbolPicker = mountSymbolPicker(symbolContext, input, {
+      search: referenceSymbolSearch,
+      context: () => target.current() ? `${pane}:${target.request.symbol}:${target.request.interval}` : 'changed',
+      onSelect: symbol => { closeSymbolSearch(); changeRequest(target, { symbol }); },
+    });
+    input.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' || event.defaultPrevented || !symbolPicker?.canCommitRaw()) return;
+      const query = input.value.trim();
+      if (!query) return;
+      event.preventDefault();
+      closeSymbolSearch();
+      changeRequest(target, { symbol: query.toUpperCase() });
+    });
   });
   bar.appendChild(sym);
   bar.appendChild(divider());
@@ -300,19 +347,23 @@ export function renderToolbar() {
   // indicators
   const ind = tbtn(ticon('indicators') + '<span>Indicators</span>', 'Add an indicator');
   ind.addEventListener('click', () => {
-    const rows = [];
-    let group = null;
-    for (const o of el('indpick').options) {
-      const g = o.parentElement.label;
-      if (g && g !== group) { group = g; rows.push({ group: g }); }
-      rows.push({
-        label: o.textContent,
-        onSelect: () => addIndicator(o.value, target),
-      });
-    }
-    popupMenu(ind, rows, { find: 'Search ' + (rows.length - new Set(rows.filter((r) => r.group).map((r) => r.group)).size) + ' indicators' });
+    if (!target?.current()) return;
+    const context = app['inspection' + pane]?.context;
+    if (!context) return;
+    closeIndicatorPicker();
+    indicatorPicker = mountIndicatorPicker(context, ind, { onAdd: () => {
+      if (pane === 1) rememberIndicators();
+      renderIndicatorChips();
+      autosave();
+    } });
   });
   bar.appendChild(ind);
+  for (const panel of ['data', 'objects']) {
+    const control = tbtn(panel === 'data' ? 'Data' : 'Objects', panel === 'data' ? 'Data window' : 'Chart objects');
+    control.setAttribute('aria-pressed', String(app['inspection' + pane]?.dock.state().panel === panel));
+    control.addEventListener('click', () => toggleInspection(pane, panel));
+    bar.appendChild(control);
+  }
   const templates = tbtn('Templates', 'Indicator templates');
   templates.setAttribute('aria-label', 'Templates'); templates.setAttribute('aria-haspopup', 'dialog');
   templates.setAttribute('aria-controls', 'templatemodal');
@@ -475,6 +526,8 @@ export function divider() {
 
 export function initToolbar(a) {
   app = a;
+  app.changeRequest = changeRequest;
+  app.renderToolbar = renderToolbar;
   document.addEventListener('fullscreenchange', () => {
     if (!isChartFull()) app.fullscreenPane = null;
     hideTip(); syncFullscreenChrome(); renderToolbar();

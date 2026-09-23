@@ -35,7 +35,7 @@ const widget = createWidget('#terminal', {
 });
 ```
 
-`container` is an `HTMLElement`, a CSS selector, or an element id and must exist before the call. Give it a real height for rendering; since 2.1.3 an initially hidden chart can receive data and apply its pending initial view when layout reports a usable width. See [host-integration](host-integration.md#hidden-charts-and-preferred-views). The widget imports `openalgo-charts` and `openalgo-charts/draw` itself; the indicator tier is the host's import because not every terminal wants 102 indicators.
+`container` is an `HTMLElement`, a CSS selector, or an element id and must exist before the call. Give it a real height for rendering; since 2.1.3 an initially hidden chart can receive data and apply its pending initial view when layout reports a usable width. See [host-integration](host-integration.md#hidden-charts-and-preferred-views). The widget imports `openalgo-charts` and `openalgo-charts/draw` itself; the indicator tier is the host's import because not every terminal wants 105 indicators.
 
 Importing the module touches no DOM; only `createWidget` does (it injects the stylesheet and builds the root then). Import it anywhere, call it once the container exists. `npm run skills:coverage` imports the built tier under Node and fails on a module-scope `document` access.
 
@@ -417,7 +417,7 @@ alert controllers already attached. Do not restore drawings again afterward.
 
 - `package.json` `exports['./widget']`: `types: ./dist/widget/index.d.ts`, `import: ./dist/openalgo-charts.widget.mjs`. Listed in `sideEffects` (importing registers the dialogs).
 - `rollup.config.js`: `openalgo-charts` and every `openalgo-charts/<tier>` are external for tier builds and emitted as sibling paths (`./openalgo-charts.mjs`, `./openalgo-charts.draw.mjs`), so `dist/` serves with no import map. The widget must never inline the base or the draw tier; `check-dts.mjs` fails a build whose `dist/widget/index.d.ts` declares `Chart` or `DrawingController`.
-- `.size-limit.json`: `Widget tier` row (the bundle alone, 42 kB budget) and `Widget terminal` row (base + draw + indicators + widget, 173 kB budget); `Everything` includes the widget. Measure with `npm run size`; never quote from memory.
+- `.size-limit.json`: `Widget tier` row (the bundle alone, 60.5 kB budget) and `Widget terminal` row (base + draw + indicators + widget, 229 kB budget); `Everything` includes the widget. Measure with `npm run size`; never quote from memory.
 - The standalone IIFE is base-only and cannot host the widget. Use native ESM from `dist/`.
 
 ## Pitfalls
@@ -453,3 +453,47 @@ is visible on both layouts, while the background watermark starts off. Appearanc
 operate through the same chart schema and chart state used by bare-chart hosts. See
 [primitives-and-plugins](primitives-and-plugins.md#chart-branding-and-optional-text-watermark-219)
 for the APIs, migration and interaction checks.
+
+
+## Chart controls added in 2.5.3
+
+`WidgetOptions.panels` defaults to true: Data and Objects share a closed-by-default
+resizable dock, switching to an overlay sheet on narrow hosts. `panels: false`
+keeps the Objects popup and omits Data. `Widget.openDataWindow()` opens readings;
+`openObjects()` opens its neighbour. Optional `WidgetState.panels` saves selected
+view and width; old records stay valid. No saved-state version bump is needed.
+
+- `readDataWindow(chart, time?, options?)` returns `DataWindowSnapshot` with
+  `DataWindowSection` and `DataWindowRow` records. `DataWindowOptions` carries locale
+  and translation. Values are exact-time OHLC/volume/OI and plot readings, including
+  plot offsets and candle-plot close columns. Absence is null, formatted Unavailable.
+- `mountDataWindow(context, host)` returns `DataWindowHandle` with refresh/destroy.
+  It observes `crosshair:readout`, data, object and timezone changes without replacing
+  a host's crosshair callback; hover does not copy the whole history each time.
+- `mountPanelDock(context, stage, options)` returns `PanelDockHandle`. Types are
+  `PanelDockId`, `PanelDockState`, `PanelDockContent`, `PanelDockOptions` and
+  `PanelDockHandle`. Content factories mount into their host and return destroy().
+  `sanitizePanelDockState` accepts unknown stored input and bounds the width.
+- `createObjectsPanelContent` returns `ObjectsPanelContent` (element, initialFocus,
+  destroy) for a host panel without popup furniture. `mountObjectsPanel` is retained.
+- `mountSymbolPicker` uses `SymbolPickerOptions` and returns `SymbolPickerHandle`.
+  The existing `SymbolMatch` adds optional assetClass, iconUrl and contractGroup
+  with explicit contract SymbolMatch records. `SymbolSearch` stays query-only.
+  `safeSymbolIconUrl` accepts HTTPS and root-relative URLs, rejects credentials.
+  Async queries are fenced by query, chart context and mounted lifetime.
+- `mountQuickEntry` uses `QuickEntryOptions` and returns `QuickEntryHandle`. The
+  host's enabled() decides chart ownership. `typingNavigation: false` opts a widget
+  out. Existing shortcuts, overlays, drawing placement, editors, modifiers and IME
+  retain precedence. Bare numeric input means minutes; invalid intervals stay open.
+- `createColorPicker` uses `ColorPickerOptions`, returns `ColorPickerHandle`, and
+  preserves existing alpha. Pass openOverlay from the context inside a dialog.
+  `FormOptions.openOverlay` threads the same opener through generated forms;
+  `FormHandle.destroy()` disposes child controls. Destroy before removing a form.
+- The indicator picker lists running instances and removes only the chosen ID.
+- `AlertUi.context` exposes the context for hosts reusing other widget controls.
+
+`DATA_WINDOW_CSS`, `PANEL_DOCK_CSS`, `SYMBOL_PICKER_CSS`, `QUICK_ENTRY_CSS` and
+`COLOR_PICKER_CSS` can be included individually. `WIDGET_COMPONENT_CSS` combines
+all component styles, including dialogs and indicator-picker additions. Include it
+beside `WIDGET_CSS` when managing styles yourself; apply widget tokens to the root.
+createWidget/createAlertUi inject the complete component styles automatically.

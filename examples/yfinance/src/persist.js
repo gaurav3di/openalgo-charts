@@ -332,6 +332,7 @@ export function layoutSnapshot() {
     // this flag, so without it a hidden volume comes back on a reload.
     volume: volumeShown(1),
     volumeSettings: volumeSettings(1),
+    inspection: app.inspection1?.dock.state() || app.inspectionState1,
     focusPane: app.focusPane === 2 && app.chart2 ? 2 : 1,
     linkOptions: app.linkGroup?.options(),
     secondary: app.chart2 ? {
@@ -340,6 +341,7 @@ export function layoutSnapshot() {
       pfmode: app.p2.pfmode || 'atr',
       legendIconSize: normalizeLegendIconSize(app.chart2.legendIconSize?.()),
       volumeSettings: volumeSettings(2),
+      inspection: app.inspection2?.dock.state() || app.inspectionState2,
       ...comparisonSnapshot(2),
       state: app.chart2.getState(),
       width: parseFloat(el('pane2').style.flexBasis) || (Number.isFinite(measuredWidth) && measuredWidth > 0 ? measuredWidth : 50),
@@ -389,6 +391,8 @@ export function applyLayout(doc, { keepView = true, replaceComparisons = true } 
     toast('error', 'The layout could not be restored: ' + report.reason);
     return report;
   }
+  app.inspectionState1 = state.inspection || { panel: null, width: 300 };
+  app.inspection1?.dock.restore(app.inspectionState1);
   syncTimezoneFromChart();   // the saved zone is the engine's to apply, ours to remember
   restorePrimaryStyle(app.chart, state);
   app.chart.setLegendIconSize?.(normalizeLegendIconSize(state.legendIconSize));

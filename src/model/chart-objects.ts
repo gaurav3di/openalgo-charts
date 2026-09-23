@@ -1,7 +1,7 @@
 import type { Chart } from '../core/chart';
 import type { IndicatorDataStatus } from './indicator-registry';
 
-export type ChartObjectKind = 'source' | 'indicator' | 'drawing' | 'profile';
+export type ChartObjectKind = 'source' | 'indicator' | 'drawing' | 'profile' | 'group';
 
 export interface ChartObjectCapabilities {
   readonly select: boolean;
@@ -10,6 +10,8 @@ export interface ChartObjectCapabilities {
   readonly remove: boolean;
   readonly settings: boolean;
   readonly focus: boolean;
+  readonly reorder?: boolean;
+  readonly move?: boolean;
 }
 
 /** One immutable row in a chart's object inventory. */
@@ -22,6 +24,7 @@ export interface ChartObjectSnapshot {
   readonly visible: boolean;
   readonly locked?: boolean;
   readonly selected: boolean;
+  readonly groupId?: string;
   readonly dataStatus?: Readonly<IndicatorDataStatus>;
   readonly capabilities: ChartObjectCapabilities;
 }
@@ -34,6 +37,7 @@ export interface ChartObjectDefinition {
   visible?: boolean;
   locked?: boolean;
   selected?: boolean;
+  groupId?: string;
   dataStatus?: Readonly<IndicatorDataStatus>;
 }
 
@@ -48,6 +52,8 @@ export interface ChartObjectProvider {
   remove?(): void;
   openSettings?(): void;
   focus?(): void;
+  reorder?(direction: -1 | 1): boolean;
+  move?(paneIndex: number): boolean;
 }
 
 /** Structural contract keeps the base tier independent of drawing code. */
@@ -58,6 +64,13 @@ export interface ChartObjectDrawing {
   points: readonly { time: number; price: number }[];
   visible?: boolean;
   locked?: boolean;
+  zIndex?: number;
+}
+
+export interface ChartObjectDrawingGroup {
+  id: string;
+  name: string;
+  members: readonly string[];
 }
 
 export interface ChartObjectDrawingSource {
@@ -67,6 +80,12 @@ export interface ChartObjectDrawingSource {
   select(id: string | readonly string[] | null, additive?: boolean): void;
   update(id: string, patch: { visible?: boolean; locked?: boolean }): void;
   remove(id: string): boolean;
+  reorder?(id: string, direction: -1 | 1): boolean;
+  groups?(): readonly ChartObjectDrawingGroup[];
+  createGroup?(name: string, ids: readonly string[]): ChartObjectDrawingGroup | null;
+  renameGroup?(id: string, name: string): boolean;
+  removeGroup?(id: string, removeDrawings?: boolean): boolean;
+  updateMany?(patches: ReadonlyArray<{ id: string; patch: { visible?: boolean; locked?: boolean } }>): void;
 }
 
 export interface ChartObjectsOptions {
@@ -75,7 +94,7 @@ export interface ChartObjectsOptions {
   onSettings?(object: ChartObjectSnapshot): void;
 }
 
-type Actions = Pick<ChartObjectProvider, 'select' | 'setVisible' | 'setLocked' | 'remove' | 'openSettings' | 'focus'>;
+type Actions = Pick<ChartObjectProvider, 'select' | 'setVisible' | 'setLocked' | 'remove' | 'openSettings' | 'focus' | 'reorder' | 'move'>;
 interface Entry { row: ChartObjectSnapshot; actions: Actions }
 interface Registration { provider: ChartObjectProvider; off?: () => void }
 const EMPTY: readonly ChartObjectSnapshot[] = Object.freeze([]);
@@ -83,7 +102,7 @@ const sameRows = (a: readonly ChartObjectSnapshot[], b: readonly ChartObjectSnap
   a.length === b.length && a.every((x, i) => {
     const y = b[i];
     return x.id === y.id && x.name === y.name && x.kind === y.kind && x.paneIndex === y.paneIndex
-      && x.visible === y.visible && x.locked === y.locked && x.selected === y.selected
+      && x.visible === y.visible && x.locked === y.locked && x.selected === y.selected && x.groupId === y.groupId
       && x.dataStatus?.state === y.dataStatus?.state
       && (x.dataStatus?.state !== 'error' || (y.dataStatus?.state === 'error' && x.dataStatus.error === y.dataStatus.error))
       && (Object.keys(x.capabilities) as (keyof ChartObjectCapabilities)[])
@@ -109,7 +128,7 @@ export class ChartObjects {
     this._options = options;
     if (chart.isDestroyed) { this._destroyed = true; return; }
     for (const event of ['objects:change', 'indicatorRemoved', 'paneRemoved', 'paneMoved',
-      'data:context', 'indicator:data-status', 'drawing:change', 'drawing:select']) {
+      'paneAdded', 'data:context', 'indicator:data-status', 'drawing:change', 'drawing:select']) {
       this._off.push(chart.on(event, () => this.refresh()));
     }
     let hasData = chart.dataLayer.length > 0;
@@ -208,6 +227,62 @@ export class ChartObjects {
     } catch { this.refresh(); return false; }
   }
 
+  /** Pane targets include one new pane after the current stack. */
+  public paneCount(): number { return this._chart.panes().length; }
+
+  public canReorder(id: string, direction: -1 | 1): boolean {
+    const row = this.get(id);
+    if (!row?.capabilities.reorder || (direction !== -1 && direction !== 1)) return false;
+    if (this._providers.has(id)) return true;
+    const drawing = row.kind === 'drawing' ? this._options.drawings?.get(row.sourceId) : undefined;
+    const peers = this._rows.filter(item => item.kind === row.kind && item.paneIndex === row.paneIndex
+      && (drawing === undefined || ((this._options.drawings?.get(item.sourceId)?.zIndex ?? 0) < 0) === ((drawing.zIndex ?? 0) < 0)));
+    const index = peers.findIndex(item => item.id === id) + direction;
+    return index >= 0 && index < peers.length;
+  }
+
+  public reorder(id: string, direction: -1 | 1): boolean {
+    if (!this.get(id)?.capabilities.reorder || this._destroyed) return false;
+    try { const result = this._entries.get(id)?.actions.reorder?.(direction) === true; this.refresh(); return result; }
+    catch { this.refresh(); return false; }
+  }
+
+  public move(id: string, paneIndex: number): boolean {
+    if (!this.get(id)?.capabilities.move || this._destroyed) return false;
+    try { const result = this._entries.get(id)?.actions.move?.(paneIndex) === true; this.refresh(); return result; }
+    catch { this.refresh(); return false; }
+  }
+
+  public canGroup(): boolean { return !this._destroyed && typeof this._options.drawings?.createGroup === 'function'; }
+
+  /** Accept inventory ids so callers never need to strip provider prefixes. */
+  public createGroup(name: string, ids: readonly string[]): string | null {
+    if (!this.canGroup()) return null;
+    const members = ids.flatMap(id => {
+      const row = this.get(id);
+      return row?.kind === 'drawing' && id === 'drawing:' + row.sourceId ? [row.sourceId] : [];
+    });
+    const group = this._options.drawings!.createGroup!(name, members);
+    this.refresh();
+    return group ? 'group:' + group.id : null;
+  }
+
+  public renameGroup(id: string, name: string): boolean {
+    const row = this.get(id);
+    if (this._destroyed || row?.kind !== 'group' || id !== 'group:' + row.sourceId) return false;
+    const result = this._options.drawings?.renameGroup?.(row.sourceId, name) === true;
+    this.refresh();
+    return result;
+  }
+
+  public ungroup(id: string): boolean {
+    const row = this.get(id);
+    if (this._destroyed || row?.kind !== 'group' || id !== 'group:' + row.sourceId) return false;
+    const result = this._options.drawings?.removeGroup?.(row.sourceId, false) === true;
+    this.refresh();
+    return result;
+  }
+
   public setVisible(id: string, on: boolean): boolean { return this._act(id, 'visibility', a => a.setVisible!(on)); }
   public setLocked(id: string, on: boolean): boolean { return this._act(id, 'lock', a => a.setLocked!(on)); }
   public remove(id: string): boolean { return this._act(id, 'remove', a => a.remove!()); }
@@ -231,10 +306,11 @@ export class ChartObjects {
         select: typeof actions.select === 'function', visibility: typeof actions.setVisible === 'function',
         lock: typeof actions.setLocked === 'function', remove: typeof actions.remove === 'function',
         settings: typeof actions.openSettings === 'function', focus: typeof actions.focus === 'function',
+        reorder: typeof actions.reorder === 'function', move: typeof actions.move === 'function',
       });
       const row: ChartObjectSnapshot = Object.freeze({
         id, sourceId, kind: state.kind, name: state.name, paneIndex: state.paneIndex ?? 0,
-        visible: state.visible !== false, locked: state.locked, selected: state.selected === true || this._selected === id,
+        visible: state.visible !== false, locked: state.locked, groupId: state.groupId, selected: state.selected === true || this._selected === id,
         dataStatus: state.dataStatus ? Object.freeze({ ...state.dataStatus }) : undefined, capabilities,
       });
       entries.set(id, { row, actions });
@@ -256,20 +332,41 @@ export class ChartObjects {
         visible: indicator.visible(), dataStatus: indicator.dataStatus() ?? undefined,
       }, {
         select: () => {}, setVisible: on => indicator.setVisible(on),
+        reorder: direction => chart.reorderIndicator(indicator.id, direction),
+        move: paneIndex => chart.moveIndicator(indicator.id, paneIndex),
         remove: () => { chart.removeIndicator(indicator.id); }, ...settings(id),
       });
     }
     if (draw) {
-      for (const drawing of draw.drawings()) {
+      const membership = new Map<string, string>();
+      for (const group of draw.groups?.() ?? []) {
+        const members = group.members.flatMap(id => { const drawing = draw.get(id); return drawing ? [drawing] : []; });
+        if (!members.length) continue;
+        const id = 'group:' + group.id;
+        for (const member of members) membership.set(member.id, id);
+        const patch = (value: { visible?: boolean; locked?: boolean }): void => {
+          if (draw.updateMany) draw.updateMany(members.map(member => ({ id: member.id, patch: value })));
+          else for (const member of members) draw.update(member.id, value);
+        };
+        add(id, group.id, { kind: 'group', name: group.name, paneIndex: members[0].paneIndex,
+          visible: members.some(member => member.visible !== false), locked: members.every(member => member.locked === true),
+          selected: members.every(member => selected.includes(member.id)),
+        }, { select: () => draw.select(members.map(member => member.id)), setVisible: visible => patch({ visible }),
+          setLocked: locked => patch({ locked }),
+          ...(draw.removeGroup ? { remove: () => { draw.removeGroup!(group.id, true); } } : {}),
+        });
+      }
+      for (const drawing of [...draw.drawings()].sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0))) {
         const id = 'drawing:' + drawing.id;
         const canFocus = chart.dataLayer.length > 0 && drawing.points.length > 0
           && drawing.points.every(p => Number.isFinite(p.time) && Number.isFinite(p.price))
           && chart.panes()[drawing.paneIndex] !== undefined;
         add(id, drawing.id, {
-          kind: 'drawing', name: drawing.tool.replace(/-/g, ' ').replace(/^./, c => c.toUpperCase()),
+          kind: 'drawing', groupId: membership.get(drawing.id), name: drawing.tool.replace(/-/g, ' ').replace(/^./, c => c.toUpperCase()),
           paneIndex: drawing.paneIndex, visible: drawing.visible !== false,
           locked: drawing.locked === true, selected: selected.includes(drawing.id),
         }, {
+          ...(draw.reorder ? { reorder: (direction: -1 | 1) => draw.reorder!(drawing.id, direction) } : {}),
           select: () => draw.select(drawing.id), setVisible: on => draw.update(drawing.id, { visible: on }),
           setLocked: on => draw.update(drawing.id, { locked: on }), remove: () => { draw.remove(drawing.id); },
           ...(canFocus ? { focus: () => this._focusDrawing(drawing) } : {}), ...settings(id),
@@ -280,7 +377,7 @@ export class ChartObjects {
       try {
         const state = provider.get();
         if (!state || typeof state.name !== 'string'
-          || !['source', 'indicator', 'drawing', 'profile'].includes(state.kind)) continue;
+          || !['source', 'indicator', 'drawing', 'profile', 'group'].includes(state.kind)) continue;
         add(id, provider.id, state, provider);
       } catch { /* A failing optional provider cannot hide usable chart objects. */ }
     }

@@ -1,9 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import { test, expect, type Page, type Locator } from '@playwright/test';
 
+const ORIGIN = `http://127.0.0.1:${process.env.OAC_E2E_DEMO_PORT || '8124'}`;
+
 async function reference(page: Page) {
   await page.setViewportSize({ width: 1360, height: 900 });
-  await page.goto('http://127.0.0.1:8124/examples/yfinance/index.html?test=1');
+  await page.goto(ORIGIN + '/examples/yfinance/index.html?test=1');
   await page.waitForFunction(() => (window as any).__oac?.app.chart && !(window as any).__oac.app.loading);
 }
 async function csv(page: Page, button: Locator) {

@@ -207,3 +207,12 @@ Missing restored drawing or plot anchors emit removal reasons. See
 - [replay-and-compare](replay-and-compare.md): the `replay:*` payload, and the comparison controller's own state.
 - [settings-and-menus](settings-and-menus.md): the settings slice of the state, and the `contextmenu` target.
 - [react-integration](react-integration.md), unsubscribing on unmount.
+
+
+## Readout observers (2.5.3)
+
+`crosshair:readout` carries `CrosshairMoveEvent` for both physical and linked
+crosshairs, including clearing. Unlike the single setCrosshairMoveHandler callback,
+multiple chart.on subscriptions can observe it. `crosshair:move` retains its
+physical-pointer semantics for linking. `timezone:changed` reports `{ timezone }`
+after setTimezone changes the chart calendar. Dispose subscriptions with the host.

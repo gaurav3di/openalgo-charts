@@ -1,6 +1,6 @@
 import { test, expect, type ConsoleMessage, type Page, type Request, type Response } from '@playwright/test';
 
-const ORIGIN = 'http://127.0.0.1:8124';
+const ORIGIN = `http://127.0.0.1:${process.env.OAC_E2E_DEMO_PORT || '8124'}`;
 const PAGE = ORIGIN + '/examples/yfinance/index.html?test=1';
 const PROBE = ORIGIN + '/api/history?symbol=AAPL&interval=1d&period=1mo';
 
@@ -1009,13 +1009,14 @@ test('shared request and type controls preserve independent charts through reloa
   await expect(page.getByRole('button', { name: 'Place a Sell OCO bracket: entry, target and stop', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: 'Change symbol', exact: true }).click();
   await page.getByPlaceholder('Symbol or expression').fill('TSLA');
+  await expect(page.getByRole('option', { name: /TSLA/ })).toBeVisible();
   await page.getByPlaceholder('Symbol or expression').press('Enter');
   await page.waitForFunction(() => {
     const app = (window as any).__oac.app;
     return app.chart2.getDataContext().symbol === 'TSLA' && !app.loading2;
   });
   await page.getByRole('button', { name: 'Add an indicator', exact: true }).click();
-  await page.getByRole('button', { name: 'EMA', exact: true }).click();
+  await page.locator('.oac-pick__row[data-id="ema"]').click();
   const study = await page.evaluate(() => (window as any).__oac.app.chart2.indicators()[0]?.id);
   expect(study).toBeTruthy();
   await page.evaluate(async (id) => {
@@ -1131,7 +1132,7 @@ test('reference volume settings follow each chart and update their own average',
   await page.locator('[data-key="volume.maPeriod"]').fill('3');
   await page.locator('[data-key="volume.maPeriod"]').press('Tab');
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  const colorFace = await page.locator('[data-key="volume.maColor"]').screenshot();
+  const colorFace = await page.locator('[data-key="volume.maColor"] + .oac-color__trigger').screenshot();
   const colorPixels = await page.evaluate(async encoded => {
     const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(encoded), value => value.charCodeAt(0))], { type: 'image/png' }));
     const canvas = document.createElement('canvas');
@@ -1363,8 +1364,11 @@ test('secondary requests cancel stale history and retain the last saved source d
   });
   const symbol = async (value: string) => {
     await page.getByRole('button', { name: 'Change symbol', exact: true }).click();
-    await page.getByPlaceholder('Symbol or expression').fill(value);
-    await page.getByPlaceholder('Symbol or expression').press('Enter');
+    const input = page.getByPlaceholder('Symbol or expression');
+    await input.fill(value);
+    if (value === 'TSLA') await expect(page.getByRole('option', { name: /TSLA/ })).toBeVisible();
+    else await expect(input).toHaveAttribute('aria-expanded', 'false');
+    await input.press('Enter');
   };
   try {
     await symbol('SLOW');

@@ -380,6 +380,31 @@ export class Pane {
     return this._series;
   }
 
+  /** Reorder a subset of series without disturbing unrelated sources. */
+  public reorderSeries(ordered: readonly SeriesRecord[]): void {
+    const members = new Set(ordered);
+    const local = ordered.filter(record => this._series.includes(record));
+    let index = 0;
+    for (let i = 0; i < this._series.length; i++) if (members.has(this._series[i])) this._series[i] = local[index++];
+  }
+
+  /** Reorder owned visuals within each renderer layer. */
+  public reorderPrimitives(ordered: readonly IPrimitive[]): void {
+    const members = new Set(ordered);
+    const local = ordered.filter(primitive => this._primitives.includes(primitive));
+    let index = 0;
+    for (let i = 0; i < this._primitives.length; i++) if (members.has(this._primitives[i])) this._primitives[i] = local[index++];
+  }
+
+  /** Transfer ownership without ending an attached primitive's lifetime. */
+  public transferPrimitive(primitive: IPrimitive, target: Pane): boolean {
+    const index = this._primitives.indexOf(primitive);
+    if (index < 0 || target === this) return false;
+    this._primitives.splice(index, 1);
+    target._primitives.push(primitive);
+    return true;
+  }
+
   /** Primitives attached to this pane, in draw order. */
   public primitives(): readonly IPrimitive[] {
     return this._primitives;

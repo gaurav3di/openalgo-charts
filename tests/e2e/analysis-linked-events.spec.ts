@@ -10,7 +10,7 @@ async function settle(page: Page) {
 }
 
 test('reference host preserves linked drawings across interval rebuilds and removes old instrument copies', async ({ page, request }) => {
-  const base = 'http://127.0.0.1:8124';
+  const base = `http://127.0.0.1:${process.env.OAC_E2E_DEMO_PORT || '8124'}`;
   const up = await request.get(base + '/api/history?symbol=AAPL&interval=1d&period=1mo').then(r => r.ok(), () => false);
   test.skip(!up, 'Reference fixture server needs Python 3');
   const errors: string[] = [];

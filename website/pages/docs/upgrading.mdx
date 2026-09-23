@@ -1,9 +1,32 @@
 ---
-title: Upgrading to 2.5.2
+title: Upgrading to 2.5.3
 description: Adopt workspace, open-interest, alert and host contracts while preserving existing integrations.
 ---
 
-# Upgrading to 2.5.2
+# Upgrading to 2.5.3
+
+Version 2.5.3 adds the widget's Data and Objects dock, richer symbol lookup,
+direct typing, shared colour controls, and individual running-study removal.
+The dock starts closed. Set `panels: false` to retain the Objects popup, and
+`typingNavigation: false` when your application already owns plain typing.
+Existing symbol lookup callbacks and results still work. Asset categories,
+images, and futures contracts are optional host-provided metadata.
+
+Saved widget records can include `panels`, and drawing documents can include
+named `groups`. Older records load without migration. Study movement retains IDs
+and attached alerts. Reordering changes the rendered order; custom object
+providers can opt into the new `move` and `reorder` callbacks. Custom inventories
+should handle the additive `group` object kind when consuming grouped drawings.
+If your TypeScript host uses `Record<ChartObjectKind, ...>` or an exhaustive switch,
+add a `group` entry before upgrading. Existing stored drawings do not need a rewrite.
+
+For custom hosts, `createAlertUi().context` can mount the shared panel, search,
+and form components. Use the context's overlay opener for nested colour popups,
+and call a generated form's `destroy()` before unmounting it. Include
+`WIDGET_COMPONENT_CSS` alongside `WIDGET_CSS` if your host manages styles.
+See [Widget controls](/docs/widget) and [Objects](/docs/objects).
+
+## Earlier upgrades
 
 Version 2.5.2 adds Anchored VWAP and Fixed Range Volume Profile to the drawing
 registry. Existing drawing records still load. Both tools need candle volume;

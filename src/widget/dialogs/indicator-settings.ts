@@ -105,10 +105,11 @@ export function mountIndicatorSettings(
   }
 
   function renderPane(): void {
+    form?.destroy();
     const tab = tabs.find((t) => t.id === activeTab) ?? tabs[0];
     body.innerHTML = '';
     form = renderForm(body, controlsFromInputs(tab.inputs, { translate: ctx.translate, scope: `indicator.${descriptor.id}` }), {
-      values: values(), translate: ctx.translate,
+      values: values(), translate: ctx.translate, openOverlay: ctx.openOverlay,
       idPrefix: `oac-ind-${inst.id}`,
       live: true,
       onChange: (key, value) => {
@@ -133,7 +134,7 @@ export function mountIndicatorSettings(
   frame.actions.appendChild(button(doc, { label: widgetText(ctx, 'OK'), variant: 'primary', onClick: () => ok() }));
 
   // Escape and the scrim are the shell's, and both mean Cancel.
-  const handle = openPanel(ctx, frame.el, { placement: 'center', modal: true }, () => cancel());
+  const handle = openPanel(ctx, frame.el, { placement: 'center', modal: true, onClose: () => form?.destroy() }, () => cancel());
 
   function revert(): void {
     if (committed || dirty.size === 0) return;
@@ -146,12 +147,14 @@ export function mountIndicatorSettings(
   function cancel(): void {
     if (!handle.isOpen()) return;
     revert();
+    form?.destroy();
     handle.close();
     opts.onClose?.(false);
   }
   function ok(): void {
     if (!handle.isOpen()) return;
     committed = true;
+    form?.destroy();
     handle.close();
     opts.onClose?.(true);
   }

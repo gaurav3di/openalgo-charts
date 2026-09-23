@@ -1,6 +1,8 @@
 import RunnableExample from './RunnableExample';
+import { STOCK_BARS_SOURCE } from './synthetic-market';
 
-const code = `el.style.display = 'flex';
+const code = `${STOCK_BARS_SOURCE}
+el.style.display = 'flex';
 el.style.flexDirection = 'column';
 const controls = document.createElement('div');
 controls.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;padding:8px;flex-shrink:0';
@@ -28,15 +30,15 @@ function descriptor(anchor) {
     ],
     calc(bars) {
       return {
-        up: bars.map((bar, i) => Math.floor(i / 12) % 2 === 0 ? bar.close : null),
-        down: bars.map((bar, i) => Math.floor(i / 12) % 2 === 1 ? bar.close : null),
+        up: bars.map(bar => bar.close >= bar.open ? bar.close : null),
+        down: bars.map(bar => bar.close < bar.open ? bar.close : null),
         mid: bars.map((bar) => (bar.open + bar.close) / 2),
       };
     },
     markers({ bars }) {
       return bars.flatMap((bar, i) => {
         if (i === 0 || i % 12 !== 0) return [];
-        const up = Math.floor(i / 12) % 2 === 0;
+        const up = bar.close >= bar.open;
         return [{ time: bar.time, position: up ? 'belowBar' : 'aboveBar',
           shape: up ? 'labelUp' : 'labelDown', size: 'small',
           color: up ? '#26a69a' : '#ef5350', text: up ? 'Up' : 'Down' }];
@@ -46,11 +48,7 @@ function descriptor(anchor) {
 }
 for (const anchor of ['price', 'plot']) lib.registerIndicator(descriptor(anchor));
 const chart = lib.createChart(stage, { legendIconSize: 20 });
-const bars = Array.from({ length: 84 }, (_, i) => {
-  const close = 100 + Math.sin(i / 7) * 8;
-  return { time: 1700000000 + i * 300, open: close - 1,
-    high: close + 4, low: close - 4, close };
-});
+const bars = stockBars(1700000000, 84, 300, 100, 713, 0.008, 1500);
 chart.addSeries('candlestick').setData(bars);
 let anchor = 'price';
 let study = chart.addIndicator('demo-signal-anchor-' + anchor);
@@ -86,5 +84,5 @@ return { destroy() { listeners.abort(); chart.destroy(); } };`;
 
 export default function IndicatorSignalsDemo() {
   return <RunnableExample height={540} code={code}
-    caption="Synthetic signals alternate every twelve bars. Hover Signal anchors and press its source button to open the code supplied by this host. Switch to plot anchoring to compare line-relative labels with candle-relative labels; the transparent helper has no legend reading." />;
+    caption="Synthetic signals are sampled every twelve bars, with direction derived from each candle. Hover Signal anchors and press its source button to open the code supplied by this host. Switch to plot anchoring to compare line-relative labels with candle-relative labels; the transparent helper has no legend reading." />;
 }
