@@ -8,7 +8,10 @@ The [design](design.md) sets the boundaries and the [plan](plan.md) lists the re
 
 - A saved CSS-pixel spacing preference keeps candle density consistent across screen widths. The widget defaults to 8 pixels while explicit count preferences remain supported.
 - Mouse and pen drift up to 3 pixels no longer disables price autofit during horizontal dragging. Deliberate vertical panning and already-manual axes retain their behavior.
-
+- Fill descriptors support per-bar colors and static or computed gradients across a whole band.
+- Indicators can own multiple named tables, including price-pane overlays. Their resources follow visibility, updates, pane moves and removal.
+- Fourteen numerical helpers add statistics, running extrema and crossing/rising/falling predicates with explicit missing-observation rules.
+- Chart and workspace snapshots preserve existing secondary scales, precision, fixed/manual ranges and ratio locks. Symbol changes clear view ranges from every scale.
 - Known fixed intervals confirm the newest bar at its recorded opening plus its duration, including sparse data and weekend gaps.
 - Registered calendar intervals use the next boundary in their configured timezone.
 - A single forming bar remains unconfirmed until its interval closes.
@@ -32,4 +35,4 @@ The unchanged chart baseline `a1828e9ac948d2f9aebe0657f421987a85d6f2a7` measured
 
 ## Remaining work
 
-Lifecycle provenance, requested-context calculations, dependent study inputs, numerical helpers, typed and interactive inputs, visual descriptors, alert policies, chart navigation and density, persistence and provider capabilities still need implementation mapping and behavioral checks. Comparative research belongs outside the repository. Implement features from documented behavior using independently written code and tests.
+Lifecycle provenance, requested-context calculations, dependent study inputs, numerical helpers, typed and interactive inputs, remaining visual variants, alert policies, chart APIs, persistence and provider capabilities still need implementation and behavioral checks. Comparative research belongs outside the repository. Implement features from documented behavior using independently written code and tests.

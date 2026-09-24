@@ -438,6 +438,39 @@ chart.addIndicator('demo-daily-range');
 chart.timeScale.fitContent(bars.length);
 return chart;`} />
 
+## Computed fills and multiple summary grids
+
+A descriptor can color each part of a band and publish several tables. The fill
+callback reads calculation indices before any plot offset. A per-bar color takes
+precedence over the gradient; returning `undefined` uses the gradient. Named grids
+keep their identity across updates and disappear when omitted from `tables`.
+
+<RunnableExample height={340} code={`lib.registerIndicator({
+  id: 'demo-visual-outputs', name: 'Range summary', placement: 'onchart', inputs: [],
+  plots: [
+    { key: 'upper', type: 'line', title: 'Upper', style: { color: '#4f8cff' } },
+    { key: 'lower', type: 'line', title: 'Lower', style: { color: '#4f8cff' } },
+  ],
+  calc: bars => ({ upper: bars.map(b => b.high + 3), lower: bars.map(b => b.low - 3) }),
+  fills: [{
+    between: ['upper', 'lower'], opacity: 0.2,
+    gradient: { topColor: '#26a69a', bottomColor: '#4f8cff' },
+    colorBy: ({ index }) => index % 20 < 5 ? '#e8a23a' : undefined,
+  }],
+  tables: ({ bars }) => bars.length ? [
+    { id: 'quote', options: { position: 'bottom-center', cellWidth: 120 },
+      rows: [[{ text: 'Latest close' }], [{ text: bars[bars.length - 1].close.toFixed(2) }]] },
+    { id: 'count', options: { position: 'bottom-right', cellWidth: 120 },
+      rows: [[{ text: 'Observations' }], [{ text: String(bars.length) }]] },
+  ] : [],
+});
+const chart = lib.createChart(el);
+const bars = lib.generateBars(1700000000, 120, 3600);
+chart.addSeries('candlestick').setData(bars);
+chart.addIndicator('demo-visual-outputs');
+chart.fitContent();
+return chart;`} />
+
 ## Tables that fit their text
 
 Set `cellWidth: 'auto'` to fit each column to its widest reading. Fixed columns

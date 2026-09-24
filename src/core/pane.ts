@@ -26,6 +26,7 @@ import { PriceScale } from '../scale/price-scale';
 import { type TimeScale } from '../scale/time-scale';
 import { type DataLayer } from '../model/data-layer';
 import type { SeriesRecord, PriceScaleId } from '../model/series';
+import type { PriceScaleState } from '../model/chart-state';
 import { computeGridLines, drawGrid, resolveGridStyle, resolveScaleStyle, type CanvasOptions } from '../render/grid';
 import { getChartType, type DrawItem, type SeriesRenderContext } from '../model/chart-type-registry';
 import type { SeriesStyle } from '../render/series-style';
@@ -130,7 +131,7 @@ export class Pane {
   private _rightScale = new PriceScale();
   /** Extra scales created on demand: left axis and a hidden overlay (volume). */
   private _leftScale: PriceScale | null = null;
-  private readonly _overlayScales = new Map<string, PriceScale>();
+  private readonly _overlayScales = new Map<PriceScaleId, PriceScale>();
   /**
    * Scales whose price-per-bar ratio is pinned, with the geometry the ratio was
    * last held against. A lock stores that geometry rather than a number,
@@ -336,6 +337,25 @@ export class Pane {
     if (this._leftScale !== null) out.push(this._leftScale);
     out.push(...this._overlayScales.values());
     return out;
+  }
+
+  /** Detached scale configuration, excluding data baselines and runtime formatters. */
+  public scaleStates(): Partial<Record<PriceScaleId, PriceScaleState>> {
+    const entries: [PriceScaleId, PriceScale][] = [['right', this.priceScale]];
+    if (this._leftScale !== null) entries.push(['left', this._leftScale]);
+    entries.push(...this._overlayScales);
+    return Object.fromEntries(entries.map(([id, scale]) => {
+      const options = scale.options;
+      const state: PriceScaleState = {
+        marginTop: options.marginTop, marginBottom: options.marginBottom, minMove: options.minMove,
+        minPrecision: options.minPrecision, mode: options.mode, inverted: options.inverted,
+        autoScale: scale.autoScale, fixedRange: scale.fixedRange,
+      };
+      if (!scale.autoScale) state.range = scale.priceRange();
+      const lock = this._ratioLocks.get(id);
+      if (lock && !scale.autoScale) state.ratioLock = { ...lock };
+      return [id, state];
+    }));
   }
 
   /**

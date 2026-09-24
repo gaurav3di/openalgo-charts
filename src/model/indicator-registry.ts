@@ -18,6 +18,7 @@ import type { SeriesStyle } from '../render/series-style';
 import type { PriceScaleId, PriceFormat } from './series';
 import type { SeriesMarker } from '../primitives/markers';
 import type { TableCell, ChartTableOptions } from '../primitives/table';
+import type { FillGradient } from '../primitives/indicator-fill';
 import type { IPrimitive } from '../primitives/primitive';
 
 /** Which price a calculation reads from each bar. */
@@ -165,6 +166,20 @@ export interface IndicatorFillSpec {
   colorDownKey?: string;
   /** 0..1. Defaults to 0.12. */
   opacity?: number;
+  /** A price-anchored gradient for the whole band, resolved after each calculation. */
+  gradient?: FillGradient | ((ctx: {
+    bars: readonly Bar[];
+    values: IndicatorValues;
+    settings: Readonly<IndicatorSettings>;
+  }) => FillGradient | undefined);
+  /** Per-bar color takes precedence over the gradient and the up/down colors. */
+  colorBy?(ctx: {
+    index: number;
+    a: number | null;
+    b: number | null;
+    values: IndicatorValues;
+    settings: Readonly<IndicatorSettings>;
+  }): string | undefined;
   /**
    * Draw the band on the price pane even though the indicator owns a pane of
    * its own. The pair with `IndicatorPlot.overlay`: a study can already send
@@ -172,6 +187,16 @@ export interface IndicatorFillSpec {
    * them rather than in the study pane the fill would otherwise land in.
    * Ignored for an `'onchart'` descriptor, which is on the price pane already.
    */
+  overlay?: boolean;
+}
+
+/** A named summary grid owned by one indicator instance. */
+export interface IndicatorTableSpec {
+  /** Stable, nonempty identity, unique within this instance's table list. */
+  id: string;
+  rows: readonly (readonly TableCell[])[];
+  options?: Partial<ChartTableOptions>;
+  /** Keep this grid on the price pane when the indicator uses another pane. */
   overlay?: boolean;
 }
 
@@ -731,6 +756,16 @@ export interface IndicatorDescriptor {
     values: IndicatorValues;
     settings: Readonly<IndicatorSettings>;
   }): { rows: readonly (readonly TableCell[])[]; options?: Partial<ChartTableOptions> } | null;
+  /**
+   * Multiple named grids, refreshed after each calculation. Stable IDs reuse
+   * their grid; omitted IDs are removed. Return [] to remove all grids.
+   * When provided, this hook takes precedence over the single `table` hook.
+   */
+  tables?(ctx: {
+    bars: readonly Bar[];
+    values: IndicatorValues;
+    settings: Readonly<IndicatorSettings>;
+  }): readonly IndicatorTableSpec[];
   /**
    * Optional free-standing shapes drawn in the indicator's pane: trendlines
    * between pivots, supply and demand boxes, projection labels. Runs after

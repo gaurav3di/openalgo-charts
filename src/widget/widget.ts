@@ -209,12 +209,22 @@ export function stripView(state: WidgetChartState): WidgetChartState {
   const out = { ...state } as Record<string, unknown>;
   delete out.viewport;
   delete out.barSpacing;
+  const clearScaleView = (value: unknown): unknown => {
+    if (!isRecord(value)) return value;
+    const scale = { ...value, autoScale: true } as Record<string, unknown>;
+    delete scale.range;
+    delete scale.ratioLock;
+    return scale;
+  };
   if (Array.isArray(out.panes)) {
     out.panes = (out.panes as unknown[]).map((pane) => {
-      if (!isRecord(pane) || !isRecord(pane.priceScale)) return pane;
-      const priceScale = { ...pane.priceScale, autoScale: true } as Record<string, unknown>;
-      delete priceScale.range;
-      return { ...pane, priceScale };
+      if (!isRecord(pane)) return pane;
+      const next = { ...pane };
+      if (isRecord(pane.priceScale)) next.priceScale = clearScaleView(pane.priceScale);
+      if (isRecord(pane.scales)) next.scales = Object.fromEntries(
+        Object.entries(pane.scales).map(([id, scale]) => [id, clearScaleView(scale)]),
+      );
+      return next;
     });
   }
   return out as unknown as WidgetChartState;

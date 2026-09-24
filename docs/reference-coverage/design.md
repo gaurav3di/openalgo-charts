@@ -31,4 +31,4 @@ The confirmation fix reuses the native interval registry and calendar boundary l
 
 The integration runner uses a separately built, caller-specified script engine and its public adapter. It adds no runtime dependency. Recheck newer engine revisions before claiming compatibility with ongoing development.
 
-No publication or release is included in this implementation step.
+The user has authorized version 2.5.4 publication after the native work and validation are complete. Follow the release sequence in the plan.

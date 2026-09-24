@@ -114,3 +114,9 @@ export {
   type Tier2Point,
 } from './external';
 export { securitySeries, type SecuritySeries, type SecurityOptions } from './security';
+export {
+  rollingMedian, rollingMode, rollingVariance, rollingRange, percentileLinear,
+  rankCorrelation, centerOfGravity, runningMin, runningMax,
+  crossesAbove, crossesBelow, crosses, rising, falling,
+  type NumericalWindowOptions, type RollingVarianceOptions,
+} from './statistics';

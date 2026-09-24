@@ -77,7 +77,7 @@ function formatValue(v: number, tick?: number): string {
 /** The slice of the chart the runtime needs. Keeps this module testable alone. */
 export interface IndicatorHost {
   /** Forget a disposed instance, including disposal through its public handle. */
-  indicatorRemoved?(instanceId: string): void;
+  indicatorRemoved?(instanceId: string, failedOwnedPane?: number): void;
   /** Optional instrument identity and source-range notifications. */
   dataContext?(): Readonly<ChartDataContext> | undefined;
   subscribeDataChanges?(listener: (change: IndicatorDataChange) => void): () => void;
@@ -300,6 +300,7 @@ export class IndicatorInstance implements IndicatorApi {
   private _markers: SeriesMarkers | null = null;
   private _markerSeries: SeriesApi | undefined;
   private _table: ChartTable | null = null;
+  private _tables = new Map<string, { table: ChartTable; overlay: boolean }>();
   private _draws: IndicatorDrawings | null = null;
   private _background: IndicatorBackground | null = null;
   /**
@@ -384,9 +385,10 @@ export class IndicatorInstance implements IndicatorApi {
     this._applyRange();
     // Levels are applied inside `recompute`, so a data-derived one is built
     // from values that exist rather than from the empty set. This first pass
-    // is deliberately unguarded: a descriptor that cannot compute at all is
-    // refused by `addIndicator`, not added as a permanently empty pane.
-    this.recompute();
+    // refuses a descriptor that cannot compute at all. Release its resources
+    // before propagating the error so a failed add leaves no orphaned legend.
+    try { this.recompute(); }
+    catch (error) { this.remove(); throw error; }
     this._constructed = true;
     this._attach();
   }
@@ -444,7 +446,12 @@ export class IndicatorInstance implements IndicatorApi {
     const bars = this._host.sourceBars();
     this._applyLevels(bars, this._descriptorSettings());
     this._syncMarkers(bars);
-    this._syncTable(bars);
+    try { this._syncTable(bars); }
+    catch (error) {
+      // A rejected grid must not interrupt the eye toggle for other resources.
+      this._calcFailed = true;
+      this._publishStatus({ state: 'error', error });
+    }
     this._syncBarColors(bars);
     this._draws?.setVisible(on);
     this._background?.setVisible(on);
@@ -464,6 +471,7 @@ export class IndicatorInstance implements IndicatorApi {
       return api ? [{ api, overlay: plot.overlay === true }] : [];
     });
     const primitives = this._fills.map((primitive, index) => ({ primitive: primitive as IPrimitive, overlay: this._d.fills?.[index].overlay === true }));
+    for (const { table, overlay } of this._tables.values()) primitives.push({ primitive: table, overlay });
     for (const primitive of [this._legend, ...this._levels, this._markers, this._table, this._draws, this._background, ...this._attachedPrimitives]) {
       if (primitive !== null) primitives.push({ primitive, overlay: primitive === this._markers && (this._markerSeries === this._host.primarySeries?.() || series.some(item => item.api === this._markerSeries && item.overlay)) });
     }
@@ -532,8 +540,9 @@ export class IndicatorInstance implements IndicatorApi {
   }
 
   /** Feed each band the two plots it spans, on the shared logical index. */
-  private _syncFills(): void {
+  private _syncFills(bars: readonly Bar[]): void {
     const fills = this._d.fills ?? [];
+    const settings = this._descriptorSettings();
     for (let i = 0; i < fills.length; i++) {
       const band = this._fills[i];
       if (band === undefined) continue;
@@ -544,6 +553,8 @@ export class IndicatorInstance implements IndicatorApi {
         colorUp: this._fillColor(spec, true),
         colorDown: this._fillColor(spec, false),
         opacity: spec.opacity ?? 0.12,
+        gradient: typeof spec.gradient === 'function'
+          ? spec.gradient({ bars, values: this._values, settings }) : spec.gradient,
       });
       if (a === undefined || b === undefined) { band.setPoints([]); continue; }
       // The band follows its first plot's shift, so a displaced cloud is
@@ -551,7 +562,10 @@ export class IndicatorInstance implements IndicatorApi {
       const shift = this._d.plots.find((p) => p.key === spec.between[0])?.offset ?? 0;
       const pts = [];
       for (let j = 0; j < this._barCount; j++) {
-        pts.push({ index: j + shift, a: a[j] ?? null, b: b[j] ?? null });
+        const first = a[j] ?? null;
+        const second = b[j] ?? null;
+        const color = spec.colorBy?.({ index: j, a: first, b: second, values: this._values, settings });
+        pts.push({ index: j + shift, a: first, b: second, color });
       }
       band.setPoints(pts);
     }
@@ -595,6 +609,7 @@ export class IndicatorInstance implements IndicatorApi {
    * indicator without the hook never costs an extra primitive.
    */
   private _syncTable(bars: readonly Bar[]): void {
+    if (this._d.tables !== undefined) { this._syncTables(bars); return; }
     if (this._d.table === undefined) return;
     const spec = this._visible
       ? this._d.table({ bars, values: this._values, settings: this._descriptorSettings() })
@@ -606,6 +621,42 @@ export class IndicatorInstance implements IndicatorApi {
     }
     if (spec?.options !== undefined) this._table.setOptions(spec.options);
     this._table.setRows(rows);
+  }
+
+  private _syncTables(bars: readonly Bar[]): void {
+    if (!this._visible) {
+      for (const { table } of this._tables.values()) table.setRows([]);
+      return;
+    }
+    const specs = this._d.tables!({ bars, values: this._values, settings: this._descriptorSettings() });
+    const ids = new Set<string>();
+    // Reject ambiguous identities before removing or updating a working grid.
+    for (const spec of specs) {
+      if (typeof spec.id !== 'string' || spec.id.trim() === '' || ids.has(spec.id)) {
+        throw new Error('Indicator table IDs must be nonempty and unique');
+      }
+      ids.add(spec.id);
+    }
+    for (const [id, { table }] of this._tables) {
+      if (ids.has(id)) continue;
+      this._host.removeIndicatorTable(table);
+      this._tables.delete(id);
+    }
+    for (const spec of specs) {
+      const overlay = spec.overlay === true;
+      let entry = this._tables.get(spec.id);
+      if (entry !== undefined && entry.overlay !== overlay) {
+        this._host.removeIndicatorTable(entry.table);
+        this._tables.delete(spec.id);
+        entry = undefined;
+      }
+      if (entry === undefined) {
+        entry = { table: this._host.addIndicatorTable(overlay ? 0 : this.paneIndex), overlay };
+        this._tables.set(spec.id, entry);
+      }
+      if (spec.options !== undefined) entry.table.setOptions(spec.options);
+      entry.table.setRows(spec.rows);
+    }
   }
 
   /**
@@ -1023,7 +1074,7 @@ export class IndicatorInstance implements IndicatorApi {
       }
       series.setData(out);
     }
-    this._syncFills();
+    this._syncFills(bars);
     this._syncMarkers(bars);
     this._syncTable(bars);
     this._syncDraws(bars);
@@ -1153,12 +1204,14 @@ export class IndicatorInstance implements IndicatorApi {
     this._fills.length = 0;
     if (this._markers !== null) { this._host.removeIndicatorMarkers(this._markers); this._markers = null; }
     if (this._table !== null) { this._host.removeIndicatorTable(this._table); this._table = null; }
+    for (const { table } of this._tables.values()) this._host.removeIndicatorTable(table);
+    this._tables.clear();
     if (this._draws !== null) { this._host.removeIndicatorPrimitive?.(this._draws); this._draws = null; }
     if (this._background !== null) { this._host.removeIndicatorPrimitive?.(this._background); this._background = null; }
     // Withdraw the candle colours before anything else forgets who owned them.
     if (this._d.barColors !== undefined) this._host.setBarColors?.(null, this.id);
     if (this._ownPane) this._host.setPaneRange(this.paneIndex, null);
-    this._host.indicatorRemoved?.(this.id);
+    this._host.indicatorRemoved?.(this.id, !this._constructed && this._ownPane ? this.paneIndex : undefined);
   }
 }
 

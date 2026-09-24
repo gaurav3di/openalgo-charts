@@ -198,7 +198,7 @@ Notes that bite:
 - `ma-channel` is a mean of the highs and a mean of the lows, each with its own length and its own plot-time offset, not a mean of the close with a spread. Its two legs therefore warm up independently: at `upperLength` 34 and `lowerLength` 13 the lower plot prints 21 bars before the upper one does.
 - No built-in implements `calcTail`, so every one is a full O(n) pass when it recomputes. **Since 1.8.4 that is paid once per animation frame, not once per tick**: a data update marks the indicators stale and the flush runs before the next paint, so a burst of ticks between two frames costs one pass rather than one per tick. Measured on a 1875-bar chart with 50 ticks between frames, that took a ten-indicator pane from 643 ms of blocked main thread to 21 ms. Cost is now bounded by the display refresh and by how much history is loaded, not by how fast the feed ticks.
 - Source values: `'open' | 'high' | 'low' | 'close' | 'hl2' | 'hlc3' | 'ohlc4' | 'volume'`. `INDICATOR_SOURCES` is the option list for a UI and deliberately omits `'volume'`.
-- The descriptors are ports of well-known published formulas, faithful down to the warmup gap, so the numbers match a reference implementation bar for bar. They live in `src/indicators/` split by family: `trend.ts`, `momentum.ts`, `volume.ts`, `overlay.ts`, `oscillators.ts`, `volatility.ts`, `flow.ts`, `adaptive.ts`, `averages.ts`, `strength.ts`, `indices.ts`, `ranges.ts`, `signals.ts`, plus `external.ts` for the Tier-2 contract and `calc.ts` for the shared math. `index.ts` is a manifest that concatenates them into `BUILTIN_INDICATORS`.
+- The descriptors implement published mathematical formulas with explicit initialization and missing-value conventions. Check those conventions when comparing outputs. They live in `src/indicators/` split by family: `trend.ts`, `momentum.ts`, `volume.ts`, `overlay.ts`, `oscillators.ts`, `volatility.ts`, `flow.ts`, `adaptive.ts`, `averages.ts`, `strength.ts`, `indices.ts`, `ranges.ts`, `signals.ts`, plus `external.ts` for the Tier-2 contract and `calc.ts` for the shared math. `index.ts` is a manifest that concatenates them into `BUILTIN_INDICATORS`.
 
 ## `chart.addIndicator`
 
@@ -615,7 +615,31 @@ registerIndicator({
 chart.addIndicator('my-momentum', { length: 14 });
 ```
 
-Optional descriptor members: `fills`, `markers`, `markerAnchor` / `hasSource` (2.4.6), `levels`, `range`, `attach`, `calcTail`, `table`, `draws` (1.7.1), and `background` / `barColors` / `alerts` (1.7.1), plus `colorBy` (per-bar colour), `priceScaleId` / `overlay`, and `ohlc` (1.8.1) on an individual plot.
+Optional descriptor members: `fills`, `markers`, `markerAnchor` / `hasSource` (2.4.6), `levels`, `range`, `attach`, `calcTail`, `table`, `tables`, `draws` (1.7.1), and `background` / `barColors` / `alerts` (1.7.1), plus `colorBy` (per-bar colour), `priceScaleId` / `overlay`, and `ohlc` (1.8.1) on an individual plot.
+
+### Computed fills and multiple grids
+
+`IndicatorFillSpec.colorBy({ index, a, b, values, settings })` returns a per-bar
+color or `undefined`. The index addresses the original calculation columns; the
+fill still follows the first plot's offset. A color overrides `gradient`, which
+overrides the existing up/down colors. `gradient` accepts a `FillGradient` or a
+callback `({ bars, values, settings }) => FillGradient | undefined`. Its price
+anchors and colors apply to the entire band. Both callbacks refresh after every
+calculation, including settings changes and same-bar updates.
+
+`IndicatorDescriptor.tables({ bars, values, settings })` returns a list of
+`IndicatorTableSpec`: `{ id, rows, options?, overlay? }`. Each ID must be a nonempty
+string unique within that indicator instance. Stable IDs retain their table
+objects across updates and reordering; omitted IDs are removed. An empty list
+removes all grids. `options` patches `ChartTableOptions`; `rows` replaces the grid.
+`overlay: true` pins that grid to the price pane. Otherwise it follows its owner
+when the indicator moves. Changing overlay placement recreates that grid.
+
+Hiding the indicator clears its grids until shown again; removing it disposes
+them. Duplicate or empty IDs reject the entire table update before changing
+existing grids and publish an indicator error status. An invalid initial list
+rejects `addIndicator` and cleans up the resources it created. The existing
+single `table` hook is unchanged; when both hooks exist, `tables` takes precedence.
 
 **`overlay: true` on a plot** (1.7.1) draws that one column on the price pane even when the descriptor is `placement: 'pane'`. An oscillator whose stop line belongs on the candles no longer has to ship as two indicators that duplicate the same inputs.
 
@@ -1040,6 +1064,40 @@ swma(values)                                 // symmetric weighted moving averag
 
 `highestBars` and `lowestBars` answer *when*, not *what*: use them for "N bars since
 the high", where `highest` / `lowest` give the value itself.
+
+## Statistics with explicit missing-value policies
+
+The indicator tier exports `NumericalWindowOptions` with
+`missing?: 'propagate' | 'skip'`, and `RollingVarianceOptions`, which additionally
+accepts `sample?: boolean`. These options belong to the helpers below; existing
+helpers keep their established behavior.
+
+| Helper | Result |
+| --- | --- |
+| `rollingMedian(values, period, options?)` | Sorted middle value, or average of the middle pair. |
+| `rollingMode(values, period, options?)` | Most frequent value; ties choose the smallest. |
+| `rollingVariance(values, period, options?)` | Population variance, or sample variance with `sample: true`. A one-value sample is undefined. |
+| `rollingRange(values, period, options?)` | Maximum minus minimum. |
+| `percentileLinear(values, period, percentage, options?)` | Linear interpolation at sorted rank `(period - 1) * percentage / 100`. |
+| `rankCorrelation(values, period, options?)` | Rank correlation against chronological order, in -100..100 units; ties receive average ranks. Constant windows are undefined. |
+| `centerOfGravity(values, period, options?)` | Negative weighted sum divided by sum, with weight 1 on newest and `period` on oldest. A zero denominator is undefined. |
+| `runningMin(values, options?)` / `runningMax(values, options?)` | Extreme over all history through the current observation. |
+| `crossesAbove(a, b, options?)` / `crossesBelow(a, b, options?)` / `crosses(a, b, options?)` | Strict crossing from an inclusive previous comparison; a previous equality qualifies, a current equality does not. |
+| `rising(values, period, options?)` / `falling(values, period, options?)` | Current value strictly beyond every one of `period` prior values. Consecutive monotonic steps are not required. |
+
+Results retain the input length and never mutate the arrays. Numeric warmup and
+undefined statistics are `NaN`; boolean warmup is `false`. Periods must be positive
+safe integers, percentages finite in 0..100, and crossing arrays equal in length.
+Invalid numbers throw `RangeError`; invalid option values throw `TypeError`.
+
+NaN and infinities count as missing. By default, rolling functions require a full
+chronological window including the current bar. `{ missing: 'skip' }` instead uses
+the last `period` finite observations and holds its result across missing bars.
+Running extrema default to propagating any missing observation through the rest
+of history; skip mode holds the last finite extreme. Crossings require two adjacent
+finite pairs by default; skip mode compares the current pair with the latest jointly
+finite pair. Rising and falling exclude the current bar from their history window.
+All predicates return false when the current observation is missing.
 
 ## Grouped descriptor exports
 

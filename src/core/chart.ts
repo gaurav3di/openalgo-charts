@@ -76,8 +76,10 @@ import { copyAlert, parseAlertsDocument, validateAlert } from '../alerts/documen
 import type { ChartDataContext } from '../model/indicator-registry';
 import {
   CHART_STATE_VERSION,
+  parsePaneState,
   type ChartState,
   type PaneState,
+  type PriceScaleState,
   type SeriesState,
   type RestoreReport,
 } from '../model/chart-state';
@@ -1556,9 +1558,13 @@ export class Chart {
     return true;
   }
 
-  private _forgetIndicator(instanceId: string): void {
+  private _forgetIndicator(instanceId: string, failedOwnedPane?: number): void {
     const i = this._indicators.findIndex((x) => x.id === instanceId);
-    if (i < 0) return;
+    if (i < 0) {
+      const pane = failedOwnedPane === undefined ? undefined : this._panes[failedOwnedPane];
+      if (failedOwnedPane !== undefined && failedOwnedPane > 0 && pane?.series().length === 0 && pane.primitives().every(primitive => primitive === this._timeNav || this._anchored.some(entry => entry.primitive === primitive))) this.removePane(failedOwnedPane);
+      return;
+    }
     const { indicatorId, paneIndex } = this._indicators[i];
     this._indicators.splice(i, 1);
     this.emit('indicatorRemoved', { instanceId, indicatorId, paneIndex });
@@ -1671,7 +1677,7 @@ export class Chart {
   private _indicatorHost(): IndicatorHost {
     return {
       legendIndex: () => this._readoutIndex(),
-      indicatorRemoved: (id): void => this._forgetIndicator(id),
+      indicatorRemoved: (id, failedOwnedPane): void => this._forgetIndicator(id, failedOwnedPane),
       flushIndicators: (): void => this._flushIndicators(),
       resourcesChanged: (): void => this._reorderIndicatorResources(),
       // The scale that draws the ladder is the one that decides how a number on
@@ -2960,16 +2966,12 @@ export class Chart {
    */
   public getState(): ChartState & ChartSettingsState & { timezone: string } {
     const panes: PaneState[] = this._panes.map((pane) => {
-      const scale = pane.priceScale;
-      const o = scale.options;
+      const { right, ...scales } = pane.scaleStates();
       const state: PaneState = {
         weight: pane.weight,
-        priceScale: {
-          marginTop: o.marginTop, marginBottom: o.marginBottom, minMove: o.minMove,
-          mode: o.mode, inverted: o.inverted, autoScale: scale.autoScale,
-        },
+        priceScale: right!,
       };
-      if (!scale.autoScale) state.priceScale.range = { ...scale.priceRange() };
+      if (Object.keys(scales).length) state.scales = scales;
       return state;
     });
 
@@ -3045,8 +3047,13 @@ export class Chart {
     }
 
     let alerts: AlertsDocument | undefined;
+    let panes: PaneState[] | undefined;
     const reservedIds = new Set<string>();
     try {
+      if (s.panes !== undefined) {
+        if (!Array.isArray(s.panes)) throw new Error('Invalid pane list');
+        panes = s.panes.map(pane => parsePaneState(pane, true));
+      }
       if (s.alerts !== undefined) alerts = parseAlertsDocument(s.alerts);
       if (s.indicators !== undefined) {
         if (!Array.isArray(s.indicators)) throw new Error('Invalid indicator list');
@@ -3062,12 +3069,15 @@ export class Chart {
       return { applied: false, series: [], indicators: 0, reason: error instanceof Error ? error.message : 'Invalid saved alerts or identities' };
     }
     this.emit('state:restore:start', {});
-    try { return this._restoreState(s, alerts, reservedIds); }
+    try { return this._restoreState(s, alerts, reservedIds, panes); }
     finally { this.emit('state:restore:end', {}); }
   }
 
   private _restoreState(s: ChartState & ChartSettingsState & { timezone?: unknown }, alerts: AlertsDocument | undefined,
-    reservedIds: Set<string>): RestoreReport {
+    reservedIds: Set<string>, panes: PaneState[] | undefined): RestoreReport {
+
+    // Old locks describe the outgoing ranges, not the settings about to be restored.
+    if (panes) for (const pane of this._panes) pane.clearRatioLocks();
 
     if (s.grid) this.setGridOptions(s.grid);
     // Canvas before the panes: its margins are chart-wide, and a pane's own
@@ -3090,8 +3100,8 @@ export class Chart {
     // The panes themselves first: the indicators below are placed by index, so
     // the panes have to exist and be weighted before they are rebuilt. Their
     // price scales are *not* set here, see below.
-    if (s.panes) {
-      s.panes.forEach((ps, i) => {
+    if (panes) {
+      panes.forEach((ps, i) => {
         this._ensurePane(i);
         this._panes[i].weight = ps.weight;
       });
@@ -3135,23 +3145,27 @@ export class Chart {
     // above moves ranges around. Rebuilding an indicator in particular takes a
     // pane's axis with it, so a scale restored before that step is a scale the
     // restore then throws away.
-    if (s.panes) {
-      s.panes.forEach((ps, i) => {
+    const ratioLocks: { pane: Pane; id: PriceScaleId; reference: NonNullable<PriceScaleState['ratioLock']> }[] = [];
+    if (panes) {
+      panes.forEach((ps, i) => {
         const pane = this._panes[i];
         if (pane === undefined) return;
-        const scale = pane.priceScale;
-        // Filtered like a chart-wide patch, and for a sharper reason: a saved
-        // tick on an oscillator's pane is a tick that was broadcast there, not
-        // one anybody chose, and it is exactly what a layout saved before this
-        // was fixed carries. Restoring it faithfully would put the wrong
-        // precision back on a pane the chart-wide setter no longer reaches to
-        // correct, so the defect would outlive the fix in every saved workspace.
-        scale.setOptions(this._scalePatchFor(pane, {
-          marginTop: ps.priceScale.marginTop, marginBottom: ps.priceScale.marginBottom,
-          minMove: ps.priceScale.minMove, mode: ps.priceScale.mode, inverted: ps.priceScale.inverted,
-        }));
-        scale.setAutoScale(ps.priceScale.autoScale);
-        if (!ps.priceScale.autoScale && ps.priceScale.range) scale.setPriceRange(ps.priceScale.range);
+        const entries = [['right', ps.priceScale], ...Object.entries(ps.scales ?? {})] as [PriceScaleId, PriceScaleState][];
+        for (const [id, saved] of entries) {
+          const scale = pane.scaleFor(id);
+          const options: Partial<PriceScaleOptions> = {
+            marginTop: saved.marginTop, marginBottom: saved.marginBottom, minMove: saved.minMove,
+            mode: saved.mode, inverted: saved.inverted,
+          };
+          if (saved.minPrecision !== undefined) options.minPrecision = saved.minPrecision;
+          // Legacy snapshots may carry an instrument tick broadcast into an oscillator.
+          // New snapshots explicitly preserve the precision configured on each scale.
+          scale.setOptions(id === 'right' && saved.minPrecision === undefined ? this._scalePatchFor(pane, options) : options);
+          if (saved.fixedRange !== undefined) scale.setFixedRange(saved.fixedRange);
+          scale.setAutoScale(saved.autoScale);
+          if (!saved.autoScale && saved.range) scale.setPriceRange(saved.range);
+          if (saved.ratioLock) ratioLocks.push({ pane, id, reference: saved.ratioLock });
+        }
       });
     }
 
@@ -3169,6 +3183,11 @@ export class Chart {
     this._alertState = alerts;
     if (s.barSpacing !== undefined) this._timeScale.setBarSpacing(s.barSpacing);
     if (s.viewport && this._dataLayer.length > 0) this.setVisibleLogicalRange(s.viewport);
+    // Lock references belong to the saved geometry. Applying them after pane pruning
+    // and viewport restoration prevents intermediate layouts from scaling the range twice.
+    for (const { pane, id, reference } of ratioLocks) {
+      if (this._panes.includes(pane)) pane.setRatioLock(id, true, reference.barSpacing, reference.height);
+    }
     this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
     this.emit('drawings:restore', s.drawings ?? []);
     this.emit('alerts:restore', alerts ?? { version: 1, alerts: [] });

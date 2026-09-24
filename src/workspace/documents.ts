@@ -1,5 +1,5 @@
-import type { ChartState, ChartSettingsState, IndicatorState, PaneState, SeriesState } from 'openalgo-charts';
-import { parseAlertsDocument } from 'openalgo-charts';
+import type { ChartState, ChartSettingsState, IndicatorState, SeriesState } from 'openalgo-charts';
+import { parseAlertsDocument, parsePaneState } from 'openalgo-charts';
 import { boolean, choice, list, number, readJson, record, string, WorkspaceDocumentError, type Json } from './json';
 
 export { WorkspaceDocumentError } from './json';
@@ -91,26 +91,27 @@ function chartState(input: Json | undefined): WorkspaceChartState {
     out.drawings = source.drawings;
   }
   if (source.panes !== undefined) out.panes = list(source.panes, 'chart panes', 32).map(item => {
-    const pane = record(item, 'chart pane');
-    const scale = record(pane.priceScale, 'price scale');
-    const result: PaneState = {
-      weight: number(pane.weight, 'pane weight', Number.MIN_VALUE),
-      priceScale: {
-        marginTop: number(scale.marginTop, 'marginTop', 0, 1), marginBottom: number(scale.marginBottom, 'marginBottom', 0, 1),
-        minMove: number(scale.minMove, 'minMove', 0),
-        mode: choice(scale.mode, 'scale mode', ['linear', 'logarithmic', 'percentage', 'indexed-to-100']),
-        inverted: boolean(scale.inverted, 'inverted'), autoScale: boolean(scale.autoScale, 'autoScale'),
-      },
-    };
-    if (result.priceScale.marginTop + result.priceScale.marginBottom >= 1) throw new WorkspaceDocumentError('Price scale margins leave no chart area');
-    if (scale.range !== undefined) {
-      const range = record(scale.range, 'scale range');
-      const min = number(range.min, 'range.min', -Number.MAX_SAFE_INTEGER);
-      const max = number(range.max, 'range.max', min);
-      if (max === min) throw new WorkspaceDocumentError('Price scale range must have positive width');
-      result.priceScale.range = { min, max };
+    try {
+      const pane = parsePaneState(item);
+      // Portable workspaces retain their established numeric limits; the engine
+      // can restore larger native states without inheriting a host catalog limit.
+      number(pane.weight, 'pane weight', Number.MIN_VALUE);
+      for (const scale of [pane.priceScale, ...Object.values(pane.scales ?? {})]) {
+        if (!scale) continue;
+        number(scale.marginTop, 'marginTop', 0, 1);
+        number(scale.marginBottom, 'marginBottom', 0, 1);
+        number(scale.minMove, 'minMove', 0);
+        if (scale.marginTop + scale.marginBottom >= 1) throw new WorkspaceDocumentError('Price scale margins leave no chart area');
+        for (const range of [scale.range, scale.fixedRange]) {
+          if (!range) continue;
+          number(range.min, 'range.min', -Number.MAX_SAFE_INTEGER);
+          number(range.max, 'range.max', range.min);
+          if (range.max === range.min) throw new WorkspaceDocumentError('Price scale range must have positive width');
+        }
+      }
+      return pane;
     }
-    return result;
+    catch (error) { throw new WorkspaceDocumentError(error instanceof Error ? error.message : 'Invalid pane scale state'); }
   });
   if (source.series !== undefined) out.series = list(source.series, 'series descriptors', 512).map(item => {
     const series = record(item, 'series');

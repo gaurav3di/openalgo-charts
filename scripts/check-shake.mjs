@@ -80,7 +80,10 @@ const BUNDLE = new URL('../dist/openalgo-charts.mjs', import.meta.url).pathname.
 // and confirms calendar bars in their configured zone. The unchanged a1828e9
 // base bundle measures 55.58 KiB, versus 56.09 KiB with this fix (0.51 KiB).
 // These semantics also govern compiled studies on raw charts; allow 56.25 KiB.
-const LIMIT_BYTES = 56.25 * 1024;
+// Named table ownership, computed fill descriptors and complete scale snapshots
+// serve native chart hosts. Measured 56.15 to 57.13 KiB (0.98 KiB); allow 57.25.
+// The new numerical helpers remain in the optional indicator tier.
+const LIMIT_BYTES = 57.25 * 1024;
 
 // Absent from a chart-only build. Each is a string that appears in the adapter
 // source and nowhere in the rendering core.

@@ -98,6 +98,7 @@ export type {
   IndicatorBarsRequest,
   IndicatorBarsProvider,
   IndicatorFillSpec,
+  IndicatorTableSpec,
   IndicatorLevel,
   IndicatorLevelContext,
   IndicatorLineStyle,
@@ -116,7 +117,7 @@ export type {
 export type { IndicatorApi, IndicatorHost } from './model/indicator-instance';
 
 // serialisable chart state (saved layouts / templates / drawings passthrough)
-export { CHART_STATE_VERSION } from './model/chart-state';
+export { CHART_STATE_VERSION, parsePaneState } from './model/chart-state';
 export type {
   ChartState,
   PaneState,

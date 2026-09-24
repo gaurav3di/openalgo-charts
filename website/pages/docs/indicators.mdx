@@ -1195,12 +1195,13 @@ and put the message beside the study instead of in a console.
 | `hasSource` | `boolean?` | Opt into a source button that emits `indicatorSource`; the host owns and displays the code. |
 | `inputs` | `IndicatorInput[]` | Tunable settings; `type` is what a settings UI renders. |
 | `plots` | `IndicatorPlot[]` | One per drawn series. `type` is any registered chart type; `overlay: true` puts that one plot on the price pane; [`ohlc`](#a-plot-drawn-as-candles) names four columns so the plot draws as bars; `offset` (2.4.0) paints the column that many bars to the right, the shifted tail landing in the right margin; `colorParts` (2.4.0) colours a candle plot's body, wick and border apart. |
-| `fills` | `IndicatorFillSpec[]?` | Optional shaded bands. `between` names two `calc` columns, which need not be plots. `overlay: true` (2.4.0) draws the band on the price pane beside `overlay` plots. |
+| `fills` | `IndicatorFillSpec[]?` | Optional shaded bands. `between` names two `calc` columns, which need not be plots. `colorBy` computes each bar's color; `gradient` supplies a static or computed price-anchored gradient for the whole band. Per-bar color takes precedence. `overlay: true` draws the band on the price pane beside overlay plots. |
 | `calc` | `(bars, settings, store, ctx?) => IndicatorValues` | Full recompute. `ctx` is the optional [calculation context](#the-calculation-context). |
 | `calcTail` | `(bars, settings, fromIndex, previous, store, ctx?) => IndicatorValues \| null` | Optional incremental path. |
 | `markers` | `({ bars, values, settings }) => SeriesMarker[]` | Optional bar-anchored signal markers, run after every `calc`. Shapes include `cross` and `xcross`, and `paneTop` / `paneBottom` pin a glyph to the plot edge (2.4.0). |
 | `markerAnchor` | `'plot' \| 'price'` | Defaults to the first plot. `'price'` selects the primary series for an indicator on pane 0 when one exists. |
 | `table` | `({ bars, values, settings }) => \{ rows, options \} \| null` | Optional corner-pinned summary grid, run after every `calc`. |
+| `tables` | `({ bars, values, settings }) => IndicatorTableSpec[]` | Multiple grids with stable, unique nonempty `id` values, `rows`, optional `options` and optional `overlay`. Omitted IDs are removed. Takes precedence over `table`. |
 | `draws` | `({ bars, values, settings }) => IndicatorDrawing[]` | Optional free-standing shapes anchored to time and price, run after every `calc`. A `label` or `box` with a `tooltip` or an `id` (2.4.0) is hit-testable: clicks reach `subscribeClick` and the tooltip paints on hover. |
 | `background` | `({ bars, values, settings }) => (string \| null)[]` | Optional [per-bar shading](#shading-the-pane-by-regime) behind the indicator's own pane, run after every `calc`. |
 | `barColors` | `({ bars, values, settings }) => (string \| null)[]` | Optional [recolouring of the price candles](#recolouring-the-price-candles), run after every `calc`. |
@@ -1208,6 +1209,22 @@ and put the message beside the study instead of in a console.
 | `levels` | `(ctx) => IndicatorLevel[]` | Optional horizontal reference lines. `ctx` is the settings plus `bars` and `values`, so a level can be data-derived. |
 | `range` | `(settings) => \{ min, max \} \| null` | Optional fixed pane range (RSI 0..100). |
 | `attach` | `(ctx) => (() => void) \| void` | Optional lifecycle for external data (Tier 2). |
+
+`fills[].colorBy({ index, a, b, values, settings })` reads calculation indices before
+any plot offset. Returning `undefined` uses the band gradient or its up/down colors.
+`gradient` can be a `FillGradient` object or
+`({ bars, values, settings }) => FillGradient | undefined`. It applies to the whole
+band, with optional `topValue` and `bottomValue` price anchors. Both callbacks refresh
+after every calculation, including settings changes and same-bar updates.
+
+Each `tables` entry uses `{ id, rows, options?, overlay? }`. Existing IDs reuse their
+grid when reordered or updated. `options` patches `ChartTableOptions`; `rows` replaces
+its cells. A missing ID removes its grid; `[]` removes all grids. `overlay: true` keeps
+a grid on the price pane; other grids follow the indicator when moved. Changing that
+flag recreates the grid. Hiding the indicator clears its grids until it is shown;
+removing the indicator disposes them. Invalid or duplicate IDs reject the table
+update and publish an error status without replacing existing grids. The single
+`table` hook remains supported. See the [live example](/examples#computed-fills-and-multiple-summary-grids).
 
 Input types are `number`, `boolean`, `color`, `text`, `select`, `source`, and since 2.4.0
 `interval` and `time`. A `source` input picks a price series; `INDICATOR_SOURCES` is the
@@ -1264,10 +1281,10 @@ unreadable `session` throw `IndicatorInputError`.
 
 ## Calculation helpers
 
-The calculation helpers the 105 built-ins are made of are exported, so your own descriptor
-can be written against the same primitives instead of re-deriving them. Each matches the
-published formula of the `ta.*` function of the same name, which is what makes a ported
-study agree with its source rather than being approximately right.
+The calculation helpers used by the built-ins are exported, so your own descriptor
+can use the same primitives. Their initialization, missing-value and unit conventions
+are part of each helper's contract; a shared mathematical name does not guarantee
+identical values across implementations.
 
 They live in the indicator tier, not the base bundle:
 
@@ -1311,6 +1328,51 @@ package root) is how you get the input array out of the bars in the first place.
 
 `ema`, `rsi`, `atr`, `trueRange` and `supertrend` are **not** here: they ship in the base
 bundle and the tier imports them from it, so they come from `openalgo-charts`.
+
+### Statistics and conditions
+
+These additional helpers accept `NumericalWindowOptions`, with
+`missing: 'propagate'` by default or `'skip'` for finite-observation windows.
+Existing helpers retain their existing behavior.
+
+| Helper | Signature | Behavior |
+| --- | --- | --- |
+| `rollingMedian` | `(values, period, options?)` | Middle value, averaging the middle pair for even periods. |
+| `rollingMode` | `(values, period, options?)` | Most frequent value; frequency ties choose the smallest. |
+| `rollingVariance` | `(values, period, options?)` | Population variance. `RollingVarianceOptions.sample: true` uses the sample denominator; a one-value sample is undefined. |
+| `rollingRange` | `(values, period, options?)` | Maximum minus minimum. |
+| `percentileLinear` | `(values, period, percentage, options?)` | Interpolate at sorted rank `(period - 1) * percentage / 100`. |
+| `rankCorrelation` | `(values, period, options?)` | Rank correlation against chronological order, scaled to -100..100; average tied ranks. Constant windows are undefined. |
+| `centerOfGravity` | `(values, period, options?)` | Negative weighted sum divided by sum; newest weight 1, oldest weight `period`. A zero sum is undefined. |
+| `runningMin` / `runningMax` | `(values, options?)` | Extreme from the first bar through the current bar. |
+| `crossesAbove` / `crossesBelow` / `crosses` | `(a, b, options?)` | Crossing one aligned array past another. Previous equality qualifies; current equality does not. |
+| `rising` / `falling` | `(values, period, options?)` | Current value strictly above/below all `period` prior values, excluding the current bar. |
+
+The output length matches the input. Numeric warmup and undefined statistics are
+`NaN`; predicate warmup is `false`. A period must be a positive safe integer;
+percentages must be finite in 0..100. Crossing arrays must have equal lengths.
+Invalid numbers throw `RangeError`; invalid option values throw `TypeError`.
+
+NaN and infinities are missing observations. Rolling functions require a complete
+chronological window by default. In skip mode they collect the last `period`
+finite observations and hold results across gaps. Running extrema default to
+propagating a missing observation through the rest of history; skip mode holds the
+last finite extreme. Crossings default to adjacent finite pairs; skip mode uses
+the latest jointly finite pair. Rising/falling use prior chronological bars or
+prior finite observations, respectively. A missing current value always makes
+a predicate false.
+
+```ts
+import { rollingMedian, rollingVariance, crossesAbove, nulls } from 'openalgo-charts/indicators';
+
+const observations = [1, 3, NaN, 5];
+const median = rollingMedian(observations, 2, { missing: 'skip' });
+// [NaN, 2, 2, 4]
+const sample = rollingVariance(observations, 2, { missing: 'skip', sample: true });
+// [NaN, 2, 2, 2]
+const signals = crossesAbove(observations, median);
+const plotted = nulls(median);
+```
 
 ## Open interest studies
 

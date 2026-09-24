@@ -79,7 +79,7 @@ Everything `src/widget/index.ts` exports at runtime. The shell (`createWidget` a
 |---|---|---|
 | `createWidget(container, options?)` | function | The one call. Returns a `Widget`. |
 | `WIDGET_TIER` | const `'widget'` | The tier's identity constant, like `DRAW_TIER`. |
-| `stripView(state)` | function | A `WidgetChartState` without its viewport and pinned ranges; what a saved layout gets when it lands on a different symbol or interval. |
+| `stripView(state)` | function | A detached `WidgetChartState` view patch without viewport, manual ranges or ratio locks on any scale. It enables auto-fit while retaining formatting and declared fixed ranges when the layout lands on another symbol or interval. |
 | `resolveTheme(t)` | function | `'dark'`, `'light'`, a `ChartTheme` or `undefined` to `{ theme, name }`. |
 | `loadWindow(interval, lookback, nowSec)` | function | The `{ from, to }` the feed is asked for: `lookback` bars back from now, or five years for a non-time bucketing. |
 | `DEFAULT_INTERVALS` | const | `['1m', '5m', '15m', '1h', '1d', '1w']`, with every other registered code appended when the host names none. |

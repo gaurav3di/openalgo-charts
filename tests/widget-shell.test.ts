@@ -406,6 +406,26 @@ describe('state and persistence', () => {
     expect((state as unknown as Record<string, unknown>).viewport).toBeDefined();
   });
 
+  it('stripView clears every axis viewport without mutating saved preferences', () => {
+    const { w } = make();
+    const state = w.getState().chart;
+    const pinned = {
+      marginTop: 0.1, marginBottom: 0.2, minMove: 0.01, minPrecision: 3,
+      mode: 'linear' as const, inverted: true, autoScale: false,
+      range: { min: 10, max: 90 }, fixedRange: { min: 0, max: 100 },
+      ratioLock: { barSpacing: 8, height: 400 },
+    };
+    state.panes = [{ weight: 1, priceScale: { ...pinned }, scales: { left: { ...pinned }, 'overlay:score': { ...pinned } } }];
+    const stripped = stripView(state);
+    for (const scale of [stripped.panes![0].priceScale, ...Object.values(stripped.panes![0].scales!)]) {
+      expect(scale).toMatchObject({ autoScale: true, inverted: true, minPrecision: 3, fixedRange: { min: 0, max: 100 } });
+      expect(scale?.range).toBeUndefined();
+      expect(scale?.ratioLock).toBeUndefined();
+    }
+    expect(state.panes[0].scales!['overlay:score']).toEqual(pinned);
+    expect(state.panes[0].priceScale).toEqual(pinned);
+  });
+
   it('persists the layout under a namespaced key after a debounce, and a new widget picks it up', async () => {
     vi.useFakeTimers();
     try {

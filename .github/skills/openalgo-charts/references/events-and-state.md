@@ -125,7 +125,7 @@ subscription or an explicit `objects.refresh()` after a host-side change.
 | `navigation` (`mousePan`, `defaultVisibleBars`, optional `defaultBarSpacing`) | yes; controls pointer panning and the initial/reset view. Positive spacing selects CSS pixels per bar. An explicitly restored viewport takes precedence until reset |
 | `crosshairMode` `'normal' \| 'magnet'` | yes |
 | `timezone` (IANA name) | yes, but a name this runtime does not recognise is **skipped**, not thrown, so one stale zone cannot cost the whole layout |
-| `panes[]`: `weight`, and per-pane `priceScale` `{ marginTop, marginBottom, minMove, mode, inverted, autoScale, range? }` | yes; panes are created as needed, `range` only present when `autoScale` is false |
+| `panes[]`: `weight`, right `priceScale`, optional secondary `scales` | yes; every scale retains margins, `minMove`, optional `minPrecision`, mode, inversion, auto-scale, manual `range`, declared `fixedRange` and `ratioLock` geometry |
 | `indicators[]`: `{ indicatorId, instanceId?, settings, paneIndex, visible? }` | yes, replaced not appended; saved identities are stable, legacy entries receive new IDs |
 | `drawings` | round-tripped opaquely; only present when a drawing state has been set. The draw tier writes a `DrawingsDocument` (`{ version: 2, drawings }`) here and reads a 1.9.x bare array too |
 | `alerts` | optional `AlertsDocument`; lifecycle, scope, anchors and consumed bars survive reload; unsupported runtime payloads reject serialization |
@@ -138,6 +138,19 @@ Indicator visibility is saved with its instance settings. Drawing visibility and
 lock remain in the drawing document. `ChartObjects` provider callbacks, profile
 data and profile state are host-owned and are not serialized; re-register them
 after chart replacement and persist them separately when needed.
+
+`PaneState.priceScale` remains the right-axis field for older readers;
+`PaneState.scales` is keyed by secondary `PriceScaleId`. `PriceScaleState.ratioLock`
+contains `{ barSpacing, height }` paired with the saved manual range, preserving
+its proportion when the restored chart has a different size. `Pane.scaleStates()`
+returns detached snapshots of its existing scales, including the right scale;
+`Pane.clearRatioLocks()` releases its locks without changing ranges.
+
+`parsePaneState(value, allowLegacyPartial = false)` validates and copies a pane
+snapshot, throwing on invalid settings. The optional legacy mode supplies defaults
+for missing primary-scale settings; secondary settings remain complete. Both
+chart restoration and workspace parsing use it. Layouts cannot serialize runtime
+formatter functions or a price scale's data-derived baseline.
 
 `RestoreReport`:
 

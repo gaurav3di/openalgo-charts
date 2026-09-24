@@ -35,10 +35,20 @@
     },
     {
       "id": "indicator-calculations",
-      "status": "incomplete",
+      "status": "partial",
+      "implemented": [
+        "Rolling median, mode, variance, range and interpolated percentile",
+        "Rank correlation and center of gravity",
+        "Running extrema and crossing/rising/falling predicates",
+        "Explicit missing-observation policies on new helpers"
+      ],
+      "evidence": [
+        "tests/indicator-statistics.test.ts"
+      ],
       "remaining": [
         "Missing-value and warmup contracts",
-        "Helper inventory",
+        "Missing-value options on established helpers",
+        "Composed calculations and arbitrary anchor policies",
         "Series-valued lengths",
         "Independent numerical fixtures"
       ]
@@ -64,11 +74,19 @@
     },
     {
       "id": "inputs-visuals-alerts",
-      "status": "incomplete",
+      "status": "partial",
+      "implemented": [
+        "Per-bar fill colors and whole-band computed gradients",
+        "Multiple named tables and overlay ownership"
+      ],
+      "evidence": [
+        "tests/indicator-visual-descriptors.test.ts",
+        "tests/e2e/indicator-visuals.spec.ts"
+      ],
       "remaining": [
         "Typed and interactive inputs",
-        "Dynamic and gradient fill descriptors",
-        "Multiple tables",
+        "Per-bar gradient anchors and colors",
+        "Additional table cell formatting",
         "Drawing and marker variants",
         "Alert frequency and confirmation policies"
       ]
@@ -77,24 +95,30 @@
       "id": "native-chart-apis",
       "status": "partial",
       "remaining": [
-        "Capability mapping",
-        "Chart and scale behavior",
+        "Multiple visible axes and runtime scale reassignment",
+        "Pane placement and collapse",
+        "History beyond drawing edits",
         "Widget and navigation",
         "Layouts and persistence",
-        "Events",
+        "Direct time-scale mutation events",
         "Trading and provider APIs"
       ],
       "implemented": [
         "Persisted candle density in CSS pixels",
         "Desktop/mobile widget density",
-        "Preserve price autofit during minor mouse/pen drift"
+        "Preserve price autofit during minor mouse/pen drift",
+        "Complete existing scale snapshots and ratio-lock restoration",
+        "Secondary scales in workspace documents and symbol-change view reset"
       ],
       "evidence": [
         "tests/navigation-settings.test.ts",
         "tests/widget-shell.test.ts",
         "tests/e2e/widget-mobile.spec.ts",
         "tests/e2e/navigation-wheel.spec.ts",
-        "tests/e2e/yfinance-ui-253.spec.ts"
+        "tests/e2e/yfinance-ui-253.spec.ts",
+        "tests/chart-state-scales.test.ts",
+        "tests/workspace-scales.test.ts",
+        "tests/e2e/scale-state.spec.ts"
       ]
     },
     {
@@ -135,14 +159,21 @@
     ]
   },
   "validation": {
-    "chartTests": 6116,
-    "chartTestFiles": 269,
+    "chartTests": 6218,
+    "chartTestFiles": 273,
     "compiledProgramTests": 4,
     "demoTests": 424,
     "demoTestFiles": 35,
-    "browserEvidence": "Density and autofit behavior pass on all three browser engines, including the example host. Screenshots were inspected.",
+    "browserEvidence": "Density, autofit, visual descriptors and scale restoration pass on all three browser engines. Example-host and executable website checks pass. Screenshots were inspected; traffic uses fixtures rather than live brokers.",
     "website": "63 static pages built successfully",
-    "chartOnlyBrotliKiB": 56.15,
-    "chartOnlyBudgetKiB": 56.25
+    "chartOnlyBrotliKiB": 57.13,
+    "chartOnlyBudgetKiB": 57.25,
+    "baseBrotliKB": 97.72,
+    "indicatorBrotliKB": 30.88,
+    "allTiersBrotliKB": 268.85,
+    "budgetChange": "Native visual ownership and scale serialization add 0.98 KiB to the chart-only build. Fourteen optional numerical helpers add 1.04 kB to the indicator tier. Full package budgets retain strict optional-tier removal checks.",
+    "review": "Four confirmed visual lifecycle and numerical findings reproduced, fixed and independently rechecked.",
+    "apiDocumentation": "Generated with warnings treated as errors",
+    "skillsCoverage": "971 of 971 named exports and registry entries; not functional coverage"
   }
 }
