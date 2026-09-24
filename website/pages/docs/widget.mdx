@@ -213,8 +213,9 @@ picker offers only what you registered yourself.
 
 ## One call
 
-The widget inherits the engine's navigation preferences. Set
-`navigation: { mousePan: 'both', defaultVisibleBars: 100 }` to show the
+The widget uses 8 CSS pixels per bar by default, preserving candle density across
+desktop and mobile. Set `navigation.defaultBarSpacing` to change this preference.
+Use `navigation: { mousePan: 'both', defaultVisibleBars: 100 }` to show the
 latest 100 bars on load and reset. Axes settings save these choices in the
 widget layout. The count changes the visible window without discarding history;
 0 fits all loaded bars. Mouse and pen pan time and price by default.

@@ -237,6 +237,7 @@ Exported from `openalgo-charts`:
 interface ChartNavigationOptions {
   mousePan: 'horizontal' | 'both';
   defaultVisibleBars: number;
+  defaultBarSpacing?: number;
 }
 
 const chart = createChart(el, {
@@ -259,8 +260,14 @@ Apply a host's custom viewport after loading data when it should take precedence
 widget's ordinary load views use the configured count.
 
 The Axes / Navigation settings fields are `navigation.mousePan` and
-`navigation.defaultVisibleBars`. They round-trip through `readChartSettings` /
+`navigation.defaultVisibleBars`, plus `navigation.defaultBarSpacing`. They round-trip through `readChartSettings` /
 `applyChartSettings` and the optional `navigation` block in `getState` / `restoreState`.
+
+Set `defaultBarSpacing` to a positive CSS pixel value for consistent candle density
+across screen widths. It takes precedence over the count for initial loads and reset.
+Zero disables the spacing preference. A count-only edit selects count mode again.
+Resizing preserves the current zoom, and explicit `fitContent()` still fits all history.
+The widget defaults to 8 CSS pixels per bar unless a count or spacing is supplied.
 
 ## Coordinates
 

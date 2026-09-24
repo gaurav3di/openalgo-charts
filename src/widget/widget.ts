@@ -407,6 +407,9 @@ class WidgetImpl implements Widget {
     // so a host keeps every engine option it had.
     const chartOpts = { ...options } as Record<string, unknown>;
     for (const k of WIDGET_ONLY_KEYS) delete chartOpts[k];
+    if (options.navigation?.defaultVisibleBars === undefined && options.navigation?.defaultBarSpacing === undefined) {
+      chartOpts.navigation = { ...options.navigation, defaultBarSpacing: options.timeScale?.barSpacing ?? 8 };
+    }
     const reducedMotion = doc.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
     if (reducedMotion && chartOpts.animZoom === undefined) chartOpts.animZoom = false;
     if (reducedMotion && chartOpts.animAutoscale === undefined) chartOpts.animAutoscale = false;

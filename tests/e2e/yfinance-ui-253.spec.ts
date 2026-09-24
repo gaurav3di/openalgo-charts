@@ -11,6 +11,36 @@ test.beforeEach(async ({ request, page }) => {
   await page.waitForFunction(() => Boolean((window as any).__oac?.app?.currentBars?.length));
 });
 
+test('the right price axis follows newly visible candles with autofit enabled', async ({ page }, info) => {
+  await page.evaluate(() => {
+    const chart = (window as any).__oac.app.chart;
+    chart.primarySeries().setData(Array.from({ length: 200 }, (_, i) => ({
+      time: 1700000000 + i * 60, open: 100, high: i === 90 ? 250 : 102, low: 98, close: 101,
+    })));
+    chart.setVisibleLogicalRange({ from: 100, to: 199 });
+    chart.setAutoScale(true);
+  });
+  const settings = page.getByRole('button', { name: 'Chart settings (or right-click the chart)', exact: true });
+  await settings.click();
+  await page.locator('#cset-tabs').getByRole('button', { name: 'Axes', exact: true }).click();
+  await page.locator('[data-key="scales.autoScale"]').check();
+  await page.locator('#cset-ok').click();
+  const box = await page.locator('#chart').boundingBox();
+  if (!box) throw new Error('Chart is not visible');
+  await page.mouse.move(box.x + 250, box.y + 180);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 450, box.y + 181, { steps: 6 });
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate(() => (window as any).__oac.app.chart.panes()[0].priceScale.autoScale)).toBe(true);
+  await expect.poll(() => page.evaluate(() => (window as any).__oac.app.chart.panes()[0].priceScale.priceRange().max)).toBeGreaterThan(250);
+  await info.attach('right axis follows visible candles', {
+    body: await page.screenshot({ path: info.outputPath('example-autofit.png') }), contentType: 'image/png',
+  });
+  await settings.click();
+  await page.locator('#cset-tabs').getByRole('button', { name: 'Axes', exact: true }).click();
+  await expect(page.locator('[data-key="scales.autoScale"]')).toBeChecked();
+});
+
 test('the selected chart shares a resizable Data and Objects dock', async ({ page }) => {
   const plot = page.locator('#chart');
   const before = await plot.evaluate(element => element.getBoundingClientRect().width);

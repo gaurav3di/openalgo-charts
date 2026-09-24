@@ -46,6 +46,17 @@ return chart;`} />
 
 ## Change the look
 
+### Consistent candle density
+
+This chart keeps 8 CSS pixels per bar as the container changes width. A narrow screen
+shows fewer candles, while a wider screen shows more. Reset restores that preference.
+
+<RunnableExample height={320} code={`const chart = lib.createChart(el, {
+  navigation: { defaultBarSpacing: 8, mousePan: 'horizontal' },
+});
+chart.addSeries('candlestick').setData(lib.generateBars(1700000000, 300, 3600));
+return chart;`} />
+
 Switch chart styles, choose a theme, and change the visible range.
 These controls update the chart in place.
 

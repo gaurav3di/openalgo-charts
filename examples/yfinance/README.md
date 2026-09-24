@@ -321,6 +321,11 @@ or `chart.setNavigationOptions(...)`; `chart.fitContent()` explicitly fits all l
 history. Navigation settings are included in the schema's read/apply helpers and chart
 state. A host that reapplies an explicit viewport after loading data controls that view.
 
+Fresh charts use `navigation.defaultBarSpacing: 8` for consistent candle density
+across desktop and mobile. The Axes setting **Default bar spacing (0 = use bar count)**
+stores CSS pixels per bar and applies to initial loads and reset. Editing the visible-bar
+count switches back to count mode. Existing saved navigation preferences are retained.
+
 This example is a custom host around the DOM-free engine and draw tier. Its responsive
 controls belong to `examples/yfinance`; it does not use the packaged widget's
 `WidgetOptions.mobile`. At 900 CSS pixels or less, or with a coarse primary pointer, the

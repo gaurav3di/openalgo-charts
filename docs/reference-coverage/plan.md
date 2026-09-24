@@ -20,3 +20,7 @@ The scope and ownership boundaries are in [design.md](design.md).
 - Measured chart-only build: baseline 55.58 KiB, confirmation fix 56.09 KiB, budget 56.25 KiB.
 
 The drop-in facade and additional feed adapter are excluded. No percentage of full capability coverage has been certified.
+
+## Authorized release sequence
+
+After completing the native capability work, reproduce and fix the reported right-axis autoscale issue on the example host. Validate the final candidate, bump the package to 2.5.4, update the example host, website, API documentation and changelog, commit and push, publish the package and website, and create the matching release. Verify the published artifacts against the tested build. Publication is authorized by the user; incomplete capability work is not a release candidate.

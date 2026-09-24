@@ -267,6 +267,7 @@ export function buildChart2({ keepView = true, typeChanged = false, state } = {}
   el('chart2').innerHTML = '';
   app.chart2 = createChart(el('chart2'), {
     theme: chartTheme(),
+    navigation: { defaultBarSpacing: 8 },
     priceAxisWidth: 62,
     legendIconSize: normalizeLegendIconSize(app.p2.legendIconSize),
     grid: { vertLines: el('vgrid').checked, horzLines: el('hgrid').checked },
@@ -404,7 +405,7 @@ export async function loadPane2() {
 }
 
 /**
- * A freshly loaded follower fits its own content, and does so with sync
+ * A freshly loaded follower restores its own default view, with sync
  * suspended, because a fit is not a pan. Two things went wrong without
  * this. Letting the fit broadcast threw the main chart off whatever window
  * the user had it on and replaced it with a month of the follower's
@@ -416,7 +417,7 @@ export async function loadPane2() {
  * or zoom, which is exactly what the group documents viewport sync to do.
  */
 export function placePane2View() {
-  withoutViewportSync(() => app.chart2.fitContent());
+  withoutViewportSync(() => app.chart2.resetScale());
 }
 
 /** Run `fn` with viewport mirroring off, then put it back as it was. */

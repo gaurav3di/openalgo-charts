@@ -57,6 +57,34 @@ function make(opts: WidgetOptions = {}, doc: FakeDocument = fakeWidgetDocument()
 
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
+describe('default candle density', () => {
+  it('keeps spacing across screen widths, reloads and symbol changes', async () => {
+    const feed: DataFeed = { getBars: async () => bars(200) };
+    for (const width of [390, 1200]) {
+      const { w } = make({ feed, symbol: 'SAMPLE', persist: false });
+      w.chart.applySize(width, 600);
+      await flush();
+      expect(w.chart.timeScale.barSpacing).toBe(8);
+      w.chart.setVisibleLogicalRange({ from: 0, to: 30 });
+      w.setSymbol('NEXT');
+      await flush();
+      expect(w.chart.timeScale.barSpacing).toBe(8);
+      w.setInterval('5m');
+      await flush();
+      expect(w.chart.timeScale.barSpacing).toBe(8);
+    }
+  });
+
+  it('respects explicitly requested count and spacing preferences', async () => {
+    const feed: DataFeed = { getBars: async () => bars(200) };
+    const counted = make({ feed, symbol: 'SAMPLE', persist: false, navigation: { defaultVisibleBars: 50 } }).w;
+    const spaced = make({ feed, symbol: 'SAMPLE', persist: false, navigation: { defaultBarSpacing: 12 } }).w;
+    await flush();
+    expect(counted.chart.getVisibleLogicalRange()).toEqual({ from: 149, to: 203 });
+    expect(spaced.chart.timeScale.barSpacing).toBe(12);
+  });
+});
+
 describe('the frame', () => {
   it('owns a live objects panel and routes edits to existing settings dialogs', () => {
     const { w, root, doc } = make();

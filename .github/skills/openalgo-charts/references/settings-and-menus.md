@@ -100,6 +100,7 @@ The Axes tab's **Navigation** group is backed by `ChartNavigationOptions`:
 |---|---|---|
 | `navigation.mousePan` | `select`, label **Mouse drag**: **Horizontal only** (`'horizontal'`) or **Time and price** (`'both'`) | `'both'` |
 | `navigation.defaultVisibleBars` | `number`, label **Default visible bars (0 = all)**, `min: 0`, `max: 100000`, `step: 1` | `0` |
+| `navigation.defaultBarSpacing` | `number`, label **Default bar spacing (0 = use bar count)**, CSS pixels, `min: 0`, `max: 10000`, `step: 0.5` | `0` |
 
 ```ts
 applyChartSettings(chart, {

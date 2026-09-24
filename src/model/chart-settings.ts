@@ -557,6 +557,12 @@ function axesControls(chart: Chart): Control[] {
       (c) => c.navigationOptions().defaultVisibleBars,
       (c, v) => c.setNavigationOptions({ defaultVisibleBars: v }),
     ),
+    numCtl(
+      'navigation.defaultBarSpacing', 'Default bar spacing (0 = use bar count)', 'Navigation', 0,
+      { min: 0, max: 10000, step: 0.5 },
+      (c) => c.navigationOptions().defaultBarSpacing ?? 0,
+      (c, v) => c.setNavigationOptions({ defaultBarSpacing: v }),
+    ),
     selectCtl(
       'scales.mode', 'Scale', 'Price scale', 'linear', SCALE_MODES,
       (c) => c.priceScaleOptions().mode,

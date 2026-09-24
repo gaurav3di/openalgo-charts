@@ -179,6 +179,7 @@ interface ChartNavigationOptions {
   mousePan: 'horizontal' | 'both';
   /** Newest loaded bars in the initial/reset view. 0 fits all loaded bars. */
   defaultVisibleBars: number;
+  defaultBarSpacing?: number;
 }
 ```
 
@@ -1178,7 +1179,11 @@ interface IndicatorCalcContext {
 
 The optional trailing argument to a descriptor's `calc` (fourth) and `calcTail` (sixth): what the calculation cannot read off the bars themselves. Being optional and trailing is the point, since every descriptor written against `calc(bars, settings, store)` keeps its exact signature and behaviour.
 
-`isConfirmed` is inferred from the last bar's gap against the chart clock, the only interval signal the engine has, so a session break or a holiday widens it. `isRealtime` is sticky once set. `symbol` and `interval` are `undefined` under `chart.addIndicator`, since the core is handed bars and never an instrument. See [The calculation context](/docs/indicators#the-calculation-context).
+`isConfirmed` uses the declared duration or calendar boundary. Unknown and count-driven
+intervals remain unconfirmed. Hosts without an interval retain the legacy gap estimate;
+empty history is confirmed. `isRealtime` is sticky once set. `symbol` and `interval`
+come from `chart.setDataContext` or a custom host and remain undefined when not supplied.
+See [The calculation context](/docs/indicators#the-calculation-context).
 
 ### `IndicatorAlertSpec`
 

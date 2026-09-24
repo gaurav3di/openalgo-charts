@@ -6,6 +6,9 @@ The [design](design.md) sets the boundaries and the [plan](plan.md) lists the re
 
 ## Implemented
 
+- A saved CSS-pixel spacing preference keeps candle density consistent across screen widths. The widget defaults to 8 pixels while explicit count preferences remain supported.
+- Mouse and pen drift up to 3 pixels no longer disables price autofit during horizontal dragging. Deliberate vertical panning and already-manual axes retain their behavior.
+
 - Known fixed intervals confirm the newest bar at its recorded opening plus its duration, including sparse data and weekend gaps.
 - Registered calendar intervals use the next boundary in their configured timezone.
 - A single forming bar remains unconfirmed until its interval closes.

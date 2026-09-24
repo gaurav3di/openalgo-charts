@@ -1100,15 +1100,15 @@ calcTail: (bars, settings, from, previous, store, ctx) => { ... },
 | `now()` | `number` | Chart wall clock in UTC seconds, the clock the countdown row reads. |
 
 <Callout type="info">
-**`isConfirmed` is inferred from the last bar's gap against the chart clock**, because that
-is the only interval signal the engine has: it is handed bars and never a timeframe. A
-session break or a holiday widens that gap, so read it as "this bar's own span has elapsed",
-not as "the exchange has closed".
+**`isConfirmed` uses the declared interval when available.** Fixed bars close at their
+recorded opening plus the interval duration. Calendar bars use the next boundary in the
+configured timezone. Unknown and count-driven intervals remain unconfirmed. Without an
+interval, the legacy gap estimate remains, including a confirmed single bar. Empty
+history is confirmed. This flag does not replace authoritative provider close events.
 
-`symbol` and `interval` are `undefined` under `chart.addIndicator`, for the same reason they
-are on [the attach context](#the-attach-context): the core is handed bars and never an
-instrument, so it answers "I do not know" rather than inventing a name. A host that owns the
-symbol picker supplies both through its own `IndicatorHost`. When you do have `interval`, the
+`symbol` and `interval` come from `chart.setDataContext`, or from a custom
+`IndicatorHost`. They remain undefined when the host has not supplied them.
+When you do have `interval`, the
 [interval introspection helpers](/docs/custom-intervals#reading-a-code-back) turn it into a
 count and a unit rather than a string match against the handful of codes you happened to
 test on.

@@ -192,6 +192,8 @@ export interface ChartNavigationOptions {
   mousePan: 'horizontal' | 'both';
   /** Latest bars to show initially and on reset. 0 fits all loaded bars (default). */
   defaultVisibleBars: number;
+  /** Initial/reset spacing in CSS pixels. Positive values override the bar count; 0 disables it. */
+  defaultBarSpacing?: number;
 }
 
 export interface ChartOptions {
@@ -1056,11 +1058,12 @@ export class Chart {
     return { ...this._navigation };
   }
 
-  /** A new default bar count immediately restores that view without dropping history. */
+  /** A new default count or spacing immediately restores that view without dropping history. */
   public setNavigationOptions(patch: Partial<ChartNavigationOptions>): void {
     const before = this._navigation.defaultVisibleBars;
+    const spacing = this._navigation.defaultBarSpacing;
     this._patchNavigation(patch);
-    if (before !== this._navigation.defaultVisibleBars) this.resetScale();
+    if (before !== this._navigation.defaultVisibleBars || spacing !== this._navigation.defaultBarSpacing) this.resetScale();
   }
 
   private _patchNavigation(patch: Partial<ChartNavigationOptions>): void {
@@ -1069,6 +1072,14 @@ export class Chart {
     // Saved layouts are untrusted input. Invalid values must not poison spacing.
     if (typeof count === 'number' && Number.isFinite(count) && count >= 0) {
       this._navigation.defaultVisibleBars = Math.min(100000, Math.floor(count));
+      // An explicit count edit selects count mode. A complete saved preference
+      // can carry both fields, in which case its spacing still takes precedence.
+      if (patch.defaultBarSpacing === undefined) delete this._navigation.defaultBarSpacing;
+    }
+    const spacing = patch.defaultBarSpacing;
+    if (typeof spacing === 'number' && Number.isFinite(spacing) && spacing >= 0) {
+      if (spacing === 0) delete this._navigation.defaultBarSpacing;
+      else this._navigation.defaultBarSpacing = spacing;
     }
   }
 
@@ -1078,7 +1089,9 @@ export class Chart {
     // Fit the real dataset first: baseIndex must still identify its newest bar,
     // not the last bar of the smaller requested window.
     this._timeScale.fitContent(total);
-    if (this._navigation.defaultVisibleBars > 0) {
+    if (this._navigation.defaultBarSpacing !== undefined) {
+      this._timeScale.setBarSpacing(this._navigation.defaultBarSpacing);
+    } else if (this._navigation.defaultVisibleBars > 0) {
       const count = Math.min(total, this._navigation.defaultVisibleBars);
       this._timeScale.setBarSpacing(this._timeScale.width / (count + this._timeScale.rightOffset));
     }
@@ -4187,7 +4200,14 @@ export class Chart {
       this._timeScale.setRightOffset(this._dragStartOffset - dx / this._timeScale.barSpacing);
       // Horizontal-only mode preserves autoscale when the pointer moves vertically.
       if (e.pointerType === 'touch' || this._navigation.mousePan === 'both') {
-        this._panes[this._downPane]?.priceScale.panByPixels(p.y - this._lastDragY);
+        const scale = this._panes[this._downPane]?.priceScale;
+        const fromStart = p.y - this._dragStartY;
+        // Minor mouse/pen drift must not turn an automatic axis into a frozen
+        // manual range. Once vertical movement is intentional, include its full
+        // distance from the press; already-manual axes retain fine adjustments.
+        if (scale && (e.pointerType === 'touch' || !scale.autoScale || Math.abs(fromStart) > 3)) {
+          scale.panByPixels(e.pointerType !== 'touch' && scale.autoScale ? fromStart : p.y - this._lastDragY);
+        }
       }
       this._lastDragY = p.y;
       const t = this._now();

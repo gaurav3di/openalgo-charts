@@ -38,6 +38,11 @@ price range can still adjust to the bars now in view. Touch continues to pan bot
 Saved horizontal preferences are preserved when upgrading. To enable two-axis panning,
 choose **Axes > Mouse drag > Time and price** or set `mousePan: 'both'`.
 
+While autofit is enabled, mouse and pen drags ignore vertical drift of up to 3 CSS
+pixels from the press. A larger vertical movement selects manual price panning.
+This keeps a nearly horizontal drag from accidentally freezing the price range.
+Already-manual axes retain fine adjustments, and touch behavior is unchanged.
+
 ```ts
 const chart = createChart(el, {
   navigation: { mousePan: 'both', defaultVisibleBars: 120 },
@@ -64,6 +69,13 @@ loaded bars, and a positive value targets the newest N loaded bars plus four emp
 slots on the right, within the available data and bar-spacing limits. Updating this count
 applies that default view immediately. It does not change how much history your feed loads
 or discard any bars. `chart.fitContent()` always fits all loaded bars.
+
+For consistent candle density across desktop and mobile, use
+`navigation: { defaultBarSpacing: 8 }`. This uses 8 CSS pixels per bar, showing more
+bars on a wider chart. The preference is saved and applied on initial load and reset;
+resizing preserves the current zoom. A positive spacing overrides the bar count.
+Set spacing to `0` to disable it, or edit `defaultVisibleBars` to return to count mode.
+Both modes obey the configured spacing limits and retain all loaded history.
 
 ## Time navigator (hover-revealed zoom controls)
 

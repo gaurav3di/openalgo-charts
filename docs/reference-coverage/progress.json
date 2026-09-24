@@ -75,15 +75,26 @@
     },
     {
       "id": "native-chart-apis",
-      "status": "incomplete",
+      "status": "partial",
       "remaining": [
         "Capability mapping",
         "Chart and scale behavior",
         "Widget and navigation",
         "Layouts and persistence",
         "Events",
-        "Desktop/mobile bar density",
         "Trading and provider APIs"
+      ],
+      "implemented": [
+        "Persisted candle density in CSS pixels",
+        "Desktop/mobile widget density",
+        "Preserve price autofit during minor mouse/pen drift"
+      ],
+      "evidence": [
+        "tests/navigation-settings.test.ts",
+        "tests/widget-shell.test.ts",
+        "tests/e2e/widget-mobile.spec.ts",
+        "tests/e2e/navigation-wheel.spec.ts",
+        "tests/e2e/yfinance-ui-253.spec.ts"
       ]
     },
     {
@@ -107,7 +118,31 @@
     }
   ],
   "next": [
-    "Verify the retained native fix and script-engine integration after scope cleanup.",
-    "Complete missing native capabilities with independently authored implementation and tests."
-  ]
+    "Complete remaining native capabilities with independently authored implementation and tests.",
+    "Execute the authorized release sequence after the full scope is verified."
+  ],
+  "release": {
+    "version": "2.5.4",
+    "authorized": true,
+    "status": "pending-native-capability-work",
+    "steps": [
+      "Complete native capabilities and reported autoscale regression",
+      "Validate package and consumer behavior",
+      "Update version, example host, website, docs and changelog",
+      "Commit and push",
+      "Publish package and website",
+      "Create release and verify published artifacts"
+    ]
+  },
+  "validation": {
+    "chartTests": 6116,
+    "chartTestFiles": 269,
+    "compiledProgramTests": 4,
+    "demoTests": 424,
+    "demoTestFiles": 35,
+    "browserEvidence": "Density and autofit behavior pass on all three browser engines, including the example host. Screenshots were inspected.",
+    "website": "63 static pages built successfully",
+    "chartOnlyBrotliKiB": 56.15,
+    "chartOnlyBudgetKiB": 56.25
+  }
 }

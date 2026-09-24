@@ -72,7 +72,13 @@ and bar-spacing limits. Initial data and `resetScale()` use this default, and ch
 the count applies the default view immediately. `fitContent()` continues to fit all
 loaded bars. The count changes no feed request and discards no history; an explicit host
 viewport applied after loading data wins. The widget's ordinary load views honour the
-configured count.
+configured count when no spacing preference is selected.
+
+`navigation.defaultBarSpacing` selects an initial/reset density in CSS pixels per bar.
+Positive values override the count, and `0` disables spacing mode. A count-only edit
+also disables spacing mode. The widget defaults to 8 pixels; saved and explicit count
+preferences remain supported. Resize preserves the current zoom. The spacing preference
+round-trips through chart state and the Axes settings schema.
 
 Both fields appear in the settings schema's Axes / Navigation group as
 `navigation.mousePan` and `navigation.defaultVisibleBars`. `readChartSettings` /

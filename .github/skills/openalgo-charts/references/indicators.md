@@ -743,14 +743,19 @@ calc: (bars, settings, store, ctx) => {
 | Member | Meaning |
 |---|---|
 | `barState.isNew` | The last update **appended** a bar rather than replacing one. False on a full history load: there was no update to append. |
-| `barState.isConfirmed` | The last bar's own span has elapsed on the chart clock. |
+| `barState.isConfirmed` | The last bar's declared duration or calendar period has elapsed on the chart clock. Unknown and count-driven intervals require provider confirmation, which is not yet exposed here. |
 | `barState.isRealtime` | A live feed is driving updates. **Sticky**: set the first time a tail-only change lands, never cleared. |
 | `barState.lastIndex` | `bars.length - 1`, and `-1` when there are none. |
-| `symbol` / `interval` | `undefined` under `chart.addIndicator`. A host that owns the symbol picker supplies them through its own `IndicatorHost`. |
+| `symbol` / `interval` | Supplied by `chart.setDataContext`, or by a custom `IndicatorHost`. Undefined when the host has not supplied them. |
 | `timezone` | The chart's IANA zone, the calendar its axis is labelled in. Same value as the reserved `settings.timezone` key. |
 | `now()` | Chart wall clock in UTC seconds, the clock the countdown row reads. |
 
-`isConfirmed` is **inferred** from the last bar's gap against the chart clock, because that is the only interval signal the engine has: it is handed bars and never a timeframe. A session break or a holiday widens the gap, so read it as "this bar's own span has elapsed", not as "the exchange has closed". Never use it as a substitute for an exchange calendar.
+`isConfirmed` uses the declared interval when available. Fixed intervals close at the
+recorded opening plus their duration; calendar intervals use the next boundary in the
+configured timezone. A session gap does not extend the following bar's duration.
+Unknown and count-driven intervals remain unconfirmed. Without an interval, the legacy
+last-gap estimate remains, including a confirmed single bar. Empty history is confirmed.
+This clock-derived flag does not replace authoritative provider or exchange events.
 
 ## Alerts (1.8.1)
 
