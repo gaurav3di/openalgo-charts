@@ -22,7 +22,7 @@ export class SeriesProvenance {
   private _tailTime: number | undefined;
 
   public constructor(sourceId: number) {
-    this._state = { sourceId, revision: 0, historyRevision: 0, provenance: 'history', change: 'reset' };
+    this._state = Object.freeze({ sourceId, revision: 0, historyRevision: 0, provenance: 'history', change: 'reset' });
   }
 
   public snapshot(): SeriesDataState { return this._state; }

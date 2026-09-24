@@ -506,6 +506,94 @@ chart.addIndicator('demo-requested-availability');
 chart.fitContent();
 return chart;`} />
 
+## Requested snapshots from a deferred provider
+
+Release the first response to show the requested values. Revise values or replace
+the provider, then release its new response. Confirm latest makes the last
+observation eligible without changing the chart's price bars. Loading and
+confirmation are separate: a successful response can still contain an
+unconfirmed observation. This simulated provider also returns the older value
+version when replay requests a cutoff before the declared revision time.
+
+<RunnableExample height={460} tiers={['indicators']} caption="Requested observations have their own availability and confirmation." code={`const start = 1700000000;
+const controls = document.createElement('div');
+controls.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;padding:8px';
+const status = document.createElement('div');
+status.style.cssText = 'padding:0 8px 8px;color:#94a3b8;font:12px sans-serif';
+status.setAttribute('role', 'status');
+const host = document.createElement('div');
+host.style.height = '380px';
+el.append(controls, status, host);
+const chart = lib.createChart(host, { timezone: 'Etc/UTC', branding: false });
+chart.setDataContext({ symbol: 'SOURCE', interval: '1m' });
+chart.addSeries('line', { style: { color: '#64748b' } }).setData(
+  Array.from({ length: 12 }, (_, i) => ({ time: start + i * 60, value: 100 + Math.sin(i) * 2 })));
+let revision = 0, providerNumber = 1, confirmed = false, study, disposed = false;
+const pending = new Set();
+const render = () => {
+  if (disposed) return;
+  status.textContent = 'Provider ' + providerNumber + '; latest ' + (confirmed ? 'confirmed' : 'unconfirmed')
+    + '; ' + (study?.dataStatus()?.state ?? 'loading') + '; responses waiting: ' + pending.size;
+};
+const snapshot = (request, offset) => {
+  const knownRevision = request.asOf === undefined || request.asOf >= start + 600 ? revision : 0;
+  const rows = [10, 20, 30].map((value, i) => {
+    const close = value + offset + knownRevision;
+    return { time: start + i * 180, open: close, high: close, low: close, close };
+  });
+  const indices = rows.map((bar, i) => i).filter(i => rows[i].time >= request.from && rows[i].time <= request.to);
+  return { bars: indices.map(i => rows[i]), availableAt: indices.map(i => [start + 60, start + 315, start + 600][i]),
+    confirmed: indices.map(i => i < 2 || confirmed && (request.asOf === undefined || request.asOf >= start + 600)) };
+};
+const provider = offset => ({
+  requestBars: async request => snapshot(request, offset).bars,
+  requestSnapshot: request => new Promise((resolve, reject) => {
+    const value = snapshot(request, offset);
+    const finish = error => {
+      pending.delete(release);
+      request.signal?.removeEventListener('abort', abort);
+      if (error) reject(error); else resolve(value);
+      render();
+    };
+    const release = () => finish();
+    const abort = () => finish(new DOMException('Request cancelled', 'AbortError'));
+    if (request.signal?.aborted) { abort(); return; }
+    request.signal?.addEventListener('abort', abort, { once: true });
+    pending.add(release);
+    render();
+  }),
+});
+chart.setBarsProvider(provider(0));
+lib.registerIndicator(lib.createRequestedIndicator({
+  id: 'demo-requested-provider', name: 'Requested close', placement: 'pane', inputs: [],
+  plots: [{ key: 'close', type: 'line', style: { color: '#e8a23a', lineWidth: 3, markers: true, markerRadius: 4 } }],
+  request: ({ bars }) => ({ symbol: 'REQUESTED', interval: '3m',
+    from: start, to: bars[bars.length - 1]?.time ?? start }),
+  expression: bars => ({ close: bars.map(bar => bar.close) }),
+  targetTimes: ({ bars, requestState }) => bars.map((bar, i) =>
+    i === bars.length - 1 ? Math.max(bar.time, requestState?.replay?.asOf ?? bar.time) : bar.time),
+}));
+study = chart.addIndicator('demo-requested-provider');
+chart.setPaneWeight(study.paneIndex, 0.8);
+chart.fitContent();
+const unsubscribe = study.subscribeDataStatus(() => queueMicrotask(render));
+for (const [label, action] of [
+  ['Release response', () => { for (const release of [...pending]) release(); }],
+  ['Revise values', () => { revision += 5; chart.invalidateRequestedData(); }],
+  ['Replace provider', () => { providerNumber++; revision = 0; confirmed = false; chart.setBarsProvider(provider((providerNumber - 1) * 100)); }],
+  ['Confirm latest', () => { confirmed = true; chart.invalidateRequestedData(); }],
+]) {
+  const button = document.createElement('button');
+  button.textContent = label;
+  button.style.cssText = 'padding:5px 10px;border:1px solid #334155;border-radius:4px;background:#172033;color:#e2e8f0;cursor:pointer';
+  button.onclick = () => { action(); render(); };
+  controls.appendChild(button);
+}
+const destroy = chart.destroy.bind(chart);
+chart.destroy = () => { disposed = true; unsubscribe(); destroy(); };
+render();
+return chart;`} />
+
 ## Move a whole study between scales
 
 The buttons move both plots, their gradient fill and reference level together.

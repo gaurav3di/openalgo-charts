@@ -165,6 +165,54 @@ live owned series, including one that is not primary. It returns null for foreig
 or removed handles and destroyed charts. Use it when a host tracks series types
 that may also change through native chart calls.
 
+## Requested bar providers
+
+`ChartOptions.barsProvider` and `chart.setBarsProvider(provider | null)` accept
+the existing `IndicatorBarsProvider` function or an `IndicatorBarsProviderAccess`
+object with `requestBars` and optional `requestSnapshot`. The chart owns no
+transport. `hasBarsProvider()` tests registration; `hasSnapshotProvider()` tests
+the explicit snapshot capability. Replacing or removing a provider cancels its
+outstanding requests and announces the new provider revision. Setting the same
+provider object again is a no-op; call `invalidateRequestedData()` when that
+provider has new observations, value versions or confirmation metadata.
+
+```ts
+chart.setBarsProvider({
+  requestBars: request => history.loadBars(request),
+  requestSnapshot: request => history.loadSnapshot(request),
+});
+chart.invalidateRequestedData();
+```
+
+`IndicatorBarsRequest` contains `symbol`, optional `exchange`, `interval`,
+opening-time bounds `from`/`to` in UTC seconds, and optional `signal`.
+`IndicatorSnapshotRequest` adds optional `asOf`, the inclusive historical
+knowledge cutoff. `RequestedBarsSnapshot`, exported from both base and indicators,
+contains equally sized `bars`, `availableAt: (number | null)[]` and
+`confirmed: boolean[]`. Openings must be finite and strictly increasing;
+availability is null for unknown or a finite time at or after opening.
+Confirmation is explicit, independent of the interval or the next observation.
+
+An attach context exposes `requestBars`, `requestSnapshot`, `requestState()` and
+`subscribeRequestChanges(listener)`. `IndicatorRequestState` includes optional
+native source provenance, `providerRevision`, `dataRevision`, `supportsSnapshots`
+and optional `replay: { time, asOf?, forming }`. Read it at request time. The
+subscription observes source changes, provider replacement, requested-data
+invalidation and replay clock movement even within one source observation; its
+return value unsubscribes. These revisions identify data generations, not a
+count of calculation executions.
+
+Requests compose caller, instance-lifetime and chart-provider cancellation.
+Consumers must also prevent a late completion from publishing into a newer
+generation; the indicators tier's `createRequestedIndicator` manages that
+lifecycle. A provider should honor the signal to release its own work.
+
+Availability-aware replay clamps a snapshot request's `asOf` to the replay clock.
+The provider must return point-in-time value versions or reject an unsupported
+cutoff; filtering today's final bars by timestamp cannot recover those versions.
+Strict snapshot requests reject legacy replay without an `asOf` clock. Existing
+raw `requestBars` behavior is unchanged. See [indicators](indicators.md#managed-requested-snapshots).
+
 ## Whole-study scale assignment
 
 ```ts

@@ -125,3 +125,6 @@ export {
   type RequestedBarsSnapshot, type RequestedExpression, type RequestedAlignmentOptions,
   type RequestedTimeWindow, type RequestedIntrabarOptions, type RequestedIntrabarValues,
 } from './requested-context';
+export {
+  createRequestedIndicator, type RequestedIndicatorDescriptor, type RequestedIndicatorContext,
+} from './requested-indicator';

@@ -16,6 +16,9 @@ The [design](design.md) sets the boundaries and the [plan](plan.md) lists the re
 - Nine window helpers accept aligned per-bar lengths; both pivot helpers accept per-bar left/right widths. Scalar behavior remains unchanged, and missing observations retain their original indices.
 - `securityExpression` calculates on aggregate timeframe bars before aligning results, with confirmed, developing and explicit lookahead modes. Session anchors use local wall-clock time across offset changes.
 - Requested-observation helpers calculate before alignment or intrabar grouping, using explicit confirmation and availability. Carry and missing-result policies retain original indices and block unavailable prefixes.
+- Native providers can optionally return availability snapshots. Requests combine caller, instance, provider and market-context cancellation, and obsolete replies reject even when a provider ignores its signal.
+- Managed requested expressions refresh same-time changes, preserve pending work across style edits, isolate replay cutoffs and report calculation failures without replacing accepted data. Hosts can announce external changes without inventing price ticks.
+- Timed replay publishes availability-clock movement within an unchanged primary observation. Interrupted replay writes cannot overwrite a later stop or seek.
 - Direct time-scale navigation repaints and publishes settled range events to linked charts. Explicit same-range requests cancel pending motion, and reentrant restore callbacks receive a final repaint.
 - Native series renderer changes and widget chart-type changes retain series handles, data, styles, price scales and marker bindings. Live type lookup keeps host controls and saved state synchronized.
 - Independent host-owned series can change price scales while retaining their handle, data, markers and pane. Configured vacant scales retain their settings without reserving visible axis columns.
@@ -33,7 +36,7 @@ The [design](design.md) sets the boundaries and the [plan](plan.md) lists the re
 
 ## Verification
 
-The confirmation regression suite has 12 cases; nine reproduced failures before the fix. A further 23 provenance cases cover native source lifecycle. Eleven compiled-program integration cases passed against the pinned engine revision `833ce15f7ec1bb0ab8ae203b800c8858ce3b4339`, including native timeframe composition, persistent calculations, forming-bar rollback, provider confirmation and explicitly available requested observations. These checks cover specific behaviors, not every capability.
+The confirmation regression suite has 12 cases; nine reproduced failures before the fix. A further 23 provenance cases cover native source lifecycle. Twelve compiled-program integration cases passed against the pinned engine revision `833ce15f7ec1bb0ab8ae203b800c8858ce3b4339`, including native timeframe composition, persistent calculations, forming-bar rollback, provider confirmation and managed requested observations. These checks cover specific behaviors, not every capability.
 
 Run against a built script-engine checkout:
 
@@ -47,4 +50,4 @@ The unchanged chart baseline `a1828e9ac948d2f9aebe0657f421987a85d6f2a7` measured
 
 ## Remaining work
 
-Requested-context provider lifecycle, dependent study inputs, numerical helpers, typed and interactive inputs, remaining visual variants, alert policies, chart APIs, persistence and provider capabilities still need implementation and behavioral checks. [Scale ownership](scale-ownership.md) records the completed transaction and remaining axis work. Comparative research belongs outside the repository. Implement features from documented behavior using independently written code and tests.
+The existing raw external helper's refresh lifecycle, dependent study inputs, numerical helpers, typed and interactive inputs, remaining visual variants, alert policies, chart APIs, persistence and provider capabilities still need implementation and behavioral checks. [Scale ownership](scale-ownership.md) records the completed transaction and remaining axis work. [Requested providers](requested-providers.md) documents the new native snapshot path; [study dependencies](study-dependencies.md) defines the next input graph. Comparative research belongs outside the repository. Implement features from documented behavior using independently written code and tests.

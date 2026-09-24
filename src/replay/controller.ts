@@ -220,6 +220,7 @@ export class ReplayController {
   private _playing = false;
   /** True once replay owns the chart's data; false before start and after stop. */
   private _active = false;
+  private _transition = 0;
   private _cancel: (() => void) | null = null;
   private _interval = 0;
   /** Clock reading the last advance was charged to; keeps playback drift-free. */
@@ -337,8 +338,16 @@ export class ReplayController {
     if (!this._timeline) throw new Error('openalgo-charts: replay seekTime requires timing');
     if (!Number.isFinite(time)) throw new Error('openalgo-charts: replay time must be finite');
     const pointIndex = this._timeline.at(time);
+    const changedTime = this._time !== time;
     this._time = time;
-    if (this._active && pointIndex === this._pointIndex) return;
+    if (this._active && pointIndex === this._pointIndex) {
+      if (changedTime) {
+        const point = this._timeline.points[pointIndex];
+        setReplayWindow(this._chart, { time: point?.bar.time ?? Number.NEGATIVE_INFINITY, asOf: time,
+          forming: !!point && point.subIndex < point.subSteps - 1 });
+      }
+      return;
+    }
     const first = !this._active, point = this._timeline.points[pointIndex];
     this._active = true;
     this._pointIndex = pointIndex;
@@ -453,6 +462,7 @@ export class ReplayController {
     this._playing = false;
     this._stopTimer();
     if (!this._active) return;
+    const transition = ++this._transition;
     this._active = false;
     this._index = this._startIndex;
     this._sub = 0;
@@ -464,13 +474,19 @@ export class ReplayController {
       this._sub = point?.subIndex ?? 0;
     }
     setReplayWindow(this._chart);
-    for (let i = 0; i < this._series.length; i++) this._series[i].setData(this._restore[i], this._restoreConfirmation[i]);
+    if (transition !== this._transition) return;
+    for (let i = 0; i < this._series.length; i++) {
+      this._series[i].setData(this._restore[i], this._restoreConfirmation[i]);
+      if (transition !== this._transition) return;
+    }
     // Bar spacing and right offset *are* the viewport: the visible logical
     // range is (baseIndex + rightOffset) back by width / barSpacing, and
     // restoring the data restores baseIndex.
     const ts = this._chart.timeScale;
     ts.setBarSpacing(this._view.barSpacing);
+    if (transition !== this._transition) return;
     ts.setRightOffset(this._view.rightOffset);
+    if (transition !== this._transition) return;
     this._chart.emit('replay:stop', this.state());
   }
 
@@ -531,11 +547,16 @@ export class ReplayController {
   }
 
   private _write(shown: Bar[], forming: boolean, first: boolean): void {
+    const transition = ++this._transition;
     // Other data owners must know the boundary before the primary write can
     // paint or notify a host. A comparison added later reads the same boundary.
     const lastTime = shown[shown.length - 1]?.time ?? Number.NEGATIVE_INFINITY;
-    setReplayWindow(this._chart, { time: lastTime, forming });
+    setReplayWindow(this._chart, { time: lastTime, forming,
+      ...(this._timeline && this._time !== null ? { asOf: this._time } : {}) });
+    // A boundary listener can stop or seek again before the first series write.
+    if (transition !== this._transition) return;
     this._series[0].setData(shown);
+    if (transition !== this._transition) return;
     // Followers cut by time, not by count: a volume series may be shorter than
     // the price series, or start later. Under intra-bar replay they stop at the
     // last *completed* bucket, because summing a volume histogram and merging a
@@ -548,10 +569,13 @@ export class ReplayController {
     for (let i = 1; i < this._series.length; i++) {
       const snap = this._restore[i];
       this._series[i].setData(snap.slice(0, countUpTo(snap, cutoff)));
+      if (transition !== this._transition) return;
     }
     if (first) this._chart.emit('replay:start', this.state());
+    if (transition !== this._transition) return;
     const s = this.state();
     this._onFrame?.(s);
+    if (transition !== this._transition) return;
     this._chart.emit('replay:frame', s);
   }
 

@@ -99,7 +99,11 @@ const BUNDLE = new URL('../dist/openalgo-charts.mjs', import.meta.url).pathname.
 // to chart-only imports (59.62 to 61.71), and 2.10 kB to the base bundle
 // (100.10 to 102.20). Allow 61.75 KiB; requested-context calculations remain
 // in the optional indicator tier and all removal checks below still apply.
-const LIMIT_BYTES = 61.75 * 1024;
+// Composed request cancellation, native snapshot hooks and source observation
+// add 0.67 KiB to chart-only imports (61.71 to 62.38). These let raw chart hosts
+// supply explicit availability without adding transport. Allow 62.50 KiB;
+// managed requested calculations stay in the optional indicator tier.
+const LIMIT_BYTES = 62.5 * 1024;
 
 // Absent from a chart-only build. Each is a string that appears in the adapter
 // source and nowhere in the rendering core.
@@ -122,6 +126,7 @@ const MUST_BE_SHAKEN = [
   ['replay controller', 'replay needs a series to drive'],
   ['replay availability timeline', 'replay timing needs subBarEndTime'],
   ['replay group', 'openalgo-charts: replay group '],
+  ['managed requested indicator', 'Requested indicator:'],
 ];
 
 const virtual = {

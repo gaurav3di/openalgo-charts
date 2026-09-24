@@ -15,7 +15,7 @@ import type { Bar } from './bar';
 import type { AlertEventPayload } from '../alerts/types';
 import type { SeriesType } from './chart-type-registry';
 import type { SeriesStyle } from '../render/series-style';
-import type { PriceScaleId, PriceFormat } from './series';
+import type { PriceScaleId, PriceFormat, SeriesDataState } from './series';
 import type { SeriesMarker } from '../primitives/markers';
 import type { TableCell, ChartTableOptions } from '../primitives/table';
 import type { FillGradient } from '../primitives/indicator-fill';
@@ -531,9 +531,9 @@ export class IndicatorInputError extends Error {
  * The engine is handed one symbol's bars and owns no transport, so a study
  * that compares against a benchmark, or a Tier-2 provider that needs a second
  * series, asks the host through this and the host answers from wherever it
- * keeps history. `from` and `to` are UTC seconds; `signal` is aborted when the
- * instance is removed or its settings change, so a provider can drop the
- * request rather than answer into the void.
+ * keeps history. `from` and `to` are UTC seconds. Caller cancellation and the
+ * instance lifetime both bound each request. Managed studies cancel their
+ * data-setting generations while preserving requests across style changes.
  */
 export interface IndicatorBarsRequest {
   symbol: string;
@@ -545,6 +545,39 @@ export interface IndicatorBarsRequest {
 }
 
 export type IndicatorBarsProvider = (request: IndicatorBarsRequest) => Promise<readonly Bar[]>;
+
+/** Requested observations and their known availability, aligned one-to-one. */
+export interface RequestedBarsSnapshot {
+  /** Finite, strictly increasing opening times. Observations are never compacted. */
+  bars: readonly Bar[];
+  /** UTC seconds at or after opening; null means availability is unknown. */
+  availableAt: readonly (number | null)[];
+  /** Explicit confirmation, independent of a clock or the next observed opening. */
+  confirmed: readonly boolean[];
+}
+
+/** An optional historical knowledge cutoff, separate from opening-time bounds. */
+export interface IndicatorSnapshotRequest extends IndicatorBarsRequest {
+  /** The provider must supply values as known then, or reject if unsupported. */
+  asOf?: number;
+}
+
+/** Native provider access with optional explicit requested-data metadata. */
+export interface IndicatorBarsProviderAccess {
+  requestBars: IndicatorBarsProvider;
+  requestSnapshot?(request: IndicatorSnapshotRequest): Promise<RequestedBarsSnapshot>;
+}
+
+/** Current native request identity and availability boundary. */
+export interface IndicatorRequestState {
+  source?: Readonly<SeriesDataState>;
+  providerRevision: number;
+  /** Host announcements of changed external data, independently of price ticks. */
+  dataRevision: number;
+  supportsSnapshots: boolean;
+  /** Legacy replay has no known availability cutoff. */
+  replay?: { time: number; asOf?: number; forming: boolean };
+}
 
 /** Payload of the `'indicator:alert'` event on the chart's own bus. */
 export interface IndicatorAlertPayload extends AlertEventPayload {
@@ -616,6 +649,12 @@ export interface IndicatorAttachContext {
    * "unsupported here" and say so through `setDataStatus`.
    */
   requestBars?(request: IndicatorBarsRequest): Promise<readonly Bar[]>;
+  /** Request explicit confirmation and availability without inferring either from raw bars. */
+  requestSnapshot?(request: IndicatorSnapshotRequest): Promise<RequestedBarsSnapshot>;
+  /** Native source, provider and replay identity, read at request time. */
+  requestState?(): Readonly<IndicatorRequestState>;
+  /** Includes source revisions, provider changes and within-bar replay clock movement. */
+  subscribeRequestChanges?(listener: () => void): () => void;
   /** The pane this instance drew into. Moves when panes are reordered. */
   paneIndex?(): number;
   /** Attach a primitive to this indicator's pane, and detach it again. */

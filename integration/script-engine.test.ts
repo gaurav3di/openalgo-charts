@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DiagnosticBag, check, emit, isError, parse, sourceFile } from 'script-engine-under-test';
 import { descriptorFor } from 'script-engine-under-test/adapters/charts';
 import { Chart } from '../src/core/chart';
@@ -8,6 +8,7 @@ import type { SeriesMarker } from '../src/primitives/markers';
 import { ChartTable } from '../src/primitives/table';
 import { securityExpression } from '../src/indicators/security';
 import { alignRequestedExpression, type RequestedExpression } from '../src/indicators/requested-context';
+import { createRequestedIndicator } from '../src/indicators/requested-indicator';
 import { ReplayController } from '../src/replay/controller';
 import { fakeDocument } from '../tests/helpers/fake-dom';
 
@@ -50,6 +51,37 @@ function makeChart(data: Bar[], now: number, updatesOnly = false) {
 const bar = (time: number, close: number): Bar => ({ time, open: 1, high: close + 1, low: 0, close });
 
 describe('compiled script engine on an actual Chart', () => {
+  it('runs a compiled requested expression through confirmation and provider replacement', async () => {
+    const compiled = compile(`version 1
+study("Managed external mean")
+plot(sma(close, 2), "Mean")
+`);
+    const key = compiled.plots[0].key;
+    let requested = {
+      bars: [bar(0, 10), bar(120, 20)], availableAt: [60, 180], confirmed: [true, false],
+    };
+    const descriptor = createRequestedIndicator({
+      id: compiled.id, name: compiled.name, placement: compiled.placement,
+      inputs: compiled.inputs, plots: compiled.plots,
+      request: () => ({ symbol: 'EXTERNAL', interval: '2m', from: 0, to: 300 }),
+      expression: (bars, settings) => compiled.calc(bars, settings, {}),
+    });
+    registerIndicator(descriptor);
+    const { chart } = makeChart([0, 60, 120, 180, 240, 300].map(time => bar(time, 1000 + time)), 360);
+    chart.setBarsProvider({ requestBars: async () => requested.bars, requestSnapshot: async () => requested });
+    const indicator = chart.addIndicator(descriptor.id);
+    await vi.waitFor(() => expect(indicator.dataStatus()?.state).toBe('ready'));
+    expect(indicator.values()[key]).toEqual([null, null, null, null, null, null]);
+    requested = { ...requested, confirmed: [true, true] };
+    chart.invalidateRequestedData();
+    await vi.waitFor(() => expect(indicator.values()[key]).toEqual([null, null, null, 15, 15, 15]));
+    chart.setBarsProvider({ requestBars: async () => [], requestSnapshot: async () => ({
+      bars: [bar(0, 50), bar(120, 70)], availableAt: [60, 180], confirmed: [true, true],
+    }) });
+    await vi.waitFor(() => expect(indicator.values()[key]).toEqual([null, null, null, 60, 60, 60]));
+    expect(indicator.series(key)?.getData()[5].close).toBe(60);
+  });
+
   it('calculates a compiled expression on separate requested bars before availability alignment', () => {
     const compiled = compile(`version 1
 study("External mean")

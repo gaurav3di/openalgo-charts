@@ -1,14 +1,5 @@
-import { IndicatorInputError, type Bar, type IndicatorValues } from 'openalgo-charts';
-
-/** Requested observations and their known availability, aligned one-to-one. */
-export interface RequestedBarsSnapshot {
-  /** Finite, strictly increasing opening times. Observations are never compacted. */
-  bars: readonly Bar[];
-  /** UTC seconds at or after opening; null means availability is unknown. */
-  availableAt: readonly (number | null)[];
-  /** Explicit confirmation, independent of a clock or the next observed opening. */
-  confirmed: readonly boolean[];
-}
+import { IndicatorInputError, type Bar, type IndicatorValues, type RequestedBarsSnapshot } from 'openalgo-charts';
+export type { RequestedBarsSnapshot } from 'openalgo-charts';
 
 /**
  * A pure, causal calculation with one value per requested bar in each named

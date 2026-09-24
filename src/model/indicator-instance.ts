@@ -8,6 +8,7 @@
  * indicators draw through the same Family-A renderers as any other series.
  */
 import type { Bar } from './bar';
+import { runAbortable } from './abortable-request';
 import type { PriceFormat, PriceScaleId, SeriesApi, SeriesDataState } from './series';
 import type { PriceLine } from '../primitives/price-line';
 import type { PaneLegend, LegendValue } from '../primitives/pane-legend';
@@ -28,6 +29,9 @@ import {
   indicatorStyleInputs,
   plotStyleKeys,
   type IndicatorBarsRequest,
+  type IndicatorSnapshotRequest,
+  type RequestedBarsSnapshot,
+  type IndicatorRequestState,
   type ChartDataContext,
   type IndicatorDataChange,
   type IndicatorDataStatus,
@@ -203,6 +207,9 @@ export interface IndicatorHost {
    * which a study reads as "not available on this chart".
    */
   requestBars?(request: IndicatorBarsRequest): Promise<readonly Bar[]>;
+  requestSnapshot?(request: IndicatorSnapshotRequest): Promise<RequestedBarsSnapshot>;
+  requestState?(): Readonly<IndicatorRequestState>;
+  subscribeRequestChanges?(listener: () => void): () => void;
   /**
    * Tick size of the named pane's price scale, or undefined when none is set.
    * Optional so a host predating it still satisfies this interface.
@@ -952,10 +959,15 @@ export class IndicatorInstance implements IndicatorApi {
             'openalgo-charts: this chart has no bars provider; call chart.setBarsProvider(...) to serve other instruments',
           ));
         }
-        // The instance lifetime bounds every request, so a study removed while
-        // its benchmark is loading is not answered after it is gone.
-        return provider({ ...request, signal: request.signal ?? this._lifetime.signal });
+        return runAbortable(signal => provider.call(this._host, { ...request, signal }), [request.signal, this._lifetime.signal]);
       },
+      requestSnapshot: request => runAbortable(signal => {
+        const provider = this._host.requestSnapshot;
+        if (!provider) throw new Error('Requested snapshots are unsupported by this host');
+        return provider.call(this._host, { ...request, signal });
+      }, [request.signal, this._lifetime.signal]),
+      requestState: this._host.requestState ? () => this._host.requestState!() : undefined,
+      subscribeRequestChanges: this._host.subscribeRequestChanges ? listener => this._host.subscribeRequestChanges!(listener) : undefined,
       settings: () => this._descriptorSettings(),
       bars: () => this._host.sourceBars(),
       requestRecompute: () => {

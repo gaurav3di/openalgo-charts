@@ -75,6 +75,31 @@ begins. `AlertController` suspends evaluation and threshold dragging when it
 receives `replay:start`; call `alerts.setPaused(true)` for the earlier selection
 and loading phases too. See [Alerts](/docs/alerts).
 
+### Requested snapshots during replay
+
+Studies created with `createRequestedIndicator` request explicit availability and
+confirmation through the host's snapshot provider. Availability-aware replay
+supplies the current `asOf` cutoff, including playhead moves between two source
+observations. The chart clamps any requested cutoff to that clock and notifies
+the study even when the visible source-bar count stays unchanged.
+
+The provider must return the values **as known at that cutoff**, or reject when
+it cannot. Availability timestamps do not reconstruct older value versions from
+today's final OHLC. A provider with only final historical bars should not claim
+point-in-time snapshot support.
+
+Legacy index-based replay has no explicit knowledge cutoff. The managed snapshot
+study reports `unsupported` there and clears its requested output; existing raw
+bar requests keep their behavior. Configure `timing` for strict requested-data
+replay. Provider replacement, source identity changes and backward replay cancel
+obsolete generations. Forward movement coalesces pending refreshes, so the study
+follows the latest requested cutoff without queuing every playhead update.
+
+See [Managed requested snapshots](/docs/indicators#managed-requested-snapshots)
+for the provider and lifecycle contract, and the
+[deferred-provider example](/examples#requested-snapshots-from-a-deferred-provider)
+for explicit update and confirmation controls.
+
 ## One clock across charts
 
 The yfinance reference host demonstrates this with a scope button in both the

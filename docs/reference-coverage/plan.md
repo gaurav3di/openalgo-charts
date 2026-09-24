@@ -16,12 +16,12 @@ The scope and ownership boundaries are in [design.md](design.md).
 - Chart baseline: `a1828e9ac948d2f9aebe0657f421987a85d6f2a7`.
 - Pinned script-engine revision: `833ce15f7ec1bb0ab8ae203b800c8858ce3b4339`.
 - Twelve confirmation regression cases, nine demonstrated failing before implementation.
-- Ten compiled-program integration cases plus public descriptor typechecking.
+- Twelve compiled-program integration cases plus public descriptor typechecking.
 - Measured chart-only build: baseline 55.58 KiB, confirmation fix 56.09 KiB, budget 56.25 KiB.
 
 The drop-in facade and additional feed adapter are excluded. No percentage of full capability coverage has been certified.
 
-The next whole-study scale transaction follows [scale ownership](scale-ownership.md), including primitive coordinates, range ownership and persistence. Requested expressions and intrabar arrays must operate on provider bars before alignment and use explicit availability metadata.
+The implemented whole-study transaction follows [scale ownership](scale-ownership.md), including primitive coordinates, range ownership and persistence. [Requested provider lifecycle](requested-providers.md) extends the native request path with explicit availability, cancellation and replay boundaries.
 
 ## Authorized release sequence
 

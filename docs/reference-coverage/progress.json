@@ -26,16 +26,20 @@
         "Historical/live/replay provenance",
         "Source identity and history revision invalidation",
         "Provider confirmation restoration after replay",
-        "Compiled persistent-history recalculation and forming-bar rollback"
+        "Compiled persistent-history recalculation and forming-bar rollback",
+        "Provider and instance cancellation that rejects even when the provider ignores its signal",
+        "Native request revisions and timed replay availability clock"
       ],
       "remaining": [
-        "Requested-provider cancellation and replay availability boundaries"
+        "Existing raw-point helper refresh and replay cache policy"
       ],
       "evidence": [
         "tests/indicator-confirmation.test.ts",
         "tests/indicator-provenance.test.ts",
         "tests/e2e/native-indicator-lifecycle.spec.ts",
-        "integration/script-engine.test.ts"
+        "integration/script-engine.test.ts",
+        "tests/abortable-request.test.ts",
+        "tests/indicator-request-lifecycle.test.ts"
       ]
     },
     {
@@ -73,17 +77,21 @@
         "Local wall-clock session anchors across offset changes",
         "Separate supplied observations with explicit confirmation and availability",
         "Whole-expression calculation before carry or missing-result alignment",
-        "Intrabar arrays with opening-window membership and availability cutoffs"
+        "Intrabar arrays with opening-window membership and availability cutoffs",
+        "Optional native snapshots with explicit confirmation, availability and historical value cutoffs",
+        "Managed expression requests with cancellation, provider replacement and one latest catch-up",
+        "Style reattachment without duplicate requests and observable calculation failures"
       ],
       "evidence": [
         "tests/security-expression.test.ts",
         "integration/script-engine.test.ts",
         "tests/e2e/native-timeframe-navigation.spec.ts",
-        "tests/requested-context.test.ts"
+        "tests/requested-context.test.ts",
+        "tests/requested-indicator.test.ts",
+        "tests/e2e/native-requested-provider.spec.ts"
       ],
       "remaining": [
-        "Provider lifecycle integration for external expression contexts",
-        "Cancellation, replay and provider confirmation boundaries",
+        "Existing raw-point helper same-time refresh and provider/replay cache invalidation",
         "External datasets and provider capabilities"
       ]
     },
@@ -185,7 +193,8 @@
         "Compiled calculation composed with native timeframe alignment",
         "Persistent-history replacement and forming-tail rollback",
         "Provider confirmation, replay and primary-source replacement",
-        "Compiled expression alignment against explicit requested-observation availability"
+        "Compiled expression alignment against explicit requested-observation availability",
+        "Compiled managed expression confirmation and provider replacement through the unchanged adapter"
       ],
       "remaining": [
         "Wider output and request fixtures",
@@ -216,23 +225,23 @@
     ]
   },
   "validation": {
-    "chartTests": 6725,
-    "chartTestFiles": 289,
-    "compiledProgramTests": 11,
+    "chartTests": 6811,
+    "chartTestFiles": 292,
+    "compiledProgramTests": 12,
     "demoTests": 424,
     "demoTestFiles": 35,
-    "browserEvidence": "This batch passed 18 browser cases across all three engines: six whole-study scale cases, nine existing scale cases and three example autofit cases. Autofit expands when an extreme enters view and contracts when it leaves. Both new examples also ran on the built website, including all four scale controls. Screenshots were inspected; traffic uses fixtures rather than live brokers.",
+    "browserEvidence": "This batch passed six managed-request cases and six existing replay-time cases across all three engines. The built website example exercised initial data, revision, provider replacement and confirmation controls in each engine. Screenshots were inspected. The preceding committed batch also passed the reported example autofit regression in all three engines: the scale expands when an extreme enters view and contracts when it leaves. Traffic uses fixtures rather than live brokers.",
     "website": "63 static pages built successfully",
-    "chartOnlyBrotliKiB": 61.71,
-    "chartOnlyBudgetKiB": 61.75,
-    "baseBrotliKB": 102.2,
-    "indicatorBrotliKB": 33.59,
-    "allTiersBrotliKB": 276.11,
-    "budgetChange": "Whole-study transactions, primitive scale binding and owned defaults increase base from 100.10 to 102.20 kB and chart-only from 59.62 to 61.71 KiB. Requested calculations increase the optional indicator tier from 32.74 to 33.59 kB. Limits are 102.25 kB base, 110.25 kB base plus trade, 33.75 kB indicators, 236.75 kB terminal, 276.25 kB all tiers and 61.75 KiB chart-only. Other optional-tier budgets are unchanged and removal checks pass.",
-    "review": "Independent review checked scale transactions, shared/manual ownership, restoration, formatter order and atomic axis refusal. Requested-context helpers passed 63 tests and 12000 independent comparisons across 4000 snapshots. Full-suite regressions exposed unplotted fill columns and comparison projections being mistaken for manual host ranges; both were corrected and the complete suite passed.",
-    "packageVerification": "Verify passed lint, typecheck, 6725 unit tests, seven endurance-harness checks, build, 424 example tests and declaration identity. Measured feature growth required the documented budget adjustments; size and tree-shake checks then passed. Eleven compiled-program checks and public adapter typechecking passed.",
+    "chartOnlyBrotliKiB": 62.38,
+    "chartOnlyBudgetKiB": 62.5,
+    "baseBrotliKB": 102.99,
+    "indicatorBrotliKB": 35.05,
+    "allTiersBrotliKB": 278.37,
+    "budgetChange": "Native request cancellation and lifecycle hooks increase base from 102.20 to 102.99 kB and chart-only from 61.71 to 62.38 KiB. Managed expressions increase the optional indicator tier from 33.59 to 35.05 kB. Limits are 103.25 kB base, 111.25 kB base plus trade, 35.25 kB indicators, 239 kB terminal, 278.5 kB all tiers and 62.5 KiB chart-only. Other optional-tier budgets are unchanged and removal checks pass.",
+    "review": "Independent review closed five findings covering custom-host receivers, replay interruption, initial source-state immutability, native calculation errors and style reattachment during request registration or provider invocation. Deferred-provider regressions also cover abort callback reentry, provider replacement, history correction and stale completion. The managed helper passes 38 cases, native request integration 29 cases and cancellation composition 19 cases.",
+    "packageVerification": "Verify passed lint, typecheck, 6811 unit tests, seven endurance-harness checks, build, 424 example tests and declaration identity. Measured feature growth required the documented budget adjustments; size and tree-shake checks then passed. Twelve compiled-program checks and public adapter typechecking passed.",
     "latestEngineSourceReview": "d95bd70daf598892d40a9265607537b86ce712dd has no source changes relative to the pinned tested engine revision.",
     "apiDocumentation": "Generated with warnings treated as errors",
-    "skillsCoverage": "974 of 974 named exports and registry entries; not functional coverage"
+    "skillsCoverage": "975 of 975 named exports and registry entries; not functional coverage"
   }
 }

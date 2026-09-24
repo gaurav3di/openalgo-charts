@@ -1435,6 +1435,102 @@ prefix. Malformed metadata, target order, options or output shapes throw
 an empty target with nonempty requested history still produces named empty
 columns. Try the [runnable example](/examples#external-values-with-explicit-availability).
 
+## Managed requested snapshots
+
+Use `createRequestedIndicator` when a study requests another instrument's
+observations from the chart's native provider. It manages loading, replacement,
+cancellation, retry and replay cutoffs, then runs your expression on the requested
+bars before aligning the results to the chart. The existing pure helpers remain
+useful when you already own the snapshot lifecycle.
+
+The host supplies explicit metadata:
+
+```ts
+chart.setBarsProvider({
+  requestBars: request => history.loadBars(request),
+  requestSnapshot: request => history.loadSnapshot(request),
+});
+```
+
+`requestSnapshot` returns a `RequestedBarsSnapshot` with equally sized `bars`,
+`availableAt` and `confirmed` arrays. Each finite opening time is strictly later
+than the previous one. Availability is a UTC second at or after the opening,
+or null when unknown. Confirmation is an explicit boolean. The helper does not
+infer either property from the next candle or from the wall clock.
+
+```ts
+import { registerIndicator } from 'openalgo-charts';
+import { createRequestedIndicator } from 'openalgo-charts/indicators';
+
+registerIndicator(createRequestedIndicator({
+  id: 'requested-close', name: 'Requested close', placement: 'pane', inputs: [],
+  plots: [{ key: 'close', type: 'line', style: { color: '#e8a23a' } }],
+  request: ({ bars }) => ({
+    symbol: 'BENCHMARK', interval: '1h',
+    from: bars[0]?.time ?? 0,
+    to: bars[bars.length - 1]?.time ?? 0,
+  }),
+  expression: requested => ({ close: requested.map(bar => bar.close) }),
+}));
+const study = chart.addIndicator('requested-close');
+study.subscribeDataStatus(status => renderStatus(status.state));
+```
+
+The `RequestedIndicatorDescriptor` keeps the ordinary identity, placement, input,
+plot, level and range fields. `request(context)` selects a complete history
+window, including any warmup your calculation needs; returning null marks the
+selection unsupported. Its `RequestedIndicatorContext` contains source `bars`,
+current `settings`, optional `dataContext` and native `requestState`. The same
+context, with `calculation` when available, reaches
+`expression(requestedBars, settings, context)`.
+
+The expression receives frozen copies and returns each scalar plot key or
+declared OHLC source column with one value per requested bar. It must be pure and causal through each result
+index. Nonfinite results become null. `gaps: 'carry'` holds the latest eligible
+reading, including null; `'missing'` emits only newly selected readings.
+
+Targets default to source opening times. `targetTimes(context)` can supply
+finite strictly increasing evaluation times, exactly one per source bar. For a
+study that should observe releases after the final source bar opens, opt in to
+the replay playhead for that final target:
+
+```ts
+targetTimes: ({ bars, requestState }) => bars.map((bar, index) =>
+  index === bars.length - 1 ? Math.max(bar.time, requestState?.replay?.asOf ?? bar.time) : bar.time),
+```
+
+The maximum preserves ordered targets while replay updates its clock before
+replacing the source bars; the snapshot cutoff still limits availability.
+
+`IndicatorSnapshotRequest.asOf` is a historical knowledge cutoff, separate from
+opening-time bounds. Availability-aware replay clamps it to the playhead and
+notifies studies even when no new source observation appears. Every returned row
+is validated, then only the confirmed known prefix available by the cutoff
+reaches the expression. **The provider must return the historical value versions
+known then, or reject an unsupported cutoff.** Final OHLC and availability
+timestamps alone cannot recover those versions. Legacy replay without an `asOf`
+clock is unsupported for this strict helper; raw `requestBars` is unchanged.
+
+Call `chart.invalidateRequestedData()` when the current provider receives new
+values or confirmation metadata without a chart-price update. Replacing the
+provider, changing source identity/history, changing the requested instrument or
+explicit selector cutoff, and entering, leaving or moving backward in replay
+clear obsolete output and cancel its generation. Tail changes and forward
+refreshes coalesce into one active request plus one latest follow-up. An unchanged
+selection preserves pending work across style changes. The helper stores copied
+raw snapshots rather than cached aligned output.
+
+`dataStatus()` reports `loading`, `ready`, `empty`, `unsupported` or `error`;
+`retryData()` retries the current request. Ready describes a nonempty valid
+snapshot, so its aligned plot can still be entirely null. Removal and destruction
+cancel requests and reject stale publication. A raw function provider is still
+supported for raw bars; `hasSnapshotProvider()` tests the additional snapshot
+capability. The host supplies transport and announces updates.
+
+Try the [deferred-provider example](/examples#requested-snapshots-from-a-deferred-provider),
+which lets you release responses, revise values, replace the provider and confirm
+the latest observation independently.
+
 ## Calculation helpers
 
 The calculation helpers used by the built-ins are exported, so your own descriptor
@@ -1759,16 +1855,19 @@ settings change, and it returns a teardown function. The context it is handed:
 | `paneIndex?()` | `number` | The pane this instance drew into. Moves when panes are reordered, so read it rather than storing it. |
 | `addPrimitive?(p)` / `removePrimitive?(p)` | `void` | Attach an arbitrary primitive to this indicator's pane, and detach it again. Anything you attach is yours to remove in the teardown. |
 | `emit?(event, payload)` | `void` | Put an event on the chart's own bus, the one `chart.on(name, cb)` listens to. The imperative half of [`alerts`](#alerts): use it when the signal arrives from outside the calculation rather than from the bars. |
-| `requestBars?(request)` | `Promise<Bar[]>` | Another instrument's (or interval's) bars, from the provider the host registered with `chart.setBarsProvider` (2.4.0). `request` is `{ symbol, exchange?, interval, from, to, signal? }`; the instance lifetime is the default signal. Read at request time, so an indicator added before the provider still gets served, and it rejects with a clear message when there is none, which a study should publish as `unsupported`. |
+| `requestBars?(request)` | `Promise<readonly Bar[]>` | Another instrument's or interval's bars from `chart.setBarsProvider`. The request has `symbol`, optional `exchange`, `interval`, opening-time bounds `from`/`to`, and optional `signal`. Caller, instance and provider cancellation compose. No registered provider rejects the request. |
+| `requestSnapshot?(request)` | `Promise<RequestedBarsSnapshot>` | Explicit availability and confirmation. `IndicatorSnapshotRequest` adds optional `asOf`, clamped to the availability-aware replay clock. Missing capability or legacy replay without a cutoff rejects. |
+| `requestState?()` | `Readonly<IndicatorRequestState>` | Current optional source provenance, `providerRevision`, `dataRevision`, `supportsSnapshots` and optional `replay: { time, asOf?, forming }`. Read at request time. |
+| `subscribeRequestChanges?(listener)` | `() => void` | Observe source/provider revisions, external-data invalidation and replay movement within a source observation. The returned function unsubscribes. |
 
 Everything after `store` is optional so a minimal context can be hand-built (a unit test
 exercising one descriptor's lifecycle), but the runtime always supplies them.
 
 <Callout type="info">
-**`symbol` and `interval` are `undefined` under `chart.addIndicator`.** The engine core is
-handed bars and never an instrument, so it answers "I do not know" rather than inventing a
-name. A terminal that owns the symbol picker supplies both through its own `IndicatorHost`,
-which is how a Tier-2 indicator fetches the series matching what is on screen.
+**Supply source identity explicitly.** `chart.setDataContext({ symbol, exchange, interval })`
+makes that identity available under `chart.addIndicator`; without it, symbol and interval
+remain undefined. A custom host can supply the same identity through `IndicatorHost`.
+Clear the old source data before changing context, then install the new source bars.
 </Callout>
 
 ## Supertrend

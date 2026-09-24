@@ -1014,7 +1014,8 @@ supplies the observations and metadata. Neither fetches data, registers a
 provider, aggregates candles or changes the existing `securitySeries` and
 `securityExpression` defaults.
 
-All eight exports come from `openalgo-charts/indicators`:
+These exports come from `openalgo-charts/indicators`; `RequestedBarsSnapshot`
+is also exported from base for provider implementations:
 
 | Export | Contract |
 | --- | --- |
@@ -1076,6 +1077,77 @@ Malformed snapshots, metadata, target order, options or expression output throw
 `IndicatorInputError`. All input rows are validated before the callback, including
 rows beyond an ineligible prefix. These helpers cannot reconstruct historical
 forming-bar updates or availability metadata from final OHLC alone.
+
+## Managed requested snapshots
+
+`createRequestedIndicator(descriptor)` returns an ordinary `IndicatorDescriptor`.
+Register it, then use `chart.addIndicator` and the existing settings, status,
+retry, pane and removal APIs. It calculates on requested observations before
+aligning results to the source chart, and owns the asynchronous snapshot lifecycle.
+The chart's provider must expose `requestSnapshot`; a raw bar provider remains
+valid for raw requests but cannot supply explicit availability automatically.
+
+```ts
+import { registerIndicator } from 'openalgo-charts';
+import { createRequestedIndicator } from 'openalgo-charts/indicators';
+
+registerIndicator(createRequestedIndicator({
+  id: 'benchmark-close', name: 'Benchmark close', placement: 'pane', inputs: [],
+  plots: [{ key: 'close', type: 'line', style: { color: '#e8a23a' } }],
+  request: ({ bars }) => ({ symbol: 'BENCHMARK', interval: '1h',
+    from: bars[0]?.time ?? 0, to: bars[bars.length - 1]?.time ?? 0 }),
+  expression: requested => ({ close: requested.map(bar => bar.close) }),
+}));
+```
+
+`RequestedIndicatorDescriptor` supports `id`, `name`, optional `category`,
+`placement`, `inputs`, `plots`, optional `levels`/`range`, plus:
+
+| Member | Contract |
+| --- | --- |
+| `request(context)` | A complete `IndicatorSnapshotRequest` without `signal`, or null for unsupported. Include any calculation warmup in the opening-time window. The helper owns cancellation. |
+| `expression(bars, settings, context)` | Named columns, each matching requested-bar count and including every scalar plot key or declared OHLC source column. Frozen copied input; pure and causal through each result index. Nonfinite results become null. |
+| `gaps` | `carry` by default, or `missing`, using the pure alignment helper's rules. |
+| `targetTimes(context)` | Optional finite strictly increasing query times, one per source bar; defaults to source openings. |
+
+`RequestedIndicatorContext` carries source `bars`, current `settings`, optional
+`dataContext`, optional native `requestState`, and the calculation context when
+called during calculation. It does not infer target evaluation times from bar
+closure. To let the final source bar observe requested releases after its opening,
+explicitly use the replay playhead for that final target:
+
+```ts
+targetTimes: ({ bars, requestState }) => bars.map((bar, index) =>
+  index === bars.length - 1 ? Math.max(bar.time, requestState?.replay?.asOf ?? bar.time) : bar.time),
+```
+
+The maximum keeps targets ordered while replay changes its clock before replacing
+the source bars. The snapshot's own cutoff still bounds requested availability.
+
+Snapshots are validated in full and copied before use. With an `asOf` cutoff,
+only the confirmed known prefix available by that cutoff reaches the expression.
+Without one, all requested observations reach the expression and alignment
+enforces the eligibility prefix. Neither path can prove callback causality or
+reconstruct historical value versions: the provider must return what was known
+at `asOf`, or reject it. `RequestedBarsSnapshot`, `IndicatorSnapshotRequest`,
+`IndicatorBarsProviderAccess` and `IndicatorRequestState` are native base types;
+the snapshot type is re-exported from indicators.
+
+Provider replacement, source identity/history changes, request instrument or
+explicit selector cutoff changes, replay entry/exit and backward replay clear
+obsolete output and cancel work. Tail revisions, `invalidateRequestedData()` and
+forward replay retain one active request and coalesce one latest follow-up;
+they do not queue every tick. Style reattachment preserves a pending request
+when its selection is unchanged. The helper stores raw snapshots, then reruns
+the expression and alignment when calculation is required.
+
+Read `dataStatus()` or subscribe with `subscribeDataStatus`; `retryData()` retries
+the current request. States are `loading`, `ready`, `empty`, `unsupported` or
+`error`. A nonempty valid snapshot can be ready while all aligned results are
+null. Provider capability absence, a null selector and legacy replay without
+an availability clock report unsupported and clear values. Removal and chart
+destruction cancel requests and prevent stale publication. This helper adds no
+transport, page merging or live subscription; the host announces external changes.
 
 ## Optional missing-value policies on established helpers
 

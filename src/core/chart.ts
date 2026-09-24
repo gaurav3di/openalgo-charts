@@ -21,11 +21,12 @@ import {
 import { DataLayer } from '../model/data-layer';
 import { createSeriesRecord, type SeriesApi, type SeriesRecord, type PriceScaleId, type PriceFormat, type BarConfirmationOptions, type SeriesUpdateOptions } from '../model/series';
 import { bindSeriesProvenance, SeriesProvenance, validateSeriesOptions } from '../model/series-provenance';
-import { replayWindow } from '../model/replay-window';
+import { replayWindow, observeReplayWindow } from '../model/replay-window';
+import { runAbortable } from '../model/abortable-request';
 import { getChartType, type SeriesType } from '../model/chart-type-registry';
 import {
   getIndicator, hasIndicator, plotStyleKeys,
-  type IndicatorBarsProvider, type IndicatorDescriptor, type IndicatorSettings,
+  type IndicatorBarsProvider, type IndicatorBarsProviderAccess, type IndicatorDescriptor, type IndicatorSettings,
 } from '../model/indicator-registry';
 
 /**
@@ -342,7 +343,7 @@ export interface ChartOptions {
    * indicator's `requestBars` rejects, and the study reports itself
    * unsupported rather than drawing something invented.
    */
-  barsProvider?: IndicatorBarsProvider;
+  barsProvider?: IndicatorBarsProvider | IndicatorBarsProviderAccess;
   /**
    * Custom time-axis and crosshair label formatter (receives UTC seconds). When
    * omitted, labels use IST (Indian market default). e.g. for UTC:
@@ -815,7 +816,10 @@ export class Chart {
     pane: Pane; priceFormat?: AddSeriesOptions['priceFormat']; inheritedStyle: Partial<SeriesStyle>; indicatorOwned: boolean;
   }>();
   private _dataContext: Readonly<ChartDataContext> | undefined;
-  private _barsProvider: IndicatorBarsProvider | null = null;
+  private _barsProvider: IndicatorBarsProvider | IndicatorBarsProviderAccess | null = null;
+  private _barsRequests = new AbortController();
+  private _barsProviderRevision = 0;
+  private _requestedDataRevision = 0;
   /** Guards indicator recompute against re-entry via its own `series.setData`. */
   private _recomputing = false;
   private _indicatorsDirty = false;
@@ -1689,6 +1693,7 @@ export class Chart {
       || this._dataContext?.exchange !== context?.exchange;
     const sourceChanged = instrumentChanged || this._dataContext?.interval !== context?.interval;
     this._dataContext = context ? Object.freeze({ ...context }) : undefined;
+    if (sourceChanged) this._cancelBarsRequests();
     if (sourceChanged) for (const state of this._seriesProvenance.values()) state.contextChanged();
     if (this._indicators.length > 0) {
       this._indicatorsDirty = true;
@@ -1708,8 +1713,32 @@ export class Chart {
    * `requestBars`. Read at request time, so an indicator added before the
    * provider was set is served once one exists.
    */
-  public setBarsProvider(provider: IndicatorBarsProvider | null): void {
+  public setBarsProvider(provider: IndicatorBarsProvider | IndicatorBarsProviderAccess | null): void {
+    if (this._destroyed || this._destroying || provider === this._barsProvider) return;
     this._barsProvider = provider;
+    this._barsProviderRevision++;
+    this._cancelBarsRequests();
+    this.emit('data:requests', {});
+  }
+
+  private _cancelBarsRequests(): void {
+    if (this._destroying) return;
+    const previous = this._barsRequests;
+    this._barsRequests = new AbortController();
+    previous.abort();
+  }
+
+  /** Announce changed requested data without replacing a provider or price bars. */
+  public invalidateRequestedData(): void {
+    if (this._destroyed || this._destroying) return;
+    this._requestedDataRevision++;
+    this.emit('data:requests', {});
+  }
+
+  /** Whether the configured provider supplies explicit availability snapshots. */
+  public hasSnapshotProvider(): boolean {
+    return typeof this._barsProvider === 'object' && this._barsProvider !== null
+      && typeof this._barsProvider.requestSnapshot === 'function';
   }
 
   /** Whether a bars provider is registered, so a host can grey what needs one. */
@@ -1883,7 +1912,31 @@ export class Chart {
         if (provider === null) {
           return Promise.reject(new Error('openalgo-charts: this chart has no bars provider; call chart.setBarsProvider(...) to serve other instruments'));
         }
-        return provider(request);
+        return runAbortable(signal => typeof provider === 'function'
+          ? provider({ ...request, signal }) : provider.requestBars({ ...request, signal }),
+        [request.signal, this._barsRequests.signal]);
+      },
+      requestSnapshot: request => {
+        const provider = this._barsProvider;
+        return runAbortable(signal => {
+          if (typeof provider !== 'object' || provider?.requestSnapshot === undefined) throw new Error('Requested snapshots are unsupported by this provider');
+          const replay = replayWindow(this);
+          if (replay && replay.asOf === undefined) throw new Error('Requested snapshots require an availability clock during replay');
+          if (request.asOf !== undefined && !Number.isFinite(request.asOf)) throw new RangeError('Requested availability time must be finite');
+          const asOf = replay?.asOf === undefined ? request.asOf : Math.min(request.asOf ?? Infinity, replay.asOf);
+          return provider.requestSnapshot({ ...request, ...(asOf === undefined ? {} : { asOf }), signal });
+        }, [request.signal, this._barsRequests.signal]);
+      },
+      requestState: () => ({
+        source: this._seriesProvenance.get(this._firstDataId.value ?? -1)?.snapshot(),
+        providerRevision: this._barsProviderRevision, dataRevision: this._requestedDataRevision,
+        supportsSnapshots: this.hasSnapshotProvider(),
+        replay: replayWindow(this),
+      }),
+      subscribeRequestChanges: listener => {
+        const subscriptions = ['data:context', 'data:range', 'data:requests'].map(event => this.on(event, listener));
+        subscriptions.push(observeReplayWindow(this, listener));
+        return () => { for (const unsubscribe of subscriptions) unsubscribe(); };
       },
       subscribeDataChanges: listener => {
         const context = this.on('data:context', () => listener('context'));
@@ -5164,9 +5217,12 @@ export class Chart {
     return this._destroyed;
   }
   private _destroyed = false;
+  private _destroying = false;
 
   public destroy(): void {
-    if (this._destroyed) return; // idempotent: a second call must not re-emit
+    if (this._destroyed || this._destroying) return;
+    this._destroying = true;
+    this._barsRequests.abort();
     this._timeScale.setChangeHandler(null);
     this._loop.stop();
     if (this._remeasureHandle !== null) {
