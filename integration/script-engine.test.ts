@@ -6,6 +6,7 @@ import { registerIndicator, type IndicatorDescriptor } from '../src/model/indica
 import type { Bar } from '../src/model/bar';
 import type { SeriesMarker } from '../src/primitives/markers';
 import { ChartTable } from '../src/primitives/table';
+import { securityExpression } from '../src/indicators/security';
 import { fakeDocument } from '../tests/helpers/fake-dom';
 
 const charts: Chart[] = [];
@@ -46,6 +47,30 @@ function makeChart(data: Bar[], now: number) {
 const bar = (time: number, close: number): Bar => ({ time, open: 1, high: close + 1, low: 0, close });
 
 describe('compiled script engine on an actual Chart', () => {
+  it('composes a compiled calculation with native timeframe aggregation and live alignment', () => {
+    const compiled = compile(`version 1
+study("Requested mean")
+plot(sma(close, 2), "Mean")
+`);
+    const descriptor: IndicatorDescriptor = {
+      ...compiled,
+      calcTail: undefined,
+      calc: (bars, settings) => securityExpression(bars, '3m', requested =>
+        compiled.calc(requested, settings, {}), { timezone: 'UTC' }),
+    };
+    registerIndicator(descriptor);
+    const source = Array.from({ length: 9 }, (_, i) => bar(i * 60, i + 1));
+    const { chart, series } = makeChart(source, 500);
+    const indicator = chart.addIndicator(descriptor.id);
+    const key = descriptor.plots[0].key;
+    expect(indicator.values()[key]).toEqual([null, null, null, null, null, null, 4.5, 4.5, 4.5]);
+    series.update(bar(480, 90));
+    expect(indicator.values()[key]).toEqual([null, null, null, null, null, null, 4.5, 4.5, 4.5]);
+    series.update(bar(540, 10));
+    expect(indicator.values()[key]).toEqual([null, null, null, null, null, null, 4.5, 4.5, 4.5, 48]);
+    expect(indicator.series(key)?.getData()[9].close).toBe(48);
+  });
+
   it('preserves arithmetic and seconds-to-milliseconds conversion through the adapter', () => {
     const descriptor = compile(`version 1
 study("Boundary")

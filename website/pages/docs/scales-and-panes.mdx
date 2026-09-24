@@ -20,6 +20,16 @@ chart.timeScale.setRightOffset(4);         // empty bars kept right of the last 
 chart.resetScale();                        // configured default view + autoscale
 ```
 
+Direct navigation mutations on `chart.timeScale` repaint and publish one `pan` or
+`zoom` event after the final range changes, so linked charts follow them too.
+This includes spacing, offset, visible range, pixel scrolling, cursor zoom and
+fit. No-op changes are silent. `setWidth` and `setBaseIndex` are silent layout and
+data bookkeeping methods; ordinary hosts should use the chart's sizing and data
+APIs. A standalone `TimeScale.setChangeHandler` receives the previous logical
+range. Valid explicit range requests invoke that handler even when unchanged, so
+they can cancel pending motion without a navigation event. Do not replace the
+owning chart's handler.
+
 ### Default visible bars
 
 Configure the initial view and the view restored by `resetScale()`:

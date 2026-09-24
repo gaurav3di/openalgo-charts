@@ -248,7 +248,7 @@ widget.dataController;        // DataLoadingController | null (null without a fe
 widget.chart;                 // the Chart underneath, every base API available
 widget.draw;                  // the DrawingController the rail drives
 widget.objects;               // shared ChartObjects inventory and supported actions
-widget.series;                // the primary series; setChartType replaces it
+widget.series;                // primary handle, retained across chart-type changes
 widget.root;                  // the .oac-widget element
 widget.context;               // what every dialog was handed, for a panel of your own
 widget.symbol(); widget.exchange(); widget.interval(); widget.chartType(); widget.theme();

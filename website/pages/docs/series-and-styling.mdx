@@ -33,6 +33,26 @@ series.remove();                           // detach from the pane + free its da
 `applyOptions` / `remove` make dynamic charts (add, restyle, hide, and remove series at
 runtime) straightforward without recreating the chart.
 
+### Change a live series renderer
+
+```ts
+chart.setSeriesType(series, 'line');
+chart.seriesType(series); // 'line', or null for a handle no longer owned by this chart
+```
+
+The same handle keeps its data, pane, price scale, primary ownership, explicit
+styles and marker bindings. Inherited defaults are replaced with the target
+renderer defaults. For example, a default step becomes a plain line, while a
+step style explicitly supplied by the host remains explicit. The change repaints
+and publishes `objects:change` without replacing data or recalculating studies.
+
+The method returns `true` when it changes a live owned series, and `false` for an
+unchanged type, a removed or foreign handle, or a destroyed chart. An unregistered
+type on a live owned series throws before mutation. Transform renderers require
+host-prepared bars; this operation does not transform the supplied data.
+`widget.setChartType` uses this operation, so stored `widget.series` handles and
+markers remain valid across type changes.
+
 `setData`, `prependData`, and `update` accept three item shapes (normalized to
 bars internally, so `getData` always returns `Bar[]`):
 

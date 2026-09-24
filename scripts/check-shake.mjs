@@ -83,7 +83,11 @@ const BUNDLE = new URL('../dist/openalgo-charts.mjs', import.meta.url).pathname.
 // Named table ownership, computed fill descriptors and complete scale snapshots
 // serve native chart hosts. Measured 56.15 to 57.13 KiB (0.98 KiB); allow 57.25.
 // The new numerical helpers remain in the optional indicator tier.
-const LIMIT_BYTES = 57.25 * 1024;
+// Direct navigation notifications and renderer changes retain live host state.
+// They add 0.42 KiB, from 57.13 to 57.55 KiB, including type lookup and formatter
+// restoration. The ceiling is 57.75 KiB; optional calculation
+// helpers remain outside the chart-only import.
+const LIMIT_BYTES = 57.75 * 1024;
 
 // Absent from a chart-only build. Each is a string that appears in the adapter
 // source and nowhere in the rendering core.

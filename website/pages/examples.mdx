@@ -438,6 +438,34 @@ chart.addIndicator('demo-daily-range');
 chart.timeScale.fitContent(bars.length);
 return chart;`} />
 
+### Calculate an hourly average on minute bars
+
+The average is calculated on hourly bars before alignment to five-minute bars.
+The orange line holds the last completed hour's average. The blue line updates
+with the developing hour. Both use the same supplied data and a three-hour window.
+
+<RunnableExample height={340} tiers={['indicators']} code={`lib.registerIndicator({
+  id: 'demo-requested-mean', name: 'Hourly mean', placement: 'onchart', inputs: [],
+  plots: [
+    { key: 'confirmed', type: 'step', title: 'Confirmed hour', style: { color: '#e8a23a', lineWidth: 2 } },
+    { key: 'developing', type: 'line', title: 'Developing hour', style: { color: '#4f8cff', lineWidth: 2 } },
+  ],
+  calc(bars, settings) {
+    const expression = requested => ({ mean: lib.nulls(lib.sma(requested.map(bar => bar.close), 3)) });
+    const options = { timezone: settings.timezone };
+    return {
+      confirmed: lib.securityExpression(bars, '1h', expression, options).mean ?? [],
+      developing: lib.securityExpression(bars, '1h', expression, { ...options, mode: 'developing' }).mean ?? [],
+    };
+  },
+});
+const chart = lib.createChart(el, { timezone: 'Etc/UTC' });
+const bars = lib.generateBars(1700002800, 240, 300);
+chart.addSeries('candlestick').setData(bars);
+chart.addIndicator('demo-requested-mean');
+chart.fitContent();
+return chart;`} />
+
 ## Computed fills and multiple summary grids
 
 A descriptor can color each part of a band and publish several tables. The fill

@@ -69,7 +69,7 @@ export default defineConfig({
     { name: 'chromium', use: { ...devices['Desktop Chrome'] }, testIgnore: /(?:yfinance(?:-(?:ui-253|mobile|templates|indicator-source))?|widget-ui-253|widget-data-loading|widget-localization|widget-alerts|chart-data-export|instruments|indicator-source-markers|alert-line-drag|table-layout)\.spec\.ts/ },
     ...(['chromium', 'firefox', 'webkit'] as const).map(browserName => ({
       name: `widget-loading-${browserName}`,
-      testMatch: /(?:widget-ui-253|widget-data-loading|widget-localization|widget-alerts|drawing-future|drawing-catalog|analysis-linked-events|widget-objects|navigation-wheel|widget-mobile|branding-watermark|crosshair-snap|workspace-storage|open-interest|alerts|alert-line-drag|table-layout|replay-time|chart-data-export|instruments|indicator-source-markers|indicator-visuals|scale-state)\.spec\.ts/,
+      testMatch: /(?:widget-ui-253|widget-data-loading|widget-localization|widget-alerts|drawing-future|drawing-catalog|analysis-linked-events|widget-objects|navigation-wheel|widget-mobile|branding-watermark|crosshair-snap|workspace-storage|open-interest|alerts|alert-line-drag|table-layout|replay-time|chart-data-export|instruments|indicator-source-markers|indicator-visuals|scale-state|native-timeframe-navigation)\.spec\.ts/,
       use: { browserName, baseURL: 'http://127.0.0.1:4176' },
     })),
     // The demo, against its own server. Kept in the list even with no

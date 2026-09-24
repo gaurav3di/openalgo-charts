@@ -113,7 +113,7 @@ export {
   type Tier2Context,
   type Tier2Point,
 } from './external';
-export { securitySeries, type SecuritySeries, type SecurityOptions } from './security';
+export { securitySeries, securityExpression, type SecuritySeries, type SecurityOptions, type SecurityExpressionOptions } from './security';
 export {
   rollingMedian, rollingMode, rollingVariance, rollingRange, percentileLinear,
   rankCorrelation, centerOfGravity, runningMin, runningMax,

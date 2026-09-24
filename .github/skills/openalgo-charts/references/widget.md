@@ -295,11 +295,11 @@ widget.root;                         // the .oac-widget element
 widget.context;                      // the WidgetContext every mounted piece was handed
 widget.objects;                      // the owned base-tier ChartObjects inventory
 widget.alerts;                       // the owned AlertController, including drawing anchors
-widget.series;                       // the primary SeriesApi, replaced by setChartType
+widget.series;                       // the primary SeriesApi, retained by setChartType
 widget.symbol(); widget.exchange(); widget.interval(); widget.chartType(); widget.theme();
 widget.setSymbol(symbol, exchange?);
 widget.setInterval(code);            // throws UnknownIntervalError for a code the registry lacks
-widget.setChartType(id);             // a registered chart type id; the series is rebuilt with the same bars
+widget.setChartType(id);             // registered renderer; retains handle, data, styles, scale and markers
 widget.setTheme('dark' | 'light' | theme);
 widget.openSettings();               // false when no dialog is registered under 'settings'
 widget.openIndicatorPicker();

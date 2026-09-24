@@ -943,6 +943,67 @@ cannot use a later source bar's level; zero remains a real observation.
 
 Buckets follow the chart's calendar: a day is a day in `timezone`, a week starts on Monday there, a registered calendar interval (`{ mode: 'calendar' }`) cuts on its own period, and a sub-day interval is anchored to the epoch unless `session: '0915-1530'` is given, which anchors it to the session open the way an exchange cuts hourly bars (a 30-minute bucket on a 09:15 open then runs 09:15 to 09:45, not 09:00 to 09:30). A tick or volume interval throws `IndicatorInputError`, and so do a negative `offset` and an unreadable `session`. `volume` is `null` on a bucket none of whose bars carried one.
 
+## Calculate before timeframe alignment
+
+`securityExpression(bars, interval, expression, options?)` folds OHLC, volume and
+open interest into requested bars, evaluates the expression there, then aligns
+its named result columns to the original bars. Import it and
+`SecurityExpressionOptions` from `openalgo-charts/indicators`. Applying an average
+to `securitySeries(...).close` instead counts repeated aligned values as separate
+observations and gives a different result.
+
+```ts
+import { securityExpression, sma, nulls } from 'openalgo-charts/indicators';
+
+const result = securityExpression(bars, '1h', requested => ({
+  mean: nulls(sma(requested.map(bar => bar.close), 20)),
+}), { timezone: 'Asia/Kolkata', session: '0915-1530', mode: 'confirmed' });
+```
+
+`SecurityExpressionOptions` accepts `timezone`, `session` and `mode`:
+
+| Mode | Alignment |
+| --- | --- |
+| `confirmed` (default) | Hold the previous observed bucket's result starting at the next bucket's first source bar. Initial values are null. |
+| `developing` | Recalculate every source prefix, using the current partial bucket without later source bars. |
+| `lookahead` | Put the current bucket's final result on all its source bars, including earlier ones. Historical values use future observations. |
+
+The expression must be pure and causal, returning one array per named column,
+each exactly as long as the requested bars. Confirmed and lookahead modes call it
+once with the complete folded history; the helper cannot prevent an expression
+from deliberately reading later indices. Developing mode calls it once per source
+bar and requires stable column names. The callback receives frozen copies of bars.
+Non-finite results become null. Empty input returns an empty object without calling
+the expression. Input timestamps must be finite and strictly increasing.
+
+Supply source bars at the requested interval or finer. This helper neither fetches
+another instrument nor reconstructs intrabar data from coarse bars. Missing buckets
+are absent; the last bucket is not confirmed by wall-clock time. Session anchors
+use local wall-clock time across offset changes. Tick and volume intervals are
+rejected because time bars cannot determine their closes.
+
+## Optional missing-value policies on established helpers
+
+`sma`, `wma`, `rma`, `smaSeededEma`, `stdev`, `dev`, `highest`, `lowest`,
+`highestBars`, `lowestBars` and `percentRank` accept a final
+`NumericalWindowOptions` argument. Omitting it preserves each existing helper's
+calculation and warmup behavior. Passing `{}` selects `missing: 'propagate'`.
+
+With options, NaN and infinities are missing. Propagation requires a complete
+chronological finite window. Skip mode collects the last `period` finite
+observations and holds numeric window results across gaps. Extremum offsets keep
+original bar indices and therefore age across gaps; ties choose the latest bar.
+Rank examines prior observations, excludes the current subject, and produces NaN
+when that subject is missing. Recursive smoothers reset on a propagated gap and
+reseed from a full consecutive SMA window; skip mode retains their previous state.
+Option-path periods must be positive safe integers. Invalid periods throw
+`RangeError`; invalid policies throw `TypeError`.
+
+```ts
+sma([1, 3, NaN, 5], 2, { missing: 'skip' }); // [NaN, 2, 2, 4]
+highestBars([5, 1, NaN, NaN], 2, { missing: 'skip' }); // [NaN, -1, -2, -3]
+```
+
 ## Coverage additions (2.4.0)
 
 Every item is optional and additive: a descriptor written against 2.3.2 computes and draws what it did, existing built-ins retain their calculations, and `colorBy` keeps its string return type.

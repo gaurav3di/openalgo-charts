@@ -121,6 +121,22 @@ Returned by `addSeries`. Full surface (`src/model/series.ts`):
 
 Items are `{ time, open, high, low, close, volume?, color? }`, `{ time, value, color? }`, or `{ time }` (whitespace gap). See [data-and-time](data-and-time.md).
 
+`chart.setSeriesType(series, type): boolean` switches a registered renderer on a
+live series. The handle, data, pane, price scale, primary ownership, explicit
+styles and bound markers remain intact. Outgoing inherited renderer defaults are
+removed and missing target defaults are applied, so switching a default step
+series to a line removes the stepping while an explicit step style survives.
+It repaints and emits `objects:change` without replacing data or recalculating
+indicators. It returns false for the same type, foreign or removed handles, and
+destroyed charts. An unknown type on a live owned series throws without mutation.
+Transform renderers still require host-prepared bars; changing type performs no
+data transformation.
+
+`chart.seriesType(series): SeriesType | null` reads the current renderer for a
+live owned series, including one that is not primary. It returns null for foreign
+or removed handles and destroyed charts. Use it when a host tracks series types
+that may also change through native chart calls.
+
 ## Lifecycle and sizing
 
 - `chart.destroy()`: the only teardown method. **There is no `chart.remove()`.** It stops the render loop and kinetic animation, removes every indicator, disconnects the `ResizeObserver`, unbinds all pointer/wheel/keyboard listeners, destroys every pane, and clears the container's cursor hint.

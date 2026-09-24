@@ -40,14 +40,17 @@
         "Rolling median, mode, variance, range and interpolated percentile",
         "Rank correlation and center of gravity",
         "Running extrema and crossing/rising/falling predicates",
-        "Explicit missing-observation policies on new helpers"
+        "Explicit missing-observation policies on new helpers",
+        "Opt-in missing-observation policies on eleven established helpers",
+        "Finite extreme averages and centered deviations in opt-in paths"
       ],
       "evidence": [
-        "tests/indicator-statistics.test.ts"
+        "tests/indicator-statistics.test.ts",
+        "tests/indicator-missing-values.test.ts"
       ],
       "remaining": [
         "Missing-value and warmup contracts",
-        "Missing-value options on established helpers",
+        "Missing-value options on remaining composed helpers",
         "Composed calculations and arbitrary anchor policies",
         "Series-valued lengths",
         "Independent numerical fixtures"
@@ -55,10 +58,20 @@
     },
     {
       "id": "requested-contexts",
-      "status": "incomplete",
+      "status": "partial",
+      "implemented": [
+        "Same-source aggregate expression calculation before alignment",
+        "Confirmed, developing and explicit lookahead readings",
+        "Local wall-clock session anchors across offset changes"
+      ],
+      "evidence": [
+        "tests/security-expression.test.ts",
+        "integration/script-engine.test.ts",
+        "tests/e2e/native-timeframe-navigation.spec.ts"
+      ],
       "remaining": [
-        "Requested-context expressions",
-        "Confirmed/developing/lookahead policies",
+        "External-symbol expression contexts and gap policies",
+        "Cancellation, replay and provider confirmation boundaries",
         "Intrabar arrays",
         "External datasets and provider capabilities"
       ]
@@ -100,7 +113,6 @@
         "History beyond drawing edits",
         "Widget and navigation",
         "Layouts and persistence",
-        "Direct time-scale mutation events",
         "Trading and provider APIs"
       ],
       "implemented": [
@@ -108,7 +120,9 @@
         "Desktop/mobile widget density",
         "Preserve price autofit during minor mouse/pen drift",
         "Complete existing scale snapshots and ratio-lock restoration",
-        "Secondary scales in workspace documents and symbol-change view reset"
+        "Secondary scales in workspace documents and symbol-change view reset",
+        "Direct time-scale mutation repaint, events and linked navigation",
+        "Stable series renderer changes with widget state synchronization"
       ],
       "evidence": [
         "tests/navigation-settings.test.ts",
@@ -118,7 +132,11 @@
         "tests/e2e/yfinance-ui-253.spec.ts",
         "tests/chart-state-scales.test.ts",
         "tests/workspace-scales.test.ts",
-        "tests/e2e/scale-state.spec.ts"
+        "tests/e2e/scale-state.spec.ts",
+        "tests/time-scale-notifications.test.ts",
+        "tests/widget-chart-type-state.test.ts",
+        "tests/e2e/native-timeframe-navigation.spec.ts",
+        "tests/e2e/widget-ui-253.spec.ts"
       ]
     },
     {
@@ -128,7 +146,8 @@
       "implemented": [
         "Real descriptor type assignment",
         "Compiled-program chart tests",
-        "Pinned engine validation"
+        "Pinned engine validation",
+        "Compiled calculation composed with native timeframe alignment"
       ],
       "remaining": [
         "Wider output and request fixtures",
@@ -159,21 +178,23 @@
     ]
   },
   "validation": {
-    "chartTests": 6218,
-    "chartTestFiles": 273,
-    "compiledProgramTests": 4,
+    "chartTests": 6377,
+    "chartTestFiles": 277,
+    "compiledProgramTests": 5,
     "demoTests": 424,
     "demoTestFiles": 35,
-    "browserEvidence": "Density, autofit, visual descriptors and scale restoration pass on all three browser engines. Example-host and executable website checks pass. Screenshots were inspected; traffic uses fixtures rather than live brokers.",
+    "browserEvidence": "Density, autofit, visual descriptors and scale restoration pass on all three browser engines. Twelve further cases verify requested calculations, linked navigation, retained series state and example-host autofit. The new executable website example passes on all three engines. Screenshots were inspected; traffic uses fixtures rather than live brokers.",
     "website": "63 static pages built successfully",
-    "chartOnlyBrotliKiB": 57.13,
-    "chartOnlyBudgetKiB": 57.25,
-    "baseBrotliKB": 97.72,
-    "indicatorBrotliKB": 30.88,
-    "allTiersBrotliKB": 268.85,
-    "budgetChange": "Native visual ownership and scale serialization add 0.98 KiB to the chart-only build. Fourteen optional numerical helpers add 1.04 kB to the indicator tier. Full package budgets retain strict optional-tier removal checks.",
-    "review": "Four confirmed visual lifecycle and numerical findings reproduced, fixed and independently rechecked.",
+    "chartOnlyBrotliKiB": 57.55,
+    "chartOnlyBudgetKiB": 57.75,
+    "baseBrotliKB": 98.13,
+    "indicatorBrotliKB": 32.28,
+    "allTiersBrotliKB": 270.69,
+    "budgetChange": "After visual ownership and scale snapshots, settled navigation and stable renderer changes add 0.42 KiB to the chart-only build. Requested expressions and opt-in missing policies add 1.40 kB to the optional indicator tier. Full package budgets retain strict optional-tier removal checks.",
+    "review": "Four earlier findings and six further numerical, navigation and renderer-state findings were reproduced, fixed and independently rechecked.",
+    "packageVerification": "Full verify passed. A subsequent private function extraction for static dependency tracing passed all 99 affected numerical tests, rebuild, typecheck, declaration checks, size and tree-shake checks, compiled integration and the website build.",
+    "latestEngineSourceReview": "d95bd70daf598892d40a9265607537b86ce712dd has no source changes relative to the pinned tested engine revision.",
     "apiDocumentation": "Generated with warnings treated as errors",
-    "skillsCoverage": "971 of 971 named exports and registry entries; not functional coverage"
+    "skillsCoverage": "972 of 972 named exports and registry entries; not functional coverage"
   }
 }

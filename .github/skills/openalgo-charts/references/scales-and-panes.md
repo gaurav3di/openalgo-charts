@@ -182,6 +182,16 @@ chart.timeScale.fitContent(bars.length);
 
 `chart.timeScale` is shared by every pane, which is why panes stay aligned bar-for-bar.
 
+Direct spacing, offset, range, scroll, zoom and fit changes repaint the owning
+chart and emit one `pan` or `zoom` event for the final changed range. Linked
+charts receive these events too. Unchanged ranges emit no chart navigation event.
+`setWidth` and `setBaseIndex` remain silent bookkeeping operations; use the
+chart's sizing and data APIs in a host. `TimeScale.setChangeHandler` receives the
+detached previous logical range. A valid explicit range request invokes the hook
+even when unchanged, allowing the chart to cancel pending motion without emitting
+a navigation event. The chart owns this handler, so a host must not
+replace it on an attached scale.
+
 ### Default visible bars
 
 `ChartOptions.navigation` accepts `Partial<ChartNavigationOptions>`, whose defaults are

@@ -700,6 +700,7 @@ export class Chart {
   private _remeasureHandle: number | null = null;
   private readonly _dataLayer = new DataLayer();
   private readonly _timeScale: TimeScale;
+  private _timeScaleMutationDepth = 0;
   private readonly _priceAxisWidth: number;
   private readonly _timeAxisHeight: number;
   private _pending: InvalidateMask | null = null;
@@ -801,7 +802,9 @@ export class Chart {
   private _primary: { api: SeriesApi; record: SeriesRecord } | null = null;
   private readonly _seriesRecords = new WeakMap<SeriesApi, SeriesRecord>();
   private readonly _indicators: IndicatorInstance[] = [];
-  private readonly _seriesOwners = new WeakMap<SeriesApi, { pane: Pane; priceFormat?: AddSeriesOptions['priceFormat'] }>();
+  private readonly _seriesOwners = new WeakMap<SeriesApi, {
+    pane: Pane; priceFormat?: AddSeriesOptions['priceFormat']; inheritedStyle: Partial<SeriesStyle>;
+  }>();
   private _dataContext: Readonly<ChartDataContext> | undefined;
   private _barsProvider: IndicatorBarsProvider | null = null;
   /** Guards indicator recompute against re-entry via its own `series.setData`. */
@@ -992,11 +995,15 @@ export class Chart {
     this.setWatermarkOptions(options.watermark ?? false);
     this._observeSize();
     this._attachInput();
-    // A host that mutates the time scale directly (e.g. setVisibleLogicalRange to
-    // preserve zoom across a data reload) still triggers a repaint.
-    this._timeScale.setChangeHandler(() => {
+    // Direct navigation shares the chart's events; internal gestures and data
+    // updates already own their repaint, animation and notification boundaries.
+    this._timeScale.setChangeHandler((before) => {
+      if (this._timeScaleMutationDepth > 0 || this._destroyed) return;
       this._stopNavigationMotion();
+      const after = this._timeScale.visibleRange();
+      if (after.from === before.from && after.to === before.to) return;
       this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
+      this._emitViewportIfMoved(before);
     });
     this.applySize(container.clientWidth, container.clientHeight);
     this._remeasureHandle = this._raf.schedule(() => {
@@ -1035,9 +1042,7 @@ export class Chart {
   /** Restore a saved logical range (e.g. preserve the user's zoom across a data reload). */
   public setVisibleLogicalRange(range: LogicalRange): void {
     this._stopNavigationMotion();
-    const before = this._timeScale.visibleRange();
     this._timeScale.setVisibleLogicalRange(range);
-    this._emitViewportIfMoved(before);
   }
 
   /** The current visible logical range. */
@@ -1049,10 +1054,7 @@ export class Chart {
   public fitContent(): void {
     this._stopNavigationMotion();
     if (this._dataLayer.length <= 0) return;
-    const before = this._timeScale.visibleRange();
     this._timeScale.fitContent(this._dataLayer.length);
-    this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
-    this._emitViewportIfMoved(before);
   }
 
   /** Current navigation preferences, safe to save as JSON. */
@@ -1090,13 +1092,15 @@ export class Chart {
     if (total <= 0 || !(this._timeScale.width > 0)) return false;
     // Fit the real dataset first: baseIndex must still identify its newest bar,
     // not the last bar of the smaller requested window.
-    this._timeScale.fitContent(total);
-    if (this._navigation.defaultBarSpacing !== undefined) {
-      this._timeScale.setBarSpacing(this._navigation.defaultBarSpacing);
-    } else if (this._navigation.defaultVisibleBars > 0) {
-      const count = Math.min(total, this._navigation.defaultVisibleBars);
-      this._timeScale.setBarSpacing(this._timeScale.width / (count + this._timeScale.rightOffset));
-    }
+    this._mutateTimeScale(() => {
+      this._timeScale.fitContent(total);
+      if (this._navigation.defaultBarSpacing !== undefined) {
+        this._timeScale.setBarSpacing(this._navigation.defaultBarSpacing);
+      } else if (this._navigation.defaultVisibleBars > 0) {
+        const count = Math.min(total, this._navigation.defaultVisibleBars);
+        this._timeScale.setBarSpacing(this._timeScale.width / (count + this._timeScale.rightOffset));
+      }
+    });
     return true;
   }
 
@@ -1157,6 +1161,48 @@ export class Chart {
     return this._createSeries(type, options, true);
   }
 
+  /** Live renderer type, or null for a foreign, removed or destroyed series handle. */
+  public seriesType(series: SeriesApi): SeriesType | null {
+    const record = this._seriesRecords.get(series), owner = this._seriesOwners.get(series);
+    return !this._destroyed && record && owner && this._panes.includes(owner.pane) && owner.pane.series().includes(record)
+      ? record.type : null;
+  }
+
+  /**
+   * Change a live series' renderer without replacing its handle, data or attachments.
+   * Explicit styles survive; inherited renderer defaults give way to the new type.
+   * Transform renderers expect host-prepared bars and never transform data here.
+   * Returns false for an unchanged type or a foreign, removed or destroyed handle.
+   * An unregistered type throws before any state changes.
+   */
+  public setSeriesType(series: SeriesApi, type: SeriesType): boolean {
+    if (this.seriesType(series) === null) return false;
+    const record = this._seriesRecords.get(series)!, owner = this._seriesOwners.get(series)!;
+    const entry = getChartType(type);
+    if (record.type === type) return false;
+    const precision = record.style.precision;
+    const style = { ...record.style };
+    for (const key of Object.keys(owner.inheritedStyle) as (keyof SeriesStyle)[]) {
+      if (style[key] === owner.inheritedStyle[key]) delete style[key];
+    }
+    const defaults: Partial<SeriesStyle> = {};
+    for (const key of Object.keys(entry.defaultStyle) as (keyof SeriesStyle)[]) {
+      if (!Object.prototype.hasOwnProperty.call(style, key)) Object.assign(defaults, { [key]: entry.defaultStyle[key] });
+    }
+    for (const key of Object.keys(record.style) as (keyof SeriesStyle)[]) delete record.style[key];
+    Object.assign(record.style, defaults, style);
+    owner.inheritedStyle = defaults;
+    record.type = type;
+    if (record.style.precision !== precision) {
+      const scale = owner.pane.scaleOf(record);
+      this._applyPrecision(scale, record.style.precision);
+      if (record.style.precision === undefined) this._applySeriesPriceFormat(scale, owner.priceFormat);
+    }
+    this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
+    this.emit('objects:change', {});
+    return true;
+  }
+
   /**
    * `claimPrimary` is false for series the chart creates on a caller's behalf
    * (indicator plots), so an indicator's line never becomes the price series
@@ -1201,7 +1247,9 @@ export class Chart {
      * Panes move around their series, so the object stays correct through both
      * operations and the index never has to be patched.
      */
-    const owner = { pane: this._panes[paneIndex], priceFormat: options.priceFormat };
+    const inheritedStyle = { ...getChartType(type).defaultStyle };
+    for (const key of Object.keys(options.style ?? {}) as (keyof SeriesStyle)[]) delete inheritedStyle[key];
+    const owner = { pane: this._panes[paneIndex], priceFormat: options.priceFormat, inheritedStyle };
     const scale = owner.pane.scaleOf(record);
     this._applySeriesPriceFormat(scale, options.priceFormat);
     if (record.style.precision !== undefined) this._applyPrecision(scale, record.style.precision);
@@ -1212,6 +1260,7 @@ export class Chart {
       update: (bar: SeriesDataItem): void => this._updateBar(dataId, toBar(bar)),
       getData: (): Bar[] => this._dataLayer.indexedBars(dataId).map((ib) => ib.bar),
       applyOptions: (patch: Partial<SeriesStyle>): void => {
+        for (const key of Object.keys(patch) as (keyof SeriesStyle)[]) delete owner.inheritedStyle[key];
         Object.assign(record.style, patch);
         // Precision is a label override on the scale, not a style the renderer
         // reads, so it needs pushing across when it changes (including back to
@@ -2050,6 +2099,13 @@ export class Chart {
     }
   }
 
+  /** Keep internal intermediate ranges from repainting or interrupting a gesture. */
+  private _mutateTimeScale<T>(apply: () => T): T {
+    this._timeScaleMutationDepth++;
+    try { return apply(); }
+    finally { this._timeScaleMutationDepth--; }
+  }
+
   /** Emit a viewport event ('pan' | 'zoom') carrying the visible time + logical range. */
   private _emitViewport(type: 'pan' | 'zoom'): void {
     if (this._listeners.get(type) === undefined) return;
@@ -2698,7 +2754,7 @@ export class Chart {
     // Only a real append advances the view; late/historical inserts must not
     // be treated as a new right-edge bar (would wrongly auto-scroll / shift).
     if (kind === 'append' && !wasAtRight) {
-      this._timeScale.setRightOffset(this._timeScale.rightOffset - 1);
+      this._mutateTimeScale(() => this._timeScale.setRightOffset(this._timeScale.rightOffset - 1));
     }
     if (dataId === this._firstDataId.value) this._invalidateIndicators();
     this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
@@ -3069,8 +3125,14 @@ export class Chart {
       return { applied: false, series: [], indicators: 0, reason: error instanceof Error ? error.message : 'Invalid saved alerts or identities' };
     }
     this.emit('state:restore:start', {});
-    try { return this._restoreState(s, alerts, reservedIds, panes); }
-    finally { this.emit('state:restore:end', {}); }
+    const before = this._timeScale.visibleRange();
+    try { return this._mutateTimeScale(() => this._restoreState(s, alerts, reservedIds, panes)); }
+    finally {
+      // Restore listeners can replace the viewport after its last internal paint.
+      this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
+      this._emitViewportIfMoved(before);
+      this.emit('state:restore:end', {});
+    }
   }
 
   private _restoreState(s: ChartState & ChartSettingsState & { timezone?: unknown }, alerts: AlertsDocument | undefined,
@@ -4180,7 +4242,7 @@ export class Chart {
       this._beginAutoscaleMotion();
       // Drag left to widen bars; drag right to show more bars in the same space.
       const dx = p.x - this._axisStartCoord;
-      this._timeScale.setBarSpacing(this._axisStartSpacing * Math.exp(-dx * 0.005));
+      this._mutateTimeScale(() => this._timeScale.setBarSpacing(this._axisStartSpacing * Math.exp(-dx * 0.005)));
       this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
       this._emitViewport('zoom');
       return;
@@ -4216,7 +4278,7 @@ export class Chart {
       if (Math.abs(dx) > 3 || Math.abs(p.y - this._dragStartY) > 3) this._pointerMoved = true;
       if (this._pointerMoved && this._hoverId !== null) this._setHover(null);
       // horizontal: scroll time
-      this._timeScale.setRightOffset(this._dragStartOffset - dx / this._timeScale.barSpacing);
+      this._mutateTimeScale(() => this._timeScale.setRightOffset(this._dragStartOffset - dx / this._timeScale.barSpacing));
       // Horizontal-only mode preserves autoscale when the pointer moves vertically.
       if (e.pointerType === 'touch' || this._navigation.mousePan === 'both') {
         const scale = this._panes[this._downPane]?.priceScale;
@@ -4481,7 +4543,7 @@ export class Chart {
     if (!e.ctrlKey && !e.metaKey && (e.shiftKey || Math.abs(delta.x) > Math.abs(delta.y))) {
       this._stopZoomGlide();
       this._beginAutoscaleMotion();
-      this._timeScale.scrollByPixels(-(e.shiftKey && delta.x === 0 ? delta.y : delta.x));
+      this._mutateTimeScale(() => this._timeScale.scrollByPixels(-(e.shiftKey && delta.x === 0 ? delta.y : delta.x)));
       this._maybeLoadHistory();
       this.invalidate(m => m.invalidateGlobal(InvalidationLevel.Full));
       this._emitViewport('pan');
@@ -4512,7 +4574,7 @@ export class Chart {
   /** One zoom step, applied now. Shared by the instant path and each glide frame. */
   private _applyZoom(focusX: number, logFactor: number): void {
     this._beginAutoscaleMotion();
-    this._timeScale.zoomAtX(focusX, Math.exp(logFactor));
+    this._mutateTimeScale(() => this._timeScale.zoomAtX(focusX, Math.exp(logFactor)));
     this._maybeLoadHistory();
     this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
     this._emitViewport('zoom');
@@ -4618,8 +4680,10 @@ export class Chart {
     const cur = pinchState(pts[0], pts[1]);
     const d = pinchDelta(this._pinch, cur);
     this._beginAutoscaleMotion();
-    if (d.factor !== 1) this._timeScale.zoomAtX(cur.cx, d.factor);                       // pinch → zoom time
-    this._timeScale.setRightOffset(this._timeScale.rightOffset - d.dx / this._timeScale.barSpacing); // two-finger pan X
+    this._mutateTimeScale(() => {
+      if (d.factor !== 1) this._timeScale.zoomAtX(cur.cx, d.factor);
+      this._timeScale.setRightOffset(this._timeScale.rightOffset - d.dx / this._timeScale.barSpacing);
+    });
     this._panes[this._pinchPane]?.priceScale.panByPixels(d.dy);                          // two-finger pan Y
     this._pinch = cur;
     this._maybeLoadHistory();
@@ -4683,7 +4747,7 @@ export class Chart {
       this._stopZoomGlide();
       this._beginAutoscaleMotion();
       const before = ts.visibleRange();
-      ts.setRightOffset(ts.rightOffset + bars);
+      this._mutateTimeScale(() => ts.setRightOffset(ts.rightOffset + bars));
       this._emitViewportIfMoved(before);
       return true;
     };
@@ -4691,7 +4755,7 @@ export class Chart {
       this._stopZoomGlide();
       this._beginAutoscaleMotion();
       const before = ts.visibleRange();
-      ts.zoomAtX(this._width / 2, factor);
+      this._mutateTimeScale(() => ts.zoomAtX(this._width / 2, factor));
       this._emitViewportIfMoved(before);
       return true;
     };
@@ -4878,7 +4942,7 @@ export class Chart {
       const delta = dist - lastDist;
       lastDist = dist;
       this._beginAutoscaleMotion();
-      this._timeScale.setRightOffset(this._timeScale.rightOffset - delta / this._timeScale.barSpacing);
+      this._mutateTimeScale(() => this._timeScale.setRightOffset(this._timeScale.rightOffset - delta / this._timeScale.barSpacing));
       this._maybeLoadHistory();
       this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
       // The glide is a pan like any other and has to say so. Without this the
@@ -4917,6 +4981,7 @@ export class Chart {
 
   public destroy(): void {
     if (this._destroyed) return; // idempotent: a second call must not re-emit
+    this._timeScale.setChangeHandler(null);
     this._loop.stop();
     if (this._remeasureHandle !== null) {
       this._raf.cancel(this._remeasureHandle);

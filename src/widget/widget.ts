@@ -159,7 +159,7 @@ export interface Widget {
   readonly root: HTMLElement;
   /** What every mounted piece was handed; a host mounting its own panel wants the same. */
   readonly context: WidgetContext;
-  /** The primary series, replaced by `setChartType`. */
+  /** The primary series; its handle stays stable across chart-type changes. */
   readonly series: SeriesApi;
   symbol(): string;
   exchange(): string;
@@ -168,6 +168,7 @@ export interface Widget {
   theme(): WidgetThemeName;
   setSymbol(symbol: string, exchange?: string): void;
   setInterval(code: string): void;
+  /** Select a renderer while retaining series state. Transform data remains host-owned. */
   setChartType(id: string): void;
   setTheme(theme: WidgetThemeName | ChartTheme): void;
   /** Open the settings dialog. False when the dialog tier has not registered one. */
@@ -313,7 +314,7 @@ class WidgetImpl implements Widget {
   public readonly alerts: AlertController;
   public readonly root: HTMLElement;
   public readonly context: WidgetContext;
-  private _series: SeriesApi;
+  private readonly _series: SeriesApi;
 
   private readonly _doc: Document;
   private readonly _opts: WidgetOptions;
@@ -336,6 +337,7 @@ class WidgetImpl implements Widget {
   private _exchange: string;
   private _interval: string;
   private _chartType: string;
+  private _chartTypeRequest = 0;
   private _themeName: WidgetThemeName;
   private _chartTheme: ChartTheme;
 
@@ -523,7 +525,7 @@ class WidgetImpl implements Widget {
         intervals: this._intervals,
         indicators: options.indicators,
         search: options.symbolSearch,
-        state: () => ({ symbol: this._symbol, exchange: this._exchange, interval: this._interval, chartType: this._chartType, theme: this._themeName }),
+        state: () => ({ symbol: this._symbol, exchange: this._exchange, interval: this._interval, chartType: this.chartType(), theme: this._themeName }),
         onSymbol: (s, ex) => this.setSymbol(s, ex),
         onInterval: (code) => this.setInterval(code),
         onChartType: (id) => this.setChartType(id),
@@ -547,7 +549,7 @@ class WidgetImpl implements Widget {
       tools: typeof options.rail === 'object' ? options.rail.tools : undefined,
       indicators: options.indicators !== false,
       search: options.symbolSearch,
-      state: () => ({ symbol: this._symbol, exchange: this._exchange, interval: this._interval, chartType: this._chartType, theme: this._themeName }),
+      state: () => ({ symbol: this._symbol, exchange: this._exchange, interval: this._interval, chartType: this.chartType(), theme: this._themeName }),
       onSymbol: (symbol, exchange) => this.setSymbol(symbol, exchange),
       onInterval: (code) => this.setInterval(code),
       onChartType: (id) => this.setChartType(id),
@@ -608,7 +610,7 @@ class WidgetImpl implements Widget {
   public symbol(): string { return this._symbol; }
   public exchange(): string { return this._exchange; }
   public interval(): string { return this._interval; }
-  public chartType(): string { return this._chartType; }
+  public chartType(): string { return this.chart.seriesType(this._series) ?? this._chartType; }
   public theme(): WidgetThemeName { return this._themeName; }
   /** The engine palette in force, for the context's `chartTheme` getter. */
   public chartThemeInUse(): ChartTheme { return this._chartTheme; }
@@ -667,15 +669,10 @@ class WidgetImpl implements Widget {
 
   public setChartType(id: string): void {
     if (!registeredChartTypes().includes(id)) throw new Error(`openalgo-charts widget: "${id}" is not a registered chart type`);
-    if (id === this._chartType) return;
-    const data = this._series.getData();
-    this._series.remove();
-    this._series = this.chart.addSeries(id as SeriesType);
-    if (data.length > 0) this._series.setData(data);
-    this._chartType = id;
-    this._topbar?.refresh();
-    this._mobile?.refresh();
-    this._statusline?.refresh();
+    if (id === this.chartType()) return;
+    const request = ++this._chartTypeRequest;
+    if (!this.chart.setSeriesType(this._series, id as SeriesType)) return;
+    if (request !== this._chartTypeRequest || this.chartType() !== id) return;
     this._scheduleSave();
     this._bus.emit('layout', { reason: 'chartType', chartType: id });
   }
@@ -809,7 +806,7 @@ class WidgetImpl implements Widget {
       symbol: this._symbol,
       exchange: this._exchange,
       interval: this._interval,
-      chartType: this._chartType,
+      chartType: this.chartType(),
       theme: this._themeName,
       chart: this.chart.getState(),
       rail: this._rail?.prefs() ?? null,
@@ -859,7 +856,7 @@ class WidgetImpl implements Widget {
     }
     this._rail?.refresh();
     this._statusline?.refresh();
-    this._bus.emit('layout', { reason: 'restore', chartType: this._chartType });
+    this._bus.emit('layout', { reason: 'restore', chartType: this.chartType() });
     this._scheduleSave();
     return chart === undefined ? { applied: true } : { applied: true, chart };
   }
@@ -1017,7 +1014,16 @@ class WidgetImpl implements Widget {
   private _followChart(): void {
     const chartEvents = ['paneAdded', 'paneResized', 'paneMoved', 'paneMaximized', 'paneRemoved', 'indicatorRemoved', 'indicatorSettings', 'priceAxisMoved', 'objects:change'];
     for (const ev of chartEvents) {
-      this._cleanups.push(this.chart.on(ev, () => { this._bus.emit('layout', { reason: ev }); this._scheduleSave(); }));
+      this._cleanups.push(this.chart.on(ev, () => {
+        if (ev === 'objects:change' && this.chartType() !== this._chartType) {
+          this._chartType = this.chartType();
+          this._topbar?.refresh();
+          this._mobile?.refresh();
+          this._statusline?.refresh();
+        }
+        this._bus.emit('layout', { reason: ev });
+        this._scheduleSave();
+      }));
     }
     for (const ev of ['draw:add', 'draw:remove', 'draw:update', 'draw:paste', 'draw:cut',
       'alert:created', 'alert:updated', 'alert:removed', 'alert:triggered', 'alert:expired', 'alerts:restored', 'alerts:checkpoint']) {

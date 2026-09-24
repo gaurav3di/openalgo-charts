@@ -1279,6 +1279,43 @@ session open the way an exchange cuts hourly bars (a 30-minute bucket on a 09:15
 09:15 to 09:45, not 09:00 to 09:30). A tick or volume interval, a negative `offset` and an
 unreadable `session` throw `IndicatorInputError`.
 
+### Calculate on requested bars before alignment
+
+Use `securityExpression` when the calculation itself needs the requested
+timeframe. It aggregates bars first, calculates there, then aligns the named
+columns back to the chart. An average of already aligned `securitySeries` values
+counts repeated values as extra observations.
+
+```ts
+import { securityExpression, sma, nulls } from 'openalgo-charts/indicators';
+
+calc: (bars, settings) => securityExpression(bars, '1h', requested => ({
+  mean: nulls(sma(requested.map(bar => bar.close), 20)),
+}), { timezone: String(settings.timezone), session: '0915-1530' })
+```
+
+`SecurityExpressionOptions` accepts `timezone`, `session` and `mode`:
+
+| Mode | Result on the chart |
+| --- | --- |
+| `confirmed` (default) | Previous observed bucket's result, held from the next bucket's first bar. |
+| `developing` | Current partial bucket's result, recalculated for every source prefix. |
+| `lookahead` | Current bucket's final result on its earlier bars too. Uses future observations in historical values. |
+
+The callback must be pure and causal. It receives frozen copies and returns named
+arrays, one result per requested bar. Confirmed and lookahead modes evaluate the
+complete folded history once, so causal indexing remains the callback's
+responsibility. Developing mode exposes no later source bars and calls the
+expression once per source bar; its column names must remain stable.
+Non-finite results become null. Empty source history returns an empty object
+without evaluating. Timestamps must be finite and strictly increasing.
+
+Source bars must be at the requested interval or finer. This helper uses supplied
+data only. It does not fetch other symbols or reconstruct lower-timeframe bars.
+Missing buckets are absent and the last bucket is never confirmed by the clock.
+Session anchors follow local wall-clock time across offset changes. Count-driven
+intervals are rejected. Try the [executable example](/examples#calculate-an-hourly-average-on-minute-bars).
+
 ## Calculation helpers
 
 The calculation helpers used by the built-ins are exported, so your own descriptor
@@ -1300,14 +1337,14 @@ package root) is how you get the input array out of the bars in the first place.
 
 | Helper | Signature | Notes |
 |---|---|---|
-| `sma` | `(values, period)` | First value at index `period - 1`. A non-finite input does not poison the running sum. |
-| `wma` | `(values, period)` | Linear weights; the most recent bar carries weight `period`. |
-| `rma` | `(values, period)` | Wilder smoothing, seeded with the SMA. The basis of RSI, ATR and ADX. |
-| `smaSeededEma` | `(values, period)` | EMA seeded with the SMA of the first `period` values, `NaN` before that. The base bundle's `ema` seeds from `values[0]` and emits from index 0 to match `openalgo.ta`, so the two disagree for roughly the first `period` bars and converge after. Use this one to reproduce a reference plot. |
-| `stdev` | `(values, period)` | Rolling population standard deviation. |
-| `dev` | `(values, period)` | Mean **absolute** deviation from the SMA, not a standard deviation. CCI's 0.015 constant is calibrated against this one. |
-| `highest` / `lowest` | `(values, period)` | Rolling maximum / minimum. |
-| `highestBars` / `lowestBars` | `(values, period)` | The **offset** to the extreme bar: `0` for the current bar, `-(period - 1)` for the oldest. Ties resolve to the more recent bar. Aroon is built entirely out of these. |
+| `sma` | `(values, period, options?)` | First value at index `period - 1`. A non-finite input does not poison the running sum. |
+| `wma` | `(values, period, options?)` | Linear weights; the most recent observation carries weight `period`. |
+| `rma` | `(values, period, options?)` | Wilder smoothing, seeded with the SMA. The basis of RSI, ATR and ADX. |
+| `smaSeededEma` | `(values, period, options?)` | EMA seeded with an SMA, emitting NaN before the seed. The base bundle's `ema` seeds from the first value and emits from index 0. Choose the initialization required by your calculation. |
+| `stdev` | `(values, period, options?)` | Rolling population standard deviation. |
+| `dev` | `(values, period, options?)` | Mean absolute deviation from the SMA. |
+| `highest` / `lowest` | `(values, period, options?)` | Rolling maximum / minimum. |
+| `highestBars` / `lowestBars` | `(values, period, options?)` | Offset to the extreme bar: zero for current, negative into history. Ties choose the most recent bar. Skip mode retains original indices across gaps. |
 | `change` | `(values, n = 1)` | `values[i] - values[i - n]`. |
 | `roc` | `(values, n)` | `100 * (values[i] - values[i - n]) / values[i - n]`. |
 | `rollingSum` | `(values, period)` | Rolling sum over the window. |
@@ -1319,7 +1356,7 @@ package root) is how you get the input array out of the bars in the first place.
 | `stoch` | `(source, high, low, period)` | Three independent series, which is why it does not take bars: Stochastic RSI passes the RSI in for all three. |
 | `cci` | `(values, period)` | `(value - sma) / (0.015 * dev)`. |
 | `correlation` | `(a, b, period)` | Pearson correlation over the window. |
-| `percentRank` | `(values, period)` | Percentage of the **previous** `period` values at or below the current one. The current bar is the subject rather than part of the window, so the first answer lands at index `period`. |
+| `percentRank` | `(values, period, options?)` | Percentage of the previous `period` observations at or below the current one, excluding the current subject from the window. |
 | `percentileNearestRank` | `(values, period, percentage)` | Nearest-rank, so the result is an actual member of the window rather than an interpolation between two. Visible on a window as short as 3. |
 | `pivotHigh` / `pivotLow` | `(values, left, right)` | Confirmed `right` bars late: the answer lands on the confirming bar and refers to the value `right` bars back. Strict on both sides, so a tie is not a pivot. |
 | `barsSince` | `(cond: boolean[])` | Bars elapsed since `cond` was last true, `NaN` before the first. |
@@ -1328,6 +1365,28 @@ package root) is how you get the input array out of the bars in the first place.
 
 `ema`, `rsi`, `atr`, `trueRange` and `supertrend` are **not** here: they ship in the base
 bundle and the tier imports them from it, so they come from `openalgo-charts`.
+
+### Missing observations
+
+The existing `sma`, `wma`, `rma`, `smaSeededEma`, `stdev`, `dev`, `highest`,
+`lowest`, `highestBars`, `lowestBars` and `percentRank` helpers accept an optional
+final `NumericalWindowOptions` argument. Omitting it preserves existing behavior.
+Passing `{}` selects `missing: 'propagate'`; passing `{ missing: 'skip' }` selects
+finite-observation windows.
+
+With options, NaN and infinities are missing. Propagation requires a complete
+chronological finite window. Skip collects `period` finite observations and holds
+numeric window values across gaps. Extreme-bar offsets retain original indices,
+age across missing bars and choose the latest tie. Rank excludes the current
+observation and returns NaN when that observation is missing. Recursive smoothing
+resets and reseeds after a propagated gap, while skip retains its previous state.
+Option-path periods must be positive safe integers; invalid periods throw
+`RangeError` and invalid policies throw `TypeError`.
+
+```ts
+sma([1, 3, NaN, 5], 2, { missing: 'skip' }); // [NaN, 2, 2, 4]
+highestBars([5, 1, NaN, NaN], 2, { missing: 'skip' }); // [NaN, -1, -2, -3]
+```
 
 ### Statistics and conditions
 

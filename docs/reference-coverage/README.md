@@ -11,6 +11,10 @@ The [design](design.md) sets the boundaries and the [plan](plan.md) lists the re
 - Fill descriptors support per-bar colors and static or computed gradients across a whole band.
 - Indicators can own multiple named tables, including price-pane overlays. Their resources follow visibility, updates, pane moves and removal.
 - Fourteen numerical helpers add statistics, running extrema and crossing/rising/falling predicates with explicit missing-observation rules.
+- Eleven established numerical helpers accept optional missing-value policies while retaining omitted-option behavior. The new paths preserve finite extreme averages and deviations.
+- `securityExpression` calculates on aggregate timeframe bars before aligning results, with confirmed, developing and explicit lookahead modes. Session anchors use local wall-clock time across offset changes.
+- Direct time-scale navigation repaints and publishes settled range events to linked charts. Explicit same-range requests cancel pending motion, and reentrant restore callbacks receive a final repaint.
+- Native series renderer changes and widget chart-type changes retain series handles, data, styles, price scales and marker bindings. Live type lookup keeps host controls and saved state synchronized.
 - Chart and workspace snapshots preserve existing secondary scales, precision, fixed/manual ranges and ratio locks. Symbol changes clear view ranges from every scale.
 - Known fixed intervals confirm the newest bar at its recorded opening plus its duration, including sparse data and weekend gaps.
 - Registered calendar intervals use the next boundary in their configured timezone.
@@ -21,7 +25,7 @@ The [design](design.md) sets the boundaries and the [plan](plan.md) lists the re
 
 ## Verification
 
-The confirmation regression suite has 12 cases; nine reproduced failures before the fix. Four compiled-program integration cases passed against the pinned engine revision `833ce15f7ec1bb0ab8ae203b800c8858ce3b4339`. These checks cover specific behaviors, not every capability.
+The confirmation regression suite has 12 cases; nine reproduced failures before the fix. Five compiled-program integration cases passed against the pinned engine revision `833ce15f7ec1bb0ab8ae203b800c8858ce3b4339`, including native timeframe composition and live updates. These checks cover specific behaviors, not every capability.
 
 Run against a built script-engine checkout:
 
@@ -31,7 +35,7 @@ npm run test:script-engine -- D:/path/to/script-engine
 
 The command fails if the checkout is missing, unbuilt, incompatible or fails the tests. It adds no runtime dependency and does not modify the supplied checkout.
 
-The unchanged chart baseline `a1828e9ac948d2f9aebe0657f421987a85d6f2a7` measured 55.58 KiB for the chart-only build. The confirmation fix measured 56.09 KiB. The 56.25 KiB budget covers the interval and calendar logic; optional tiers must still be removed by tree shaking.
+The unchanged chart baseline `a1828e9ac948d2f9aebe0657f421987a85d6f2a7` measured 55.58 KiB for the chart-only build. The first confirmation build measured 56.09 KiB and used a 56.25 KiB budget. Current measurements are recorded in `progress.json`; optional tiers must still be removed by tree shaking.
 
 ## Remaining work
 

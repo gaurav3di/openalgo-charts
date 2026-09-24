@@ -7,10 +7,194 @@
  *
  * `ema`, `rsi`, `atr`, `trueRange`, and `supertrend` are NOT re-implemented
  * here — they ship in the base bundle and the tier imports them from it.
+ *
+ * For helpers accepting missing-value options, omitted options keep the
+ * established calculation. Supplied options treat NaN and infinities as
+ * missing. An empty options object selects chronological propagation.
  */
 
-/** Simple moving average. First value lands at index `period - 1`. */
-export function sma(values: readonly number[], period: number): number[] {
+import type { NumericalWindowOptions } from './statistics';
+
+interface Observation { value: number; index: number }
+
+function checkedPolicy(period: number, options: NumericalWindowOptions): 'skip' | 'propagate' {
+  if (!Number.isSafeInteger(period) || period <= 0) {
+    throw new RangeError('Missing-value period must be a positive safe integer');
+  }
+  if (options === null || typeof options !== 'object' || Array.isArray(options)) {
+    throw new TypeError('Missing-value options must be an object');
+  }
+  const policy = options.missing === undefined ? 'propagate' : options.missing;
+  if (policy !== 'skip' && policy !== 'propagate') {
+    throw new TypeError('Missing-value policy must be skip or propagate');
+  }
+  return policy;
+}
+
+/**
+ * Opt-in windows require positive safe-integer periods and finite observations.
+ * Keeping original indices lets skipped gaps age an extreme's bar offset.
+ */
+function observationWindows(
+  values: readonly number[], period: number, options: NumericalWindowOptions,
+  evaluate: (window: readonly Observation[], index: number) => number,
+  previousOnly = false,
+): number[] {
+  const policy = checkedPolicy(period, options);
+  const out = new Array<number>(values.length).fill(NaN);
+  const window: Observation[] = [];
+  let missing = 0;
+  for (let i = 0; i < values.length; i++) {
+    const value = values[i];
+    const finite = Number.isFinite(value);
+    if (previousOnly && finite && window.length === period && missing === 0) out[i] = evaluate(window, i);
+    if (policy === 'propagate' || finite) {
+      window.push({ value, index: i });
+      if (!finite) missing++;
+      if (window.length > period && !Number.isFinite(window.shift()!.value)) missing--;
+    }
+    if (!previousOnly && window.length === period && missing === 0) out[i] = evaluate(window, i);
+  }
+  return out;
+}
+
+/** Exact integer units of 2^-1074 retain residuals after overflowing sums. */
+function exactFiniteAverage(values: readonly number[], weights?: readonly number[]): number {
+  const bits = new DataView(new ArrayBuffer(8));
+  const fractionMask = (1n << 52n) - 1n;
+  let numerator = 0n;
+  let denominator = 0n;
+  for (let i = 0; i < values.length; i++) {
+    const weight = BigInt(weights?.[i] ?? 1);
+    if (weight === 0n) continue;
+    bits.setFloat64(0, values[i]);
+    const encoded = bits.getBigUint64(0);
+    const exponent = Number((encoded >> 52n) & 0x7ffn);
+    const fraction = encoded & fractionMask;
+    const magnitude = exponent === 0 ? fraction : ((1n << 52n) | fraction) << BigInt(exponent - 1);
+    numerator += (encoded >> 63n ? -magnitude : magnitude) * weight;
+    denominator += weight;
+  }
+  return roundedBinaryAverage(numerator, denominator);
+}
+
+// Static file tracers can mistake accumulator initializers for final values.
+// Parameters keep them from evaluating an unexecuted zero-denominator quotient.
+function roundedBinaryAverage(numerator: bigint, denominator: bigint): number {
+  const negative = numerator < 0n;
+  const magnitude = negative ? -numerator : numerator;
+  const wholeUnits = magnitude / denominator;
+  const shift = Math.max(0, wholeUnits.toString(2).length - 53);
+  const divisor = denominator << BigInt(shift);
+  let significand = magnitude / divisor;
+  const remainder = magnitude % divisor;
+  if (2n * remainder > divisor || (2n * remainder === divisor && (significand & 1n) !== 0n)) {
+    significand++;
+  }
+  const result = Number(significand) * 2 ** (shift - 1074);
+  return negative ? -result : result;
+}
+
+/** Nonnegative integer weights allow division after a compensated sum. */
+function finiteAverage(values: readonly number[], weights?: readonly number[]): number {
+  let sum = 0;
+  let correction = 0;
+  let denominator = 0;
+  let minimum = Infinity;
+  let maximum = -Infinity;
+  for (let i = 0; i < values.length; i++) {
+    const weight = weights?.[i] ?? 1;
+    if (weight === 0) continue;
+    minimum = Math.min(minimum, values[i]);
+    maximum = Math.max(maximum, values[i]);
+    denominator += weight;
+    const term = values[i] * weight;
+    const next = sum + term;
+    correction += Math.abs(sum) >= Math.abs(term) ? (sum - next) + term : (term - next) + sum;
+    sum = next;
+  }
+  if (minimum === maximum) return minimum;
+  const numerator = sum + correction;
+  const average = Number.isFinite(numerator) && Number.isSafeInteger(denominator)
+    ? numerator / denominator : exactFiniteAverage(values, weights);
+  // A convex average is bounded by its participating observations.
+  return Math.max(minimum, Math.min(maximum, average));
+}
+
+function observationMean(window: readonly Observation[]): number {
+  return finiteAverage(window.map((item) => item.value));
+}
+
+/** Center before scaling to retain spreads near a large common offset. */
+function observationDeviation(window: readonly Observation[], squared: boolean): number {
+  const origin = window[0].value;
+  let maximum = 0;
+  let spread = 0;
+  let deltas = window.map(({ value }) => {
+    maximum = Math.max(maximum, Math.abs(value));
+    const delta = value - origin;
+    spread = Math.max(spread, Math.abs(delta));
+    return delta;
+  });
+  if (spread === 0) return 0;
+  // Binary scaling also preserves subnormal inputs before final rounding.
+  const scale = 2 ** Math.min(1023, Math.floor(Math.log2(Number.isFinite(spread) ? spread : maximum)));
+  deltas = Number.isFinite(spread)
+    ? deltas.map((delta) => delta / scale)
+    : window.map(({ value }) => value / scale - origin / scale);
+  const center = finiteAverage(deltas);
+  const meanDeviation = finiteAverage(deltas.map((delta) => {
+    const distance = Math.abs(delta - center);
+    return squared ? distance * distance : distance;
+  }));
+  // Both population deviations are bounded by the largest absolute input.
+  return Math.min(maximum, (squared ? Math.sqrt(meanDeviation) : meanDeviation) * scale);
+}
+
+function observationExtreme(window: readonly Observation[], high: boolean): Observation {
+  let best = window[0];
+  for (let i = 1; i < window.length; i++) {
+    const item = window[i];
+    if (high ? item.value >= best.value : item.value <= best.value) best = item;
+  }
+  return best;
+}
+
+function observedSmoothing(
+  values: readonly number[], period: number, options: NumericalWindowOptions, currentWeight: number,
+): number[] {
+  const policy = checkedPolicy(period, options);
+  const out = new Array<number>(values.length).fill(NaN);
+  let count = 0;
+  const seed: number[] = [];
+  let previous = NaN;
+  for (let i = 0; i < values.length; i++) {
+    const value = values[i];
+    if (!Number.isFinite(value)) {
+      if (policy === 'propagate') { count = 0; seed.length = 0; previous = NaN; }
+      else if (count === period) out[i] = previous;
+      continue;
+    }
+    if (count < period) {
+      seed.push(value);
+      if (++count < period) continue;
+      previous = finiteAverage(seed);
+      seed.length = 0;
+    } else previous = finiteAverage([previous, value], [period - 1, currentWeight]);
+    out[i] = previous;
+  }
+  return out;
+}
+
+/**
+ * Simple moving average. Without options the legacy calculation is unchanged.
+ * Supplied `skip` collects period finite observations and holds across gaps;
+ * `propagate` (also the default for {}) requires a complete chronological
+ * window. Warmup is NaN. Option-path periods must be positive safe integers;
+ * invalid periods throw RangeError and malformed options throw TypeError.
+ */
+export function sma(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
+  if (options !== undefined) return observationWindows(values, period, options, observationMean);
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0 || n < period) return out;
@@ -35,8 +219,17 @@ export function sma(values: readonly number[], period: number): number[] {
   return out;
 }
 
-/** Linearly weighted moving average (most recent bar carries weight `period`). */
-export function wma(values: readonly number[], period: number): number[] {
+/**
+ * Linearly weighted average, newest observation carrying weight period.
+ * Omitted options preserve the legacy result. Supplied `skip` weights period
+ * finite observations and holds across gaps; `propagate` requires a full
+ * chronological window. Warmup is NaN. The option path validates a positive
+ * safe-integer period and a missing policy, throwing RangeError or TypeError.
+ */
+export function wma(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
+  if (options !== undefined) return observationWindows(values, period, options, (window) => {
+    return finiteAverage(window.map((item) => item.value), window.map((_, i) => i + 1));
+  });
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0 || n < period) return out;
@@ -52,8 +245,14 @@ export function wma(values: readonly number[], period: number): number[] {
 /**
  * Wilder's smoothing (RMA): seed with the SMA of the first `period` values,
  * then `(prev * (period - 1) + v) / period`. The basis of RSI, ATR, and ADX.
+ * Omitted options preserve legacy behavior. Supplied `skip` seeds from period
+ * finite observations and holds state across gaps. `propagate` clears state on
+ * a missing input and reseeds after period consecutive finite observations.
+ * Warmup is NaN. The option path requires a positive safe-integer period and
+ * valid policy, throwing RangeError or TypeError respectively.
  */
-export function rma(values: readonly number[], period: number): number[] {
+export function rma(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
+  if (options !== undefined) return observedSmoothing(values, period, options, 1);
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0 || n < period) return out;
@@ -68,8 +267,16 @@ export function rma(values: readonly number[], period: number): number[] {
   return out;
 }
 
-/** Rolling population standard deviation over `period`. */
-export function stdev(values: readonly number[], period: number): number[] {
+/**
+ * Population standard deviation. Omitted options preserve legacy behavior.
+ * Supplied `skip` uses period finite observations and holds across gaps;
+ * `propagate` requires a full chronological window. Ties retain multiplicity;
+ * warmup is NaN. Invalid option-path periods throw RangeError, malformed
+ * options TypeError. A period must be a positive safe integer.
+ */
+export function stdev(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
+  if (options !== undefined) return observationWindows(values, period, options,
+    (window) => observationDeviation(window, true));
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0 || n < period) return out;
@@ -86,8 +293,16 @@ export function stdev(values: readonly number[], period: number): number[] {
   return out;
 }
 
-/** Rolling maximum over `period` bars. */
-export function highest(values: readonly number[], period: number): number[] {
+/**
+ * Rolling maximum. Omitted options preserve legacy warmup and gap behavior.
+ * Supplied `skip` searches period finite observations and holds across gaps;
+ * `propagate` requires period chronological finite bars. Insufficient or
+ * all-missing history is NaN. Invalid option-path periods throw RangeError;
+ * malformed policies throw TypeError. Periods must be positive safe integers.
+ */
+export function highest(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
+  if (options !== undefined) return observationWindows(values, period, options,
+    (window) => observationExtreme(window, true).value);
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0) return out;
@@ -99,8 +314,16 @@ export function highest(values: readonly number[], period: number): number[] {
   return out;
 }
 
-/** Rolling minimum over `period` bars. */
-export function lowest(values: readonly number[], period: number): number[] {
+/**
+ * Rolling minimum. Omitted options preserve legacy warmup and gap behavior.
+ * Supplied `skip` searches period finite observations and holds across gaps;
+ * `propagate` requires period chronological finite bars. Insufficient or
+ * all-missing history is NaN. Invalid option-path periods throw RangeError;
+ * malformed policies throw TypeError. Periods must be positive safe integers.
+ */
+export function lowest(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
+  if (options !== undefined) return observationWindows(values, period, options,
+    (window) => observationExtreme(window, false).value);
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0) return out;
@@ -129,12 +352,16 @@ export function nulls(values: readonly number[]): (number | null)[] {
 // documented behaviour (`ema` matches `openalgo.ta`, not the reference).
 
 /**
- * the reference `ema`: seeded with the **SMA of the first `period` values**, NaN
- * before that. The base bundle's `ema` seeds from `values[0]` and emits from
- * index 0 instead, so the two disagree for roughly the first `period` bars and
- * converge after. Anything reproducing a reference platform plot needs this one.
+ * EMA seeded with an SMA, then smoothed with alpha=2/(period+1). Omitted
+ * options preserve the legacy seed and missing-value behavior. Supplied
+ * `skip` seeds from period finite observations and holds state across gaps.
+ * `propagate` clears state on any missing input and reseeds with period
+ * consecutive finite observations. Warmup is NaN. Invalid option-path
+ * periods throw RangeError; malformed options throw TypeError. Periods must
+ * be positive safe integers.
  */
-export function smaSeededEma(values: readonly number[], period: number): number[] {
+export function smaSeededEma(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
+  if (options !== undefined) return observedSmoothing(values, period, options, 2);
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0 || n < period) return out;
@@ -171,10 +398,15 @@ export function roc(values: readonly number[], n: number): number[] {
 }
 
 /**
- * the reference `dev`: mean **absolute** deviation from the SMA over `period` — not
- * a standard deviation. CCI's 0.015 constant is calibrated against this.
+ * Mean absolute deviation from the average. Omitted options preserve legacy
+ * behavior. Supplied `skip` uses period finite observations and holds across
+ * gaps; `propagate` requires a full chronological window. Ties retain their
+ * multiplicity and warmup is NaN. Invalid option-path periods throw RangeError,
+ * malformed options TypeError. Periods must be positive safe integers.
  */
-export function dev(values: readonly number[], period: number): number[] {
+export function dev(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
+  if (options !== undefined) return observationWindows(values, period, options,
+    (window) => observationDeviation(window, false));
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0 || n < period) return out;
@@ -188,12 +420,20 @@ export function dev(values: readonly number[], period: number): number[] {
 }
 
 /**
- * the reference `percentrank`: the percentage of the **previous** `period` values
- * that are less than or equal to the current one. The current bar is the
- * subject of the comparison, not part of the window, so the first answer lands
- * at index `period`.
+ * Percentage of period previous values less than or equal to the current
+ * subject, excluding the subject itself. Omitted options preserve legacy
+ * behavior. Supplied `skip` collects previous finite observations; `propagate`
+ * requires a full previous chronological window. A missing subject or
+ * insufficient history produces NaN under either policy. Equality counts.
+ * Invalid option-path periods throw RangeError; malformed policies throw
+ * TypeError. Periods must be positive safe integers.
  */
-export function percentRank(values: readonly number[], period: number): number[] {
+export function percentRank(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
+  if (options !== undefined) return observationWindows(values, period, options, (window, index) => {
+    let count = 0;
+    for (const item of window) if (item.value <= values[index]) count++;
+    return count * 100 / period;
+  }, true);
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0) return out;
@@ -251,15 +491,32 @@ export function vwma(
 }
 
 /**
- * the reference `highestbars` / `lowestbars`: the **offset** to the extreme bar
- * in the window, `0` for the current bar and `-(period - 1)` for the oldest.
- * Aroon is built entirely out of these, and the sign convention is why.
+ * Highest-value bar offset, zero for current and negative into history; ties
+ * choose the latest bar. Omitted options preserve legacy behavior. Supplied
+ * `skip` searches period finite observations and retains original bar indices,
+ * so an offset can extend beyond period-1 and ages across missing current bars.
+ * `propagate` requires period chronological finite bars. Warmup and all-missing
+ * history are NaN. Invalid option-path periods throw RangeError; malformed
+ * policies throw TypeError. Periods must be positive safe integers.
  */
-export function highestBars(values: readonly number[], period: number): number[] {
+export function highestBars(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
+  if (options !== undefined) return observationWindows(values, period, options,
+    (window, index) => observationExtreme(window, true).index - index);
   return extremeBars(values, period, true);
 }
 
-export function lowestBars(values: readonly number[], period: number): number[] {
+/**
+ * Lowest-value bar offset, zero for current and negative into history; ties
+ * choose the latest bar. Omitted options preserve legacy behavior. Supplied
+ * `skip` searches period finite observations using their original indices;
+ * offsets age across gaps. `propagate` requires a full chronological window.
+ * Warmup and all-missing history are NaN. Invalid option-path periods throw
+ * RangeError; malformed policies throw TypeError. Periods must be positive
+ * safe integers.
+ */
+export function lowestBars(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
+  if (options !== undefined) return observationWindows(values, period, options,
+    (window, index) => observationExtreme(window, false).index - index);
   return extremeBars(values, period, false);
 }
 
