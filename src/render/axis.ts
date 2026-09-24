@@ -608,6 +608,39 @@ export function lastPriceTagHeight(dpr: number, countdown = false): number {
   return (countdown ? AXIS_TAG_HEIGHT_COUNTDOWN : AXIS_TAG_HEIGHT) * dpr;
 }
 
+/** Shared placement keeps left-axis collision reservations aligned with their tags. */
+export function axisTagY(y: number, plotHeight: number, tagHeight: number, side: 'left' | 'right'): number | null {
+  if (!Number.isFinite(y) || y < 0 || y > plotHeight) return null;
+  if (side === 'right') return y;
+  if (plotHeight < tagHeight) return null;
+  return Math.max(tagHeight / 2, Math.min(plotHeight - tagHeight / 2, y));
+}
+
+/** Fit left labels inside their existing column without changing right-axis geometry. */
+function fillLeftTag(
+  ctx: CanvasRenderingContext2D, y: number, height: number,
+  rows: readonly { text: string; font: string; offset: number }[],
+  layout: PlotLayout, dpr: number, fill: string, text: string,
+): void {
+  const available = Math.round(layout.plotLeft * dpr) - 1;
+  if (!(available > 0)) return;
+  const pad = Math.min(6 * dpr, available / 4);
+  const widths = rows.map(row => { ctx.font = row.font; return ctx.measureText(row.text).width; });
+  const width = Math.min(available, Math.max(...widths) + pad * 2);
+  const x = -1 - width;
+  ctx.fillStyle = fill;
+  ctx.fillRect(x, y - height / 2, width, height);
+  ctx.fillStyle = text;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const size = Number(/(^|[^\d.])(\d{1,5}(?:\.\d{1,4})?)px/.exec(row.font)?.[2]);
+    const heightFactor = size > 0 ? (height / rows.length - 2 * dpr) / size : 1;
+    const widthFactor = widths[i] > 0 ? (width - pad * 2) / widths[i] : 1;
+    ctx.font = scaleFont(row.font, Math.min(1, widthFactor, heightFactor));
+    ctx.fillText(row.text, x + pad, y + row.offset);
+  }
+}
+
 /**
  * The current value of one plotted series, as a tag in the price-axis strip.
  *
@@ -645,16 +678,22 @@ export function drawSeriesValueTag(
   layout: PlotLayout,
   dpr: number,
   style: AxisStyle = DEFAULT_AXIS_STYLE,
+  side: 'left' | 'right' = 'right',
 ): void {
   if (!Number.isFinite(price)) return;
-  const y = Math.round(priceScale.priceToY(price) * dpr);
-  if (y < 0 || y > layout.plotHeight * dpr) return;
+  const y = axisTagY(Math.round(priceScale.priceToY(price) * dpr), layout.plotHeight * dpr, lastPriceTagHeight(dpr), side);
+  if (y === null) return;
   ctx.save();
   ctx.font = scaleFont(style.font, dpr);
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  fillTag(ctx, Math.round(layout.plotWidth * dpr), y, lastPriceTagHeight(dpr), 6 * dpr,
-    priceScale.format(price), fill, contrastText(fill));
+  if (side === 'left') {
+    fillLeftTag(ctx, y, lastPriceTagHeight(dpr), [{ text: priceScale.format(price), font: ctx.font, offset: 0 }],
+      layout, dpr, fill, contrastText(fill));
+  } else {
+    fillTag(ctx, Math.round(layout.plotWidth * dpr), y, lastPriceTagHeight(dpr), 6 * dpr,
+      priceScale.format(price), fill, contrastText(fill));
+  }
   ctx.restore();
 }
 
@@ -670,10 +709,11 @@ export function drawLastPriceLabel(
   showLine = true,
   showTag = true,
   countdown?: BarCountdownOptions,
+  side: 'left' | 'right' = 'right',
 ): void {
   if (!showLine && !showTag) return;
   const y = Math.round(priceScale.priceToY(price) * dpr);
-  if (y < 0 || y > layout.plotHeight * dpr) return;
+  if (!Number.isFinite(y) || y < 0 || y > layout.plotHeight * dpr) return;
   const color = up ? colors.up : colors.down;
   const xStart = Math.round(layout.plotWidth * dpr);
 
@@ -691,7 +731,7 @@ export function drawLastPriceLabel(
   }
 
   if (showTag) {
-    // filled price tag on the right axis
+    // The price line stays at the quoted value when an edge tag is shifted to fit.
     const label = priceScale.format(price);
     const withCountdown = countdown !== undefined && countdown.visible === true;
     const priceFont = scaleFont(style.font, dpr);
@@ -700,7 +740,17 @@ export function drawLastPriceLabel(
     const boxH = lastPriceTagHeight(dpr, withCountdown);
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    if (!withCountdown) {
+    if (side === 'left') {
+      const tagY = axisTagY(y, layout.plotHeight * dpr, boxH, side);
+      if (tagY !== null) {
+        const rows = [{ text: label, font: priceFont, offset: withCountdown ? -boxH / 4 : 0 }];
+        if (withCountdown) rows.push({
+          text: formatCountdown(barCountdownSeconds(countdown.lastBarTime, countdown.intervalSec, countdown.now())),
+          font: scaleFont(style.font, dpr * 0.9), offset: boxH / 4,
+        });
+        fillLeftTag(ctx, tagY, boxH, rows, layout, dpr, color, colors.text);
+      }
+    } else if (!withCountdown) {
       fillTag(ctx, xStart, y, boxH, padX, label, color, colors.text);
     } else {
       const clock = formatCountdown(

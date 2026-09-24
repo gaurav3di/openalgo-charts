@@ -16,6 +16,7 @@ export type TablePosition =
   | 'bottom-left' | 'bottom-center' | 'bottom-right';
 
 export interface TableCell {
+  /** Explicit newlines form a block with 1.2em line spacing. */
   text: string;
   /** Cell fill. Transparent when omitted, so the pane shows through. */
   bgColor?: string;
@@ -25,6 +26,15 @@ export interface TableCell {
   /** Overrides the table's `fontSize` for this cell, for a heading row. */
   fontSize?: number;
   bold?: boolean;
+  italic?: boolean;
+  /** CSS font-family list. Defaults to `system-ui, sans-serif`. */
+  fontFamily?: string;
+  /** Aligns the text block within the cell, with 4px edge padding. Defaults to middle. */
+  verticalAlign?: 'top' | 'middle' | 'bottom';
+  /** Positive safe integer, default 1. The top-left cell supplies a merged cell's content. */
+  colSpan?: number;
+  /** Positive safe integer, default 1. Spans stay inside the existing rectangular grid. */
+  rowSpan?: number;
 }
 
 export interface ChartTableOptions {
@@ -52,6 +62,10 @@ export interface ChartTableOptions {
   /** Grid line colour. Omit to draw no grid. */
   borderColor?: string;
   borderWidth: number;
+  /** Outer frame, independent of cell borders. Omit to draw no frame. */
+  frameColor?: string;
+  /** Outer frame width in media px. Defaults to 1 when a frame color is supplied. */
+  frameWidth?: number;
   /**
    * Table width as a percentage of the plot, 0 or omitted to size from
    * `cellWidth` instead. Column proportions are preserved, so a per-column
@@ -94,8 +108,65 @@ function columnEdges(cellWidth: number | readonly number[], cols: number): { x: 
 }
 
 /** Use the same bitmap rounding and row limit for measurement and painting. */
-function clampedFontSize(size: number, rowH: number, dpr: number): number {
-  return Math.min(Math.round(size * dpr), Math.floor(rowH * 0.62));
+function maximumFontSize(rowH: number, lineCount: number, dpr: number): number {
+  const rowMax = Math.floor(rowH * 0.62);
+  return lineCount === 1 ? rowMax
+    : Math.max(0, Math.min(rowMax, Math.floor((rowH - 2 * Math.round(4 * dpr)) / (1.2 * lineCount))));
+}
+
+function clampedFontSize(size: number, rowH: number, dpr: number, lineCount: number): number {
+  return Math.min(Math.round(size * dpr), maximumFontSize(rowH, lineCount, dpr));
+}
+
+function cellFont(cell: TableCell, size: number): string {
+  return `${cell.italic === true ? 'italic ' : ''}${cell.bold === true ? '600 ' : ''}${size}px ${cell.fontFamily ?? 'system-ui, sans-serif'}`;
+}
+
+function textLines(cell: TableCell): string[] { return cell.text.split(/\r\n|\r|\n/); }
+
+function widestLine(ctx: CanvasRenderingContext2D, lines: readonly string[]): number {
+  let widest = 0;
+  for (const line of lines) widest = Math.max(widest, ctx.measureText(line).width);
+  return widest;
+}
+
+interface PositionedCell {
+  cell: TableCell;
+  row: number;
+  col: number;
+  rowSpan: number;
+  colSpan: number;
+}
+
+/** Validate before publishing rows so a rejected merge leaves the previous grid usable. */
+function positionCells(rows: readonly (readonly TableCell[])[]): { cols: number; cells: PositionedCell[] } {
+  let cols = 0;
+  for (const row of rows) cols = Math.max(cols, row.length);
+  // Store covered intervals, not every grid slot: ragged rows can leave a
+  // large empty rectangle inside a perfectly valid merged cell.
+  const covered = new Map<number, { from: number; to: number }[]>();
+  const cells: PositionedCell[] = [];
+  for (let r = 0; r < rows.length; r++) {
+    for (let c = 0; c < rows[r].length; c++) {
+      const cell = rows[r][c];
+      const rowSpan = cell.rowSpan === undefined ? 1 : cell.rowSpan;
+      const colSpan = cell.colSpan === undefined ? 1 : cell.colSpan;
+      if (!Number.isSafeInteger(rowSpan) || rowSpan < 1 || !Number.isSafeInteger(colSpan) || colSpan < 1) {
+        throw new RangeError('Table spans must be positive safe integers');
+      }
+      if (rowSpan > rows.length - r || colSpan > cols - c) throw new RangeError('Table span exceeds the grid bounds');
+      if (rowSpan > 1 || colSpan > 1) {
+        for (let y = r; y < r + rowSpan; y++) {
+          let occupied = covered.get(y);
+          if (occupied === undefined) { occupied = []; covered.set(y, occupied); }
+          if (occupied.some(range => c < range.to && range.from < c + colSpan)) throw new RangeError('Table spans overlap');
+          occupied.push({ from: c, to: c + colSpan });
+        }
+      } else if (covered.get(r)?.some(range => range.from <= c && c < range.to)) continue;
+      cells.push({ cell, row: r, col: c, rowSpan, colSpan });
+    }
+  }
+  return { cols, cells };
 }
 
 /**
@@ -111,29 +182,37 @@ function clampedFontSize(size: number, rowH: number, dpr: number): number {
  */
 function measuredColumns(
   ctx: CanvasRenderingContext2D,
-  rows: readonly (readonly TableCell[])[],
+  cells: readonly PositionedCell[],
   cols: number,
-  rowHeights: readonly number[],
+  cellHeights: readonly number[],
   o: ChartTableOptions,
   dpr: number,
 ): number[] {
-  const widths: number[] = [];
+  const widths = Array<number>(cols).fill(MIN_AUTO_COLUMN);
   const padding = 10;
-  for (let c = 0; c < cols; c++) {
-    let widest = 0;
-    for (let r = 0; r < rows.length; r++) {
-      const cell = rows[r][c];
-      if (cell === undefined || cell.text === '') continue;
-      const declaredSize = cell.fontSize ?? o.fontSize;
-      const size = declaredSize === 'auto' ? Math.round(11 * dpr)
-        : clampedFontSize(declaredSize, rowHeights[r], dpr);
-      ctx.font = `${cell.bold === true ? '600 ' : ''}${size}px system-ui, sans-serif`;
-      const measured = ctx.measureText(cell.text).width / dpr;
-      if (measured > widest) widest = measured;
-    }
-    // An empty column still takes a column's worth of room, or the grid's
-    // shape stops matching the shape the script declared.
-    widths.push(Math.max(widest + padding, MIN_AUTO_COLUMN));
+  const widthOf = ({ cell }: PositionedCell, rowH: number): number => {
+    if (cell.text === '') return 0;
+    const lines = textLines(cell);
+    const declaredSize = cell.fontSize ?? o.fontSize;
+    const size = declaredSize === 'auto' ? Math.round(11 * dpr)
+      : clampedFontSize(declaredSize, rowH, dpr, lines.length);
+    if (size <= 0) return 0;
+    ctx.font = cellFont(cell, size);
+    return widestLine(ctx, lines) / dpr + padding;
+  };
+  for (let i = 0; i < cells.length; i++) {
+    const entry = cells[i];
+    if (entry.colSpan === 1) widths[entry.col] = Math.max(widths[entry.col], widthOf(entry, cellHeights[i]));
+  }
+  // A merged heading should enlarge only the columns it covers, after their
+  // ordinary content has established the column proportions.
+  for (let i = 0; i < cells.length; i++) {
+    const entry = cells[i];
+    if (entry.colSpan === 1) continue;
+    let current = 0;
+    for (let c = entry.col; c < entry.col + entry.colSpan; c++) current += widths[c];
+    const extra = Math.max(0, widthOf(entry, cellHeights[i]) - current) / entry.colSpan;
+    for (let c = entry.col; c < entry.col + entry.colSpan; c++) widths[c] += extra;
   }
   return widths;
 }
@@ -158,6 +237,7 @@ export function tableOrigin(
 
 export class ChartTable implements IPrimitive {
   private _rows: readonly (readonly TableCell[])[] = [];
+  private _grid: { cols: number; cells: PositionedCell[] } = { cols: 0, cells: [] };
   private _opts: ChartTableOptions;
   private _host: PrimitiveHost | null = null;
   /** Last drawn rect in media px, for hit-testing without recomputing layout. */
@@ -178,9 +258,11 @@ export class ChartTable implements IPrimitive {
     this._host?.requestUpdate();
   }
 
-  /** Replace the grid. Rows may be ragged; each is drawn to its own length. */
+  /** Replace the grid atomically. Ragged rows share the maximum column count; covered cells are ignored. */
   public setRows(rows: readonly (readonly TableCell[])[]): void {
+    const grid = positionCells(rows);
     this._rows = rows;
+    this._grid = grid;
     this._host?.requestUpdate();
   }
 
@@ -192,8 +274,7 @@ export class ChartTable implements IPrimitive {
     if (rows.length === 0) return;
     const o = this._opts;
     const dpr = rc.dpr;
-    let cols = 0;
-    for (const r of rows) if (r.length > cols) cols = r.length;
+    const { cols, cells } = this._grid;
     if (cols === 0) return;
 
     // Row tops and the total height, from the weights and the base cell height.
@@ -211,9 +292,11 @@ export class ChartTable implements IPrimitive {
     const rowY: number[] = [];
     for (let r = 0, acc = 0; r < rows.length; r++) { rowY.push(acc); acc += unit * weights[r]; }
     const rowHeights = weights.map((weight) => Math.round(unit * weight * dpr));
+    const cellHeights = cells.map(entry => entry.rowSpan === 1 ? rowHeights[entry.row]
+      : Math.round((rowY[entry.row + entry.rowSpan] ?? h) * dpr) - Math.round(rowY[entry.row] * dpr));
     ctx.save();
     const edges = columnEdges(
-      o.cellWidth === 'auto' ? measuredColumns(ctx, rows, cols, rowHeights, o, dpr) : o.cellWidth,
+      o.cellWidth === 'auto' ? measuredColumns(ctx, cells, cols, cellHeights, o, dpr) : o.cellWidth,
       cols,
     );
     let colX = edges.x;
@@ -240,71 +323,83 @@ export class ChartTable implements IPrimitive {
     }
 
     ctx.textBaseline = 'middle';
-    for (let r = 0; r < rows.length; r++) {
-      const row = rows[r];
+    for (let i = 0; i < cells.length; i++) {
+      const { cell, row: r, col: c, colSpan } = cells[i];
       const cellTop = oy + px(rowY[r]);
-      const rowH = rowHeights[r];
-      for (let c = 0; c < row.length; c++) {
-        const cell = row[c];
-        const cellLeft = ox + px(colX[c]);
-        const cellW = px((colX[c + 1] ?? w) - colX[c]);
+      const rowH = cellHeights[i];
+      const cellLeft = ox + px(colX[c]);
+      const endX = colX[c + colSpan] ?? w;
+      const cellW = colSpan === 1 ? px(endX - colX[c]) : px(endX) - px(colX[c]);
 
-        if (cell.bgColor !== undefined) {
-          ctx.fillStyle = cell.bgColor;
-          ctx.fillRect(cellLeft, cellTop, cellW, rowH);
-        }
-        if (o.borderColor !== undefined && o.borderWidth > 0) {
-          ctx.strokeStyle = o.borderColor;
-          ctx.lineWidth = Math.max(1, px(o.borderWidth));
-          ctx.strokeRect(cellLeft, cellTop, cellW, rowH);
-        }
-        if (cell.text === '') continue;
-
-        const pad = px(4);
-        // A cell draws inside its own cell, always. The auto font path shrinks
-        // text until it fits, but a fixed size has nothing stopping it, and a
-        // reading wider than its column was simply painted across the column
-        // beside it: two numbers on top of each other, both unreadable, and
-        // nothing about the grid to say which belonged where. Clipping makes
-        // an over-long cell look cut off, which is a thing a reader can see
-        // and act on.
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(cellLeft, cellTop, cellW, rowH);
-        ctx.clip();
-        const weight = cell.bold === true ? '600 ' : '';
-        // Shrink the type when a stretched row is shorter than the declared
-        // font, so a tall grid in a short pane stays legible instead of
-        // overlapping into its neighbours.
-        const rowMax = Math.floor(rowH * 0.62);
-        let size: number;
-        if (cell.fontSize === undefined && o.fontSize === 'auto') {
-          // Fit: as large as the row allows, then shrunk until the text also
-          // fits its column, so one long label sizes only itself down.
-          const floor = px(6);
-          size = Math.max(floor, rowMax);
-          ctx.font = `${weight}${size}px system-ui, sans-serif`;
-          const room = cellW - pad * 2;
-          while (size > floor && ctx.measureText(cell.text).width > room) {
-            size -= Math.max(1, px(1));
-            ctx.font = `${weight}${size}px system-ui, sans-serif`;
-          }
-        } else {
-          size = clampedFontSize(cell.fontSize ?? (o.fontSize === 'auto' ? 11 : o.fontSize), rowH, dpr);
-        }
-        ctx.font = `${weight}${size}px system-ui, sans-serif`;
-        // A cell with a fill picks its own readable ink; one without falls back
-        // to the axis colour, which is legible on either theme's background.
-        ctx.fillStyle = cell.textColor
-          ?? (cell.bgColor !== undefined ? contrastText(cell.bgColor) : rc.theme.axisText);
-        const align = cell.align ?? 'center';
-        ctx.textAlign = align;
-        const tx = align === 'left' ? cellLeft + pad
-          : align === 'right' ? cellLeft + cellW - pad
-          : cellLeft + cellW / 2;
-        ctx.fillText(cell.text, tx, cellTop + rowH / 2);
-        ctx.restore();
+      if (cell.bgColor !== undefined) {
+        ctx.fillStyle = cell.bgColor;
+        ctx.fillRect(cellLeft, cellTop, cellW, rowH);
       }
+      if (o.borderColor !== undefined && o.borderWidth > 0) {
+        ctx.strokeStyle = o.borderColor;
+        ctx.lineWidth = Math.max(1, px(o.borderWidth));
+        ctx.strokeRect(cellLeft, cellTop, cellW, rowH);
+      }
+      if (cell.text === '') continue;
+
+      const pad = px(4);
+      // A cell draws inside its own cell, always. The auto font path shrinks
+      // text until it fits, but a fixed size has nothing stopping it, and a
+      // reading wider than its column was simply painted across the column
+      // beside it: two numbers on top of each other, both unreadable, and
+      // nothing about the grid to say which belonged where. Clipping makes
+      // an over-long cell look cut off, which is a thing a reader can see
+      // and act on.
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(cellLeft, cellTop, cellW, rowH);
+      ctx.clip();
+      const lines = textLines(cell);
+      // Shrink the type when a stretched row is shorter than the declared
+      // font, so a tall grid in a short pane stays legible instead of
+      // overlapping into its neighbours.
+      const rowMax = maximumFontSize(rowH, lines.length, dpr);
+      let size: number;
+      if (cell.fontSize === undefined && o.fontSize === 'auto') {
+        // Fit: as large as the row allows, then shrunk until the text also
+        // fits its column, so one long label sizes only itself down.
+        const singleLine = lines.length === 1;
+        const floor = singleLine ? px(6) : Math.min(px(6), rowMax);
+        size = singleLine ? Math.max(floor, rowMax) : rowMax;
+        ctx.font = cellFont(cell, size);
+        const room = cellW - pad * 2;
+        const step = singleLine ? Math.max(1, px(1)) : 1;
+        while (size > floor && widestLine(ctx, lines) > room) {
+          size = singleLine ? size - step : Math.max(floor, size - step);
+          ctx.font = cellFont(cell, size);
+        }
+      } else {
+        size = clampedFontSize(cell.fontSize ?? (o.fontSize === 'auto' ? 11 : o.fontSize), rowH, dpr, lines.length);
+      }
+      if (size <= 0) { ctx.restore(); continue; }
+      ctx.font = cellFont(cell, size);
+      // A cell with a fill picks its own readable ink; one without falls back
+      // to the axis colour, which is legible on either theme's background.
+      ctx.fillStyle = cell.textColor
+        ?? (cell.bgColor !== undefined ? contrastText(cell.bgColor) : rc.theme.axisText);
+      const align = cell.align ?? 'center';
+      ctx.textAlign = align;
+      const tx = align === 'left' ? cellLeft + pad
+        : align === 'right' ? cellLeft + cellW - pad
+        : cellLeft + cellW / 2;
+      const lineHeight = size * 1.2;
+      const blockHeight = lines.length * lineHeight;
+      const inset = Math.min(pad, Math.max(0, (rowH - blockHeight) / 2));
+      const firstY = cell.verticalAlign === 'top' ? cellTop + inset + lineHeight / 2
+        : cell.verticalAlign === 'bottom' ? cellTop + rowH - inset - blockHeight + lineHeight / 2
+        : cellTop + rowH / 2 - (lines.length - 1) * lineHeight / 2;
+      for (let line = 0; line < lines.length; line++) ctx.fillText(lines[line], tx, firstY + line * lineHeight);
+      ctx.restore();
+    }
+    if (o.frameColor !== undefined && (o.frameWidth ?? 1) > 0) {
+      ctx.strokeStyle = o.frameColor;
+      ctx.lineWidth = Math.max(1, px(o.frameWidth ?? 1));
+      ctx.strokeRect(ox, oy, px(w), px(h));
     }
     ctx.restore();
   }

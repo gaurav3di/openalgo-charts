@@ -49,14 +49,50 @@ export interface SeriesRecord {
   scaleId: PriceScaleId;
 }
 
+/**
+ * Explicit state of the supplied bar, including count-driven bars. For
+ * `setData`, describes the last bar. `auto` returns to interval/clock inference.
+ * Empty datasets have no confirmation override.
+ */
+export interface BarConfirmationOptions {
+  confirmation?: 'auto' | 'forming' | 'confirmed';
+}
+
+/** Updates are live by default; historical corrections never count as live. */
+export interface SeriesUpdateOptions extends BarConfirmationOptions {
+  source?: 'live' | 'history';
+}
+
+/** Source metadata offered by native charts and optionally by custom indicator hosts. */
+export interface SeriesDataState {
+  /** Stable identity within the host; revisions belong to this source only. */
+  readonly sourceId: number;
+  readonly revision: number;
+  /** Advances whenever a previously calculated history prefix may have changed. */
+  readonly historyRevision: number;
+  readonly provenance: 'history' | 'live' | 'replay';
+  readonly change: 'reset' | 'prepend' | 'append' | 'replace' | 'correction';
+  readonly confirmation?: 'forming' | 'confirmed';
+  readonly confirmationSource?: 'provider' | 'replay';
+}
+
 /** Public handle returned by `chart.addSeries(...)`. */
 export interface SeriesApi {
-  /** Replace all data. Accepts OHLC bars, `{ time, value }` points, or `{ time }` gaps. */
-  setData(bars: readonly SeriesDataItem[]): void;
+  /**
+   * Replace historical data. Accepts OHLC bars, `{ time, value }` points, or
+   * `{ time }` gaps. Omitted confirmation clears any previous tail override.
+   */
+  setData(bars: readonly SeriesDataItem[], options?: BarConfirmationOptions): void;
   /** Merge older data (history paging); same item shapes as `setData`. */
   prependData(bars: readonly SeriesDataItem[]): void;
-  /** Live update: update the last item or append. Same item shapes as `setData`. */
-  update(bar: SeriesDataItem): void;
+  /**
+   * Update one item. Replacing or appending the tail is live by default;
+   * older corrections are historical. Same item shapes as `setData`.
+   * Confirmation applies only when the supplied item is the tail; metadata
+   * on older corrections cannot alter tail confirmation. An omitted override
+   * survives same-tail writes, but clears when a new tail is appended.
+   */
+  update(bar: SeriesDataItem, options?: SeriesUpdateOptions): void;
   /** Current bars for this series (sorted old -> new, normalized to OHLC). Handy for computing the next live update. */
   getData(): Bar[];
   /** Merge a partial style into the series and repaint (recolor, `{ visible:false }` to hide, ...). */

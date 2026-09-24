@@ -503,6 +503,29 @@ chart.addIndicator('demo-visual-outputs');
 chart.fitContent();
 return chart;`} />
 
+## Formatted and merged table cells
+
+A merged heading can span several columns, while a multiline cell spans rows.
+Each cell controls its font and alignment. The outer frame is independent of the
+cell borders.
+
+<RunnableExample height={320} code={`const chart = lib.createChart(el);
+chart.addSeries('candlestick').setData(lib.generateBars(1700000000, 100, 3600));
+const table = new lib.ChartTable({
+  position: 'top-right', cellWidth: [100, 90, 90], cellHeight: 32,
+  frameColor: '#64748b', frameWidth: 1, borderColor: '#253044',
+  background: '#101722', fontSize: 12,
+});
+table.setRows([
+  [{ text: 'Session readings', colSpan: 3, bold: true, align: 'left' }, { text: '' }, { text: '' }],
+  [{ text: 'Direction\\nsteady', rowSpan: 2, italic: true, verticalAlign: 'top' },
+   { text: 'Open' }, { text: '102.50', fontFamily: 'ui-monospace, monospace', align: 'right' }],
+  [{ text: '' }, { text: 'Range' }, { text: '4.75', fontFamily: 'ui-monospace, monospace', align: 'right' }],
+]);
+chart.addPrimitive(table);
+chart.fitContent();
+return chart;`} />
+
 ## Tables that fit their text
 
 Set `cellWidth: 'auto'` to fit each column to its widest reading. Fixed columns

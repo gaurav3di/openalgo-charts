@@ -34,10 +34,12 @@ import { conflationGroupSize, conflateItems } from '../model/conflation';
 import {
   drawPriceAxis, drawLeftPriceAxis, drawTimeAxis, drawLastPriceLabel, drawSessionClock,
   drawTimeAxisPill, lastPriceTagHeight, AXIS_LABEL_PRIORITY, resolveAxisLabels, drawSeriesValueTag,
+  axisTagY,
   type PlotLayout, type TickMarkType, type AxisLabelBand,
   type SessionClockOptions, type BarCountdownOptions,
 } from '../render/axis';
 import { drawCrosshair, drawCrosshairTag, resolveCrosshairStyle } from '../render/crosshair';
+import { isInvisible } from '../render/pill';
 import { bestHit, type IPrimitive, type PrimitiveHit, type PrimitiveHost, type PrimitiveRenderContext } from '../primitives/primitive';
 import { backendDegradation, type IRenderBackend, type RendererFallbackReason } from '../render/backend';
 import { Canvas2dBackend } from '../render/canvas2d-backend';
@@ -672,13 +674,6 @@ export class Pane {
       g.fillRect(0, 0, Math.round(this._width * dpr), Math.round(this._height * dpr));
     }
 
-    // Left price axis strip (absolute coords), drawn before the plot is shifted.
-    if (this._leftScale && this.usesScale('left') && layout.plotLeft > 0) {
-      if (this._leftScale.scaled) {
-        drawLeftPriceAxis(g, this._leftScale, layout.plotLeft, layout.plotHeight, dpr, axisStyle);
-      }
-    }
-
     // Shift the plot right by the reserved left-axis width (0 = a no-op).
     g.save();
     if (layout.plotLeft > 0) g.translate(Math.round(layout.plotLeft * dpr), 0);
@@ -720,12 +715,9 @@ export class Pane {
     // whichever side its scale is drawn on.
     const readout = this._readoutScale();
     let lastEntry: { close: number; up: boolean; showLine: boolean; showTag: boolean } | null = null;
-    // Every other series on the readout scale that is currently plotting a
-    // number: an indicator overlay, a comparison line, a study on its own pane.
-    // The main series keeps its dedicated tag above; these are what tells a
-    // reader where a Supertrend or a moving average sits without tracing the
-    // line back to the edge by eye.
-    const valueTags: { price: number; color: string }[] = [];
+    // Every visible axis describes its own sources, even when the pane's main
+    // readout belongs to the other side or a hidden scale.
+    const valueTags: { price: number; color: string; side: 'left' | 'right' }[] = [];
     const groupSize = ctx.conflate
       ? conflationGroupSize(ctx.timeScale.barSpacing, dpr, 0.5, ctx.conflationFactor)
       : 1;
@@ -752,29 +744,25 @@ export class Pane {
       const rc: SeriesRenderContext = { plotHeight: layout.plotHeight, maxVolume, theme: ctx.theme };
       if (target === undefined) this._backend.drawSeries(entry, items, priceToY, ctx.timeScale.barSpacing, dpr, s.style, rc);
       else entry.draw(g, items, priceToY, ctx.timeScale.barSpacing, dpr, s.style, rc);
-      // Only the readout scale has a strip to write into. A volume overlay
-      // sitting on its own hidden scale is excluded by that alone, while a
-      // volume study on a pane of its own is on the readout scale and does get
-      // a tag, formatted by the same scale as the ladder beside it.
-      if (scale === readout) {
-        const last = ctx.dataLayer.lastIndexedBar(s.dataId);
-        if (last !== null && entry.isPriceSeries && lastEntry === null) {
+      const last = ctx.dataLayer.lastIndexedBar(s.dataId);
+      if (last !== null) {
+        const color = seriesTagColor(s.style, last.bar.close >= last.bar.open);
+        if (scale === readout && entry.isPriceSeries && lastEntry === null) {
           // The first price series on the readout scale is the instrument, and
           // it owns the last-price line and the countdown tag.
           lastEntry = {
             close: last.bar.close,
             up: last.bar.close >= last.bar.open,
             showLine: s.style.priceLineVisible !== false,
-            showTag: s.style.lastValueVisible !== false,
+            showTag: s.style.lastValueVisible !== false && (color === undefined || !isInvisible(color)),
           };
-        } else if (last !== null && s.style.lastValueVisible !== false) {
+        } else if ((s.scaleId === 'left' || s.scaleId === 'right') && s.style.lastValueVisible !== false) {
           // A plot that is currently `na` writes NaN rather than dropping the
           // point, and a tag for it would either be blank or, worse, the stale
           // value from whenever the line last had one. A flipped Supertrend's
           // dormant half shows no tag, which is the honest answer.
-          const color = seriesTagColor(s.style, last.bar.close >= last.bar.open);
-          if (color !== undefined && Number.isFinite(last.bar.close)) {
-            valueTags.push({ price: last.bar.close, color });
+          if (color !== undefined && !isInvisible(color) && Number.isFinite(last.bar.close)) {
+            valueTags.push({ price: last.bar.close, color, side: s.scaleId });
           }
         }
       }
@@ -789,74 +777,47 @@ export class Pane {
     // and not at the end of the frame is the whole point.
     g.restore();
 
-    // axis ticks first, then the last-price line/tag, then trading primitives —
-    // order/position pill groups stay legible when the LTP crosses them
-    // A scale nothing has measured still holds the placeholder 0..1, and
-    // labelling it prints a price ladder the pane has no prices for: an
-    // indicator whose whole output is a table or a set of markers plots no
-    // values, so its pane came up reading 0.00 to 1.00.
-    // The last-price tag lands in the same strip a moment from now, so the tick
-    // it will cover is reserved before the ladder is drawn. Without this the tag
-    // paints straight over a tick label and the two read as mush, which is the
-    // whole reason `resolveAxisLabels` exists.
-    //
-    // Nothing is reserved when there is no tag, or when it falls outside the
-    // plot (where `drawLastPriceLabel` bails), so a pane without one draws every
-    // tick exactly as it always has.
-    const showLastTag = lastEntry !== null && lastEntry.showTag && readout === this._rightScale;
-    // The countdown makes the tag taller, so it must be the same question here
-    // and in the call below, or the reservation would be the wrong size.
-    const withCountdown = ctx.barCountdown?.visible === true;
-    //
-    // The series tags are resolved here rather than left to `drawPriceAxis`,
-    // which drops the flags of whatever it is handed: it decides which ticks
-    // survive a reservation, not which reservations survive each other. Two
-    // moving averages a rupee apart are exactly that second question, and the
-    // last-price tag outranking both of them is the answer we want.
-    const inPlot = (y: number): boolean => y >= 0 && y <= layout.plotHeight * dpr;
-    const bands: AxisLabelBand[] = [];
-    if (lastEntry !== null && showLastTag) {
-      const y = Math.round(readout.priceToY(lastEntry.close) * dpr);
-      if (inPlot(y)) {
-        bands.push({ y, height: lastPriceTagHeight(dpr, withCountdown), priority: AXIS_LABEL_PRIORITY.lastPrice });
+    const readoutSide = readout === this._leftScale ? 'left' : readout === this._rightScale ? 'right' : null;
+    const showLastTag = lastEntry !== null && lastEntry.showTag && readoutSide !== null
+      && (readoutSide === 'left' ? layout.plotLeft > 0 : layout.priceAxisWidth > 0);
+    // Resolve each strip independently: equal prices on opposite scales do not
+    // overlap. The readout tag outranks series tags, which outrank axis ticks.
+    const paintAxis = (scale: PriceScale, side: 'left' | 'right'): void => {
+      const tags = valueTags.filter(tag => tag.side === side);
+      const bands: AxisLabelBand[] = [];
+      if (lastEntry !== null && showLastTag && readout === scale) {
+        const height = lastPriceTagHeight(dpr, ctx.barCountdown?.visible === true);
+        const y = axisTagY(Math.round(scale.priceToY(lastEntry.close) * dpr), layout.plotHeight * dpr, height, side);
+        if (y !== null) bands.push({ y, height, priority: AXIS_LABEL_PRIORITY.lastPrice });
       }
-    }
-    // Series tags share the right-hand strip, so a scale that has moved to the
-    // left has nowhere to put them, the same reason the last-price tag is
-    // suppressed there.
-    const tagBase = bands.length;
-    const showValueTags = readout === this._rightScale;
-    if (showValueTags) {
-      for (const t of valueTags) {
-        const y = Math.round(readout.priceToY(t.price) * dpr);
-        bands.push({
-          y,
-          height: inPlot(y) ? lastPriceTagHeight(dpr) : NaN,
-          priority: AXIS_LABEL_PRIORITY.seriesValue,
-        });
+      const tagBase = bands.length;
+      for (const tag of tags) {
+        const height = lastPriceTagHeight(dpr);
+        const y = axisTagY(Math.round(scale.priceToY(tag.price) * dpr), layout.plotHeight * dpr, height, side);
+        bands.push({ y: y ?? NaN, height, priority: AXIS_LABEL_PRIORITY.seriesValue });
       }
-    }
-    // Same gap the ladder is resolved with, so a tag that survives here is not
-    // then drawn a pixel from the tick it displaced.
-    const allowed = bands.length > 0 ? resolveAxisLabels(bands, 2 * dpr) : [];
-    const reserved: AxisLabelBand[] | undefined =
-      bands.length > 0 ? bands.filter((_, i) => allowed[i]) : undefined;
+      const allowed = bands.length > 0 ? resolveAxisLabels(bands, 2 * dpr) : [];
+      const reserved = bands.length > 0 ? bands.filter((_, index) => allowed[index]) : undefined;
+      if (side === 'left') {
+        // The left tick renderer uses absolute pane coordinates; tags use the
+        // same plot-relative coordinates as their source series.
+        g.save();
+        g.translate(-Math.round(layout.plotLeft * dpr), 0);
+        drawLeftPriceAxis(g, scale, layout.plotLeft, layout.plotHeight, dpr, axisStyle, reserved);
+        g.restore();
+      } else drawPriceAxis(g, scale, layout, dpr, axisStyle, reserved);
+      for (let i = 0; i < tags.length; i++) {
+        if (allowed[tagBase + i]) drawSeriesValueTag(g, scale, tags[i].price, tags[i].color, layout, dpr, axisStyle, side);
+      }
+    };
+    if (this._leftScale?.scaled && this.usesScale('left') && layout.plotLeft > 0) paintAxis(this._leftScale, 'left');
     if (layout.priceAxisWidth > 0 && this.priceScale.scaled && (this.usesScale('right') || this._series.length === 0)) {
-      drawPriceAxis(g, this.priceScale, layout, dpr, axisStyle, reserved);
-    }
-    if (showValueTags) {
-      for (let i = 0; i < valueTags.length; i++) {
-        if (!allowed[tagBase + i]) continue;
-        drawSeriesValueTag(g, readout, valueTags[i].price, valueTags[i].color, layout, dpr, axisStyle);
-      }
+      paintAxis(this.priceScale, 'right');
     }
     if (lastEntry !== null) {
-      // The tag belongs in the right-hand strip, which a scale that has moved
-      // to the left no longer has: the line still means something without it,
-      // a tag drawn into a column that is not there does not.
       drawLastPriceLabel(g, readout, lastEntry.close, lastEntry.up, layout, dpr, axisStyle, {
         up: ctx.theme.lastPriceUp, down: ctx.theme.lastPriceDown, text: ctx.theme.lastPriceText,
-      }, lastEntry.showLine, showLastTag, ctx.barCountdown);
+      }, lastEntry.showLine, showLastTag, ctx.barCountdown, readoutSide ?? 'right');
     }
 
     // normal-layer primitives (price lines, markers, events) draw over series

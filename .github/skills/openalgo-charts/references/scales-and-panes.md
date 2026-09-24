@@ -169,10 +169,18 @@ chart.setSeriesPriceScale(series, 'right');
 on its current pane. Its handle, data, styles, primary role and marker bindings
 survive. Source and target scales retain their settings, manual ranges and ratio
 locks. Vacated scales remain available for reuse without drawing unused labels;
-the chart releases an axis column when no series uses that side on any pane.
+the chart releases an axis column when no visible series uses that side on any pane.
 Crosshair price tags are omitted when the readout scale is hidden.
-Last-price and series-value tags currently render only on the right axis; the
-left axis shows its tick labels and crosshair tag.
+Last-price and series-value tags follow their source's left or right scale.
+The readout series alone carries the countdown; other visible sources use their
+plot colors, including sources on the opposite axis. Collisions are resolved
+independently per side. Hidden-scale sources draw no axis tags.
+
+Left tags fit their text within the reserved column and stay vertically inside
+the pane at its edges. A tag is omitted when the column is absent or the pane is
+too short.
+`visible: false`, `lastValueVisible: false`, transparent plots and nonfinite
+current values suppress their tags.
 
 Explicit series `priceFormat` is applied to the target, followed by its style
 precision, just as with `addSeries`. Formatting is shared by all series on that
@@ -186,7 +194,7 @@ plots, fills, levels and other scale-bound visuals need a whole-study move;
 independent plot reassignment is unsupported. `movePriceAxis` instead moves all
 series on one visible side together with that scale's configuration.
 
-**Prices quoted for a pane follow its readout scale**, which is the scale its first visible price series maps to and falls back to the right one. That covers the crosshair price tag, last-price line, `chart.priceToCoordinate` / `coordinateToPrice`, and the axis drag, so a pane whose series were moved to the left strip is labelled and read in the same scale rather than tagging the cursor with the right scale's untouched `0..1` placeholder. `pane.readoutScale()` returns it. Last-price tags currently render only on the right axis.
+**Prices quoted for a pane follow its readout scale**, which is the scale its first visible price series maps to and falls back to the right one. That covers the crosshair price tag, last-price line and tag, `chart.priceToCoordinate` / `coordinateToPrice`, and the axis drag, so a pane whose series were moved to the left strip is labelled and read in the same scale rather than tagging the cursor with the right scale's untouched `0..1` placeholder. `pane.readoutScale()` returns it.
 
 **`PrimitiveRenderContext.priceScale` reads the right scale.** A primitive using
 that field does not follow a series reassignment; its owner must select the

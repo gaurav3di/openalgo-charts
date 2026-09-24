@@ -21,15 +21,20 @@
         "Known-duration confirmation",
         "Calendar confirmation",
         "Sparse and single-bar confirmation",
-        "Legacy host fallback"
-      ],
-      "remaining": [
+        "Legacy host fallback",
         "Provider-confirmed count-driven bars",
         "Historical/live/replay provenance",
-        "Realtime and rollback contract"
+        "Source identity and history revision invalidation",
+        "Provider confirmation restoration after replay",
+        "Compiled persistent-history recalculation and forming-bar rollback"
+      ],
+      "remaining": [
+        "Requested-provider cancellation and replay availability boundaries"
       ],
       "evidence": [
         "tests/indicator-confirmation.test.ts",
+        "tests/indicator-provenance.test.ts",
+        "tests/e2e/native-indicator-lifecycle.spec.ts",
         "integration/script-engine.test.ts"
       ]
     },
@@ -95,17 +100,21 @@
         "Per-bar fill colors and whole-band computed gradients",
         "Multiple named tables and overlay ownership",
         "Per-bar fill gradient anchors and colors",
-        "Gradient price anchoring across frames and pane transforms"
+        "Gradient price anchoring across frames and pane transforms",
+        "Merged table cells, multiline text, font choices and vertical alignment",
+        "Independent outer table frames"
       ],
       "evidence": [
         "tests/indicator-visual-descriptors.test.ts",
         "tests/e2e/indicator-visuals.spec.ts",
         "tests/indicator-fill-varying-gradient.test.ts",
-        "tests/e2e/native-fill-gradients.spec.ts"
+        "tests/e2e/native-fill-gradients.spec.ts",
+        "tests/table-formatting.test.ts",
+        "tests/e2e/table-layout.spec.ts"
       ],
       "remaining": [
         "Typed and interactive inputs",
-        "Additional table cell formatting",
+        "Table hover tooltips",
         "Drawing and marker variants",
         "Alert frequency and confirmation policies"
       ]
@@ -114,7 +123,7 @@
       "id": "native-chart-apis",
       "status": "partial",
       "remaining": [
-        "Multiple visible axes and left-axis value tags",
+        "Multiple visible axes on the same side",
         "Whole-study scale reassignment",
         "Pane placement and collapse",
         "History beyond drawing edits",
@@ -131,7 +140,8 @@
         "Direct time-scale mutation repaint, events and linked navigation",
         "Stable series renderer changes with widget state synchronization",
         "Runtime price-scale reassignment for independent host-owned series",
-        "Retained vacant scale settings without unused axis columns"
+        "Retained vacant scale settings without unused axis columns",
+        "Left-axis primary price, countdown and secondary series value labels"
       ],
       "evidence": [
         "tests/navigation-settings.test.ts",
@@ -147,6 +157,7 @@
         "tests/e2e/native-timeframe-navigation.spec.ts",
         "tests/e2e/widget-ui-253.spec.ts",
         "tests/series-scale-assignment.test.ts",
+        "tests/left-axis-value-tags.test.ts",
         "tests/e2e/native-series-scale-assignment.spec.ts"
       ]
     },
@@ -158,7 +169,9 @@
         "Real descriptor type assignment",
         "Compiled-program chart tests",
         "Pinned engine validation",
-        "Compiled calculation composed with native timeframe alignment"
+        "Compiled calculation composed with native timeframe alignment",
+        "Persistent-history replacement and forming-tail rollback",
+        "Provider confirmation, replay and primary-source replacement"
       ],
       "remaining": [
         "Wider output and request fixtures",
@@ -189,21 +202,21 @@
     ]
   },
   "validation": {
-    "chartTests": 6486,
-    "chartTestFiles": 280,
-    "compiledProgramTests": 5,
+    "chartTests": 6569,
+    "chartTestFiles": 283,
+    "compiledProgramTests": 10,
     "demoTests": 424,
     "demoTestFiles": 35,
-    "browserEvidence": "Earlier density, autofit, visual descriptors, scale restoration, requested calculations and navigation checks passed. Six further cases verify per-bar gradient pixels and live series scale reassignment on all three engines. Updated fill and varying-window website examples run on all three engines. Screenshots were inspected; traffic uses fixtures rather than live brokers.",
+    "browserEvidence": "Earlier density, visual descriptors, scale restoration, requested calculations, navigation and gradient checks passed. This batch passed 54 browser cases: three lifecycle, 27 table layout, 15 navigation, six scale assignment and three example autofit cases across all three engines. Autofit expands when an extreme enters view and contracts when it leaves. The new merged-table website example runs on all three engines. Representative screenshots were inspected; traffic uses fixtures rather than live brokers.",
     "website": "63 static pages built successfully",
-    "chartOnlyBrotliKiB": 57.84,
-    "chartOnlyBudgetKiB": 58,
-    "baseBrotliKB": 98.28,
+    "chartOnlyBrotliKiB": 59.62,
+    "chartOnlyBudgetKiB": 59.75,
+    "baseBrotliKB": 100.1,
     "indicatorBrotliKB": 32.74,
-    "allTiersBrotliKB": 271.29,
-    "budgetChange": "Runtime series scale assignment and price-anchored per-bar gradients add 0.29 KiB to chart-only imports (57.55 to 57.84); allow 58 KiB. Varying windows and pivot widths add 0.46 kB to the optional indicator tier (32.28 to 32.74); allow 33 kB. Other tier limits are unchanged. Optional-tier removal checks pass.",
-    "review": "Earlier numerical, navigation and renderer-state findings were fixed and independently rechecked. New review found no blocking defects in varying windows, scale assignment or fills; 40,000 bounded numerical oracle comparisons and strict SVG gradient probes passed. Crossing semantics were clarified in comments.",
-    "packageVerification": "Verify passed lint, typecheck, 6486 unit tests, seven endurance-harness checks, build, 424 example tests and declaration identity. Its size stage reported the measured feature increase; adjusted indicator and chart-only budgets then passed size and tree-shake checks. Five compiled-program checks and public adapter typechecking passed.",
+    "allTiersBrotliKB": 273.11,
+    "budgetChange": "Provider confirmation, source revisions, left value labels and table formatting increase the base from 98.28 to 100.10 kB and chart-only from 57.84 to 59.62 KiB. Limits are 100.25 kB base, 108.25 kB base plus trade, 234 kB terminal, 273.25 kB all tiers and 59.75 KiB chart-only. Individual optional-tier budgets remain unchanged and removal checks pass.",
+    "review": "Independent review found and rechecked source identity collisions and replay started during primary-series notification. Original reproductions and all 23 provenance tests now pass. Table review corrected legacy automatic font sizing and fractional merged-cell boundaries; browser pixels confirm formatting and clipping. Left labels passed large-font and hidden-axis checks.",
+    "packageVerification": "Verify passed lint, typecheck, 6569 unit tests, seven endurance-harness checks, build, 424 example tests and declaration identity. The measured feature increase exceeded size limits; narrowly adjusted budgets then passed size and tree-shake checks. Ten compiled-program checks and public adapter typechecking passed.",
     "latestEngineSourceReview": "d95bd70daf598892d40a9265607537b86ce712dd has no source changes relative to the pinned tested engine revision.",
     "apiDocumentation": "Generated with warnings treated as errors",
     "skillsCoverage": "972 of 972 named exports and registry entries; not functional coverage"

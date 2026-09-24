@@ -776,9 +776,10 @@ calc: (bars, settings, store, ctx) => {
 | Member | Meaning |
 |---|---|
 | `barState.isNew` | The last update **appended** a bar rather than replacing one. False on a full history load: there was no update to append. |
-| `barState.isConfirmed` | The last bar's declared duration or calendar period has elapsed on the chart clock. Unknown and count-driven intervals require provider confirmation, which is not yet exposed here. |
-| `barState.isRealtime` | A live feed is driving updates. **Sticky**: set the first time a tail-only change lands, never cleared. |
+| `barState.isConfirmed` | Replay/provider confirmation takes precedence, then interval/calendar clock inference. |
+| `barState.isRealtime` | This calculation follows a live mutation. Native initial/history/settings/replay executions are false. |
 | `barState.lastIndex` | `bars.length - 1`, and `-1` when there are none. |
+| `execution` | Optional `IndicatorExecutionContext`: provenance, change kind, revision, historyRevision and confirmationSource. |
 | `symbol` / `interval` | Supplied by `chart.setDataContext`, or by a custom `IndicatorHost`. Undefined when the host has not supplied them. |
 | `timezone` | The chart's IANA zone, the calendar its axis is labelled in. Same value as the reserved `settings.timezone` key. |
 | `now()` | Chart wall clock in UTC seconds, the clock the countdown row reads. |
@@ -788,7 +789,21 @@ recorded opening plus their duration; calendar intervals use the next boundary i
 configured timezone. A session gap does not extend the following bar's duration.
 Unknown and count-driven intervals remain unconfirmed. Without an interval, the legacy
 last-gap estimate remains, including a confirmed single bar. Empty history is confirmed.
-This clock-derived flag does not replace authoritative provider or exchange events.
+Explicit series metadata (`confirmation: 'forming' | 'confirmed' | 'auto'`) overrides
+the clock; replay's forming/completed state overrides provider state while active.
+
+Native `execution.sourceId` identifies the source series within its chart/host.
+`execution.provenance` is `history`, `live` or `replay`; `change` is `initial`,
+`reset`, `prepend`, `append`, `replace`, `correction` or `refresh`. The source
+`revision` counts mutations, while `historyRevision` invalidates cached prefixes.
+Same-shaped historical replacements and corrections followed by a coalesced tail
+update therefore take a full calculation. `confirmationSource` is `provider`,
+`replay`, `clock`, `unknown` or `empty`. Native live alerts are suppressed for
+history and replay; `now()` remains wall-clock time. Updates may coalesce, so do
+not equate these revisions or script executions with provider tick counts.
+
+Older custom `IndicatorHost` implementations may omit `sourceState` and execution
+metadata; they retain the prior timestamp heuristic and sticky realtime flag.
 
 ## Alerts (1.8.1)
 

@@ -25,6 +25,7 @@ test('the right price axis follows newly visible candles with autofit enabled', 
   await page.locator('#cset-tabs').getByRole('button', { name: 'Axes', exact: true }).click();
   await page.locator('[data-key="scales.autoScale"]').check();
   await page.locator('#cset-ok').click();
+  await expect.poll(() => page.evaluate(() => (window as any).__oac.app.chart.panes()[0].priceScale.priceRange().max)).toBeLessThan(120);
   const box = await page.locator('#chart').boundingBox();
   if (!box) throw new Error('Chart is not visible');
   await page.mouse.move(box.x + 250, box.y + 180);
@@ -35,6 +36,14 @@ test('the right price axis follows newly visible candles with autofit enabled', 
   await expect.poll(() => page.evaluate(() => (window as any).__oac.app.chart.panes()[0].priceScale.priceRange().max)).toBeGreaterThan(250);
   await info.attach('right axis follows visible candles', {
     body: await page.screenshot({ path: info.outputPath('example-autofit.png') }), contentType: 'image/png',
+  });
+  await page.mouse.move(box.x + 450, box.y + 181);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 250, box.y + 180, { steps: 6 });
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate(() => (window as any).__oac.app.chart.panes()[0].priceScale.priceRange().max)).toBeLessThan(120);
+  await info.attach('right axis contracts after the extreme leaves view', {
+    body: await page.screenshot({ path: info.outputPath('example-autofit-contracted.png') }), contentType: 'image/png',
   });
   await settings.click();
   await page.locator('#cset-tabs').getByRole('button', { name: 'Axes', exact: true }).click();

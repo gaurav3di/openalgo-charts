@@ -16,7 +16,8 @@
  * replay-aware code anywhere in the indicator tier.
  */
 import type { Bar } from '../model/bar';
-import type { SeriesApi } from '../model/series';
+import type { BarConfirmationOptions, SeriesApi } from '../model/series';
+import { seriesConfirmation } from '../model/series-provenance';
 import { clamp } from '../helpers/math';
 import { setReplayWindow } from '../model/replay-window';
 import { ReplayTimeline, type ReplayTiming } from './timeline';
@@ -189,6 +190,7 @@ export class ReplayController {
   private readonly _bars: readonly Bar[];
   /** What each driven series held before replay took over, for `stop()`. */
   private readonly _restore: readonly Bar[][];
+  private readonly _restoreConfirmation: readonly (BarConfirmationOptions | undefined)[];
   private readonly _view: { barSpacing: number; rightOffset: number };
   private readonly _onFrame: ((state: ReplayState) => void) | null;
   private readonly _now: () => number;
@@ -244,6 +246,7 @@ export class ReplayController {
     }
     this._series = list;
     this._restore = list.map((s) => s.getData());
+    this._restoreConfirmation = list.map(seriesConfirmation);
     this._bars = options.bars ?? this._restore[0];
     this._view = { barSpacing: chart.timeScale.barSpacing, rightOffset: chart.timeScale.rightOffset };
     this._subBars = options.subBars ?? [];
@@ -461,7 +464,7 @@ export class ReplayController {
       this._sub = point?.subIndex ?? 0;
     }
     setReplayWindow(this._chart);
-    for (let i = 0; i < this._series.length; i++) this._series[i].setData(this._restore[i]);
+    for (let i = 0; i < this._series.length; i++) this._series[i].setData(this._restore[i], this._restoreConfirmation[i]);
     // Bar spacing and right offset *are* the viewport: the visible logical
     // range is (baseIndex + rightOffset) back by width / barSpacing, and
     // restoring the data restores baseIndex.

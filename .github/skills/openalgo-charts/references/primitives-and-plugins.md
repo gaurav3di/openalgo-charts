@@ -6,6 +6,28 @@ Source of truth: `src/primitives/primitive.ts`, `src/primitives/*.ts`, `src/core
 
 Everything the chart draws that is not a series is a primitive: markers, event badges, price lines, the pane legend, the time navigator, the drawing layer, and the whole trading tier. One interface covers all of them.
 
+## Table cells
+
+`ChartTable` stays in pane screen space. `TableCell` accepts newline-separated
+text, `bold`, `italic`, CSS `fontFamily`, `fontSize`, horizontal `align` and
+`verticalAlign: 'top' | 'middle' | 'bottom'` (default middle). Measurement and
+painting use the same font. Automatic columns measure the widest line; automatic
+fonts fit the block. Text always clips to its cell.
+
+`colSpan` and `rowSpan` merge a rectangle from its top-left cell. Positive safe
+integers only, default one. The rectangle must fit inside the total rows and
+maximum column count. Its anchor supplies text and appearance; covered ordinary
+cells are ignored. Overlapping explicit spans throw. All spans are validated
+before `setRows` replaces the previous grid. Ragged rows remain supported.
+Automatic columns measure ordinary cells first, then share any merged text's
+width deficit among its columns. Weighted and percentage heights also apply to
+merged cells.
+
+`ChartTableOptions.frameColor` and optional `frameWidth` (default one media pixel)
+draw a separate outer frame after the cells. `borderColor`/`borderWidth` retain
+their cell-border behavior. These fields also work in descriptor `table`/`tables`
+results; existing compiled adapters must explicitly emit new fields to use them.
+
 ## `IPrimitive`
 
 ```ts

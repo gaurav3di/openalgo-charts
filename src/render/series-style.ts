@@ -33,8 +33,8 @@ export interface SeriesStyle {
   /**
    * Show this series' current value as a tag on the price axis. Default true.
    *
-   * Every series on the pane's readout scale gets one, not only the instrument:
-   * an indicator overlay, a comparison line, a study on a pane of its own. The
+   * Each visible left or right scale labels its own series, including indicator
+   * overlays, comparison lines and studies. Hidden scales have no tags. The
    * instrument's tag is the up/down coloured one that also carries the bar
    * countdown; the rest are drawn in their own plot colour. A series whose
    * current value is not a number draws no tag, so a study that is `na` right

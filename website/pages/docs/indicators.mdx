@@ -1091,9 +1091,10 @@ calcTail: (bars, settings, from, previous, store, ctx) => { ... },
 | Member | Type | Description |
 |---|---|---|
 | `barState.isNew` | `boolean` | The most recent update **appended** a bar rather than replacing one. False on a full history load, because there was no update to append. |
-| `barState.isConfirmed` | `boolean` | The last bar's own span has elapsed on the chart clock. |
-| `barState.isRealtime` | `boolean` | A live feed is driving updates rather than a one-off load. Sticky: set the first time a tail-only change lands, and never cleared. |
+| `barState.isConfirmed` | `boolean` | Explicit replay/provider state when available, otherwise interval/calendar clock inference. |
+| `barState.isRealtime` | `boolean` | This execution follows a live source update. False for initial calculations, historical loads, settings refreshes and replay on native charts. |
 | `barState.lastIndex` | `number` | `bars.length - 1`, and `-1` when there are no bars. |
+| `execution` | `IndicatorExecutionContext?` | Native provenance, change kind, source/history revisions and confirmation source. Optional for older custom hosts. |
 | `symbol` | `string?` | The instrument, when the host knows one. |
 | `interval` | `string?` | The timeframe (`'5m'`, `'1d'`), on the same terms. |
 | `timezone` | `string` | The chart's IANA zone, the calendar its axis is labelled in. |
@@ -1104,7 +1105,8 @@ calcTail: (bars, settings, from, previous, store, ctx) => { ... },
 recorded opening plus the interval duration. Calendar bars use the next boundary in the
 configured timezone. Unknown and count-driven intervals remain unconfirmed. Without an
 interval, the legacy gap estimate remains, including a confirmed single bar. Empty
-history is confirmed. This flag does not replace authoritative provider close events.
+history is confirmed. Explicit `series.setData`/`update` confirmation metadata
+overrides inference; replay's own forming/completed state has first precedence.
 
 `symbol` and `interval` come from `chart.setDataContext`, or from a custom
 `IndicatorHost`. They remain undefined when the host has not supplied them.
@@ -1113,6 +1115,21 @@ When you do have `interval`, the
 count and a unit rather than a string match against the handful of codes you happened to
 test on.
 </Callout>
+
+`execution.sourceId` identifies the source series within its chart/host, keeping
+replacement sources from sharing cached results. `provenance` is `history`, `live`
+or `replay`. `change` is `initial`,
+`reset`, `prepend`, `append`, `replace`, `correction` or `refresh`. Its `revision`
+advances with source mutations; `historyRevision` also changes whenever a cached
+prefix may be invalid. This makes same-shaped history replacements and coalesced
+historical corrections take a full calculation. `confirmationSource` is `provider`,
+`replay`, `clock`, `unknown` or `empty`. Mutations can coalesce into one calculation;
+these counters do not promise one script execution per provider tick.
+
+Native replay remains non-realtime while paused, stepping or seeking. Stopping it
+restores historical execution and the saved tail confirmation. `now()` remains
+the chart wall clock. A custom host that omits `sourceState` retains the old
+timestamp-based tail inference and sticky realtime flag.
 
 ### Alerts
 

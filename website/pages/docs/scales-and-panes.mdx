@@ -361,11 +361,18 @@ chart.setSeriesPriceScale(series, 'right');
 pane. The handle, data, styles, primary role and marker bindings survive. Both
 scale objects keep their configuration, including manual ranges and ratio locks.
 An unused source scale remains available for a later return without drawing
-stale labels. A side's column disappears when no series uses it on any pane;
+stale labels. A side's column disappears when no visible series uses it on any pane;
 a chart containing only hidden-scale series reserves neither axis column.
 Crosshair price tags are omitted for a hidden readout scale.
-Last-price and series-value tags currently render only on the right axis; a
-left axis shows its tick labels and crosshair tag.
+Last-price and series-value tags follow their source's left or right axis. The
+readout series alone carries the countdown; other visible sources use their plot
+colors, including sources on the opposite axis. Each side resolves its own
+tick/tag collisions. Hidden-scale sources draw no axis tags.
+
+Left tags fit inside the reserved column and stay within the pane at its top and
+bottom edges. A tag is omitted if there is too little room to draw it. Hidden
+series, `lastValueVisible: false`, transparent plots and nonfinite current values
+do not produce tags.
 
 Explicit series `priceFormat` applies to the target, followed by its style
 precision, just as with `addSeries`. This also changes formatting for other

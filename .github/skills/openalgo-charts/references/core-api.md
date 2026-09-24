@@ -110,9 +110,9 @@ Returned by `addSeries`. Full surface (`src/model/series.ts`):
 
 | Method | Signature | Notes |
 |---|---|---|
-| `setData` | `(items: readonly SeriesDataItem[]) => void` | Replaces all data. The first non-empty `setData` on the chart applies the configured default view once. |
+| `setData` | `(items: readonly SeriesDataItem[], options?: BarConfirmationOptions) => void` | Historical replacement; forces full indicator calculation. The first non-empty call applies the configured default view once. |
 | `prependData` | `(items: readonly SeriesDataItem[]) => void` | History paging; viewport is preserved. |
-| `update` | `(item: SeriesDataItem) => void` | Updates the last item or appends. |
+| `update` | `(item: SeriesDataItem, options?: SeriesUpdateOptions) => void` | Updates or appends. Older timestamps are historical corrections. |
 | `getData` | `() => Bar[]` | Normalized OHLC, oldest first. |
 | `applyOptions` | `(style: Partial<SeriesStyle>) => void` | Merge + repaint. **Not** `setStyle`. |
 | `remove` | `() => void` | Detaches from the pane and frees its data rows. |
@@ -120,6 +120,22 @@ Returned by `addSeries`. Full surface (`src/model/series.ts`):
 | `createMarkers` | `() => SeriesMarkers` | Markers layer bound to this series. |
 
 Items are `{ time, open, high, low, close, volume?, color? }`, `{ time, value, color? }`, or `{ time }` (whitespace gap). See [data-and-time](data-and-time.md).
+
+`BarConfirmationOptions.confirmation` is `'auto' | 'forming' | 'confirmed'`.
+Explicit states override clock inference for the current tail. An omitted value
+on a same-time update retains that state; `'auto'` clears it. Replacement data,
+a new tail, or a changed instrument/timeframe clears the old state. Prepending
+history retains an unchanged tail's state. Confirmation on an older correction
+does not change the current tail. `SeriesUpdateOptions.source` is `'live'`
+(default) or `'history'`; older corrections always count as history.
+
+Native `SeriesDataState` contains readonly `sourceId`, `revision`, `historyRevision`,
+`provenance`, `change`, and optional `confirmation`/`confirmationSource`. Custom
+`IndicatorHost.sourceState()` implementations may supply this snapshot; hosts
+without it retain their legacy inference. Source revisions count mutations,
+while history revisions invalidate cached prefixes across coalesced updates.
+`sourceId` identifies the source series within its chart/host, so replacing the
+primary cannot reuse another series' calculation cache when revisions overlap.
 
 `chart.setSeriesPriceScale(series, scaleId): boolean` reassigns a host-created
 series to `'right'`, `'left'`, `''` or `overlay:name` on its current pane. Its
@@ -477,6 +493,10 @@ the rules in [primitives-and-plugins](./primitives-and-plugins.md).
   column to its widest rendered cell; fixed widths and per-column arrays remain
   supported. Every cell clips its own text. What an indicator's `table` hook
   builds for you; attach it yourself when the table is not tied to a study.
+  `TableCell` supports multiline text, `italic`, CSS `fontFamily`, `verticalAlign`,
+  `rowSpan` and `colSpan`. `ChartTableOptions.frameColor`/`frameWidth` draw an
+  independent outer frame. Span validation is atomic in `setRows`; see the
+  table contract in `primitives-and-plugins.md`.
 - `IndicatorDrawings` - the primitive behind a descriptor's `draws` hook. One
   primitive holds the whole shape list, because a descriptor rebuilds its shapes on
   every recompute and per-shape primitives would re-sort z-order on every live tick.

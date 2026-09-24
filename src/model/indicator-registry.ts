@@ -410,6 +410,17 @@ export type IndicatorValues = Record<string, readonly (number | null)[]>;
 /** Per-instance scratch owned by the descriptor (Tier-2 data lands here). */
 export type IndicatorStore = Record<string, unknown>;
 
+/** Why this calculation ran. Revisions count source mutations, not provider ticks executed. */
+export interface IndicatorExecutionContext {
+  /** Stable source-series identity within this host. */
+  sourceId: number;
+  provenance: 'history' | 'live' | 'replay';
+  change: 'initial' | 'reset' | 'prepend' | 'append' | 'replace' | 'correction' | 'refresh';
+  revision: number;
+  historyRevision: number;
+  confirmationSource: 'provider' | 'replay' | 'clock' | 'unknown' | 'empty';
+}
+
 /**
  * The fourth, optional argument to `calc` (and the sixth to `calcTail`): what
  * the calculation cannot read off the bars themselves.
@@ -419,18 +430,21 @@ export type IndicatorStore = Record<string, unknown>;
  * point: a calculation that ignores the context computes what it always did.
  */
 export interface IndicatorCalcContext {
+  /** Native mutation provenance. Older custom hosts may omit it. */
+  execution?: IndicatorExecutionContext;
   /**
    * Where the last bar stands, so a study can act once per bar rather than once
    * per tick, or refuse to signal off a bar that is still moving.
    */
   barState: {
-    /** The most recent update appended a bar rather than replacing one. */
+    /** A live execution sees a newer tail than the previous calculation, including coalesced appends. */
     isNew: boolean;
     /**
      * The last bar's declared duration or calendar period has elapsed on the
      * chart clock. Count-driven and unknown intervals cannot be confirmed by
      * the clock. Without an interval, retains the legacy last-gap estimate
-     * (a single bar is confirmed). Empty history is confirmed.
+     * (a single bar is confirmed). Explicit provider or replay state takes
+     * precedence over that estimate. Empty history is confirmed.
      */
     isConfirmed: boolean;
     /** A live feed is driving updates, rather than a one-off history load. */

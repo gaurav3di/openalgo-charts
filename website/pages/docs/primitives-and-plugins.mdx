@@ -225,6 +225,24 @@ and the font size actually drawn. Empty columns retain a 28 px minimum.
 With `fontSize: 'auto'`, width measurement uses an 11 px baseline unless the cell
 overrides its font. Text always clips to its own cell.
 
+Cells support `bold`, `italic`, `fontFamily` (a CSS font-family list), `fontSize`,
+horizontal `align`, and `verticalAlign: 'top' | 'middle' | 'bottom'`. Middle is
+the default. A newline in `text` creates another line; automatic widths measure
+the widest line, and automatic font sizing fits the whole text block. Fixed
+fonts also shrink to fit the available row height. The default font remains
+`system-ui, sans-serif`.
+
+Set `colSpan` or `rowSpan` on the top-left cell to merge a rectangle. Both default
+to one and must be positive safe integers. The rectangle must fit within the
+row count and the longest row's column count. Covered ordinary cells are ignored;
+overlapping explicit spans are rejected. `setRows` validates the entire grid before
+replacing it, so invalid spans leave the previous rows intact. A merged cell uses
+its anchor's text and appearance, with one clip over the combined area. Automatic
+widths distribute any extra width needed by merged text across its columns.
+
+`frameColor` adds a separate outer frame, with optional `frameWidth` in media pixels
+(default one). Cell borders continue to use `borderColor` and `borderWidth`.
+
 Fixed sizing uses `cellWidth` (a number, or an array for per-column widths)
 and `cellHeight`, in media px. Proportional: `widthPercent` and `heightPercent` stretch
 the grid to a share of the plot, preserving the column proportions declared in

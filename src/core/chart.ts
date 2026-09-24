@@ -19,7 +19,9 @@ import {
   type RendererFallbackReason,
 } from '../render/backend';
 import { DataLayer } from '../model/data-layer';
-import { createSeriesRecord, type SeriesApi, type SeriesRecord, type PriceScaleId, type PriceFormat } from '../model/series';
+import { createSeriesRecord, type SeriesApi, type SeriesRecord, type PriceScaleId, type PriceFormat, type BarConfirmationOptions, type SeriesUpdateOptions } from '../model/series';
+import { bindSeriesProvenance, SeriesProvenance, validateSeriesOptions } from '../model/series-provenance';
+import { replayWindow } from '../model/replay-window';
 import { getChartType, type SeriesType } from '../model/chart-type-registry';
 import {
   getIndicator, hasIndicator, plotStyleKeys,
@@ -801,6 +803,7 @@ export class Chart {
   /** Handle + record of the primary price series (see `primarySeries`). */
   private _primary: { api: SeriesApi; record: SeriesRecord } | null = null;
   private readonly _seriesRecords = new WeakMap<SeriesApi, SeriesRecord>();
+  private readonly _seriesProvenance = new Map<number, SeriesProvenance>();
   private readonly _indicators: IndicatorInstance[] = [];
   private readonly _seriesOwners = new WeakMap<SeriesApi, {
     pane: Pane; priceFormat?: AddSeriesOptions['priceFormat']; inheritedStyle: Partial<SeriesStyle>; indicatorOwned: boolean;
@@ -1232,6 +1235,8 @@ export class Chart {
    */
   private _createSeries(type: SeriesType, options: AddSeriesOptions, claimPrimary: boolean): SeriesApi {
     const dataId = this._dataLayer.createSeries();
+    const provenance = new SeriesProvenance(dataId);
+    this._seriesProvenance.set(dataId, provenance);
     const paneIndex = options.paneIndex ?? 0;
     this._ensurePane(paneIndex);
     const record = createSeriesRecord(dataId, type, options.style, options.priceScaleId ?? 'right');
@@ -1277,9 +1282,9 @@ export class Chart {
     if (record.style.precision !== undefined) this._applyPrecision(scale, record.style.precision);
 
     const api: SeriesApi = {
-      setData: (bars: readonly SeriesDataItem[]): void => this._setData(dataId, bars.map(toBar)),
+      setData: (bars: readonly SeriesDataItem[], metadata?: BarConfirmationOptions): void => this._setData(dataId, bars.map(toBar), metadata),
       prependData: (bars: readonly SeriesDataItem[]): void => this._prependData(dataId, bars.map(toBar)),
-      update: (bar: SeriesDataItem): void => this._updateBar(dataId, toBar(bar)),
+      update: (bar: SeriesDataItem, metadata?: SeriesUpdateOptions): void => this._updateBar(dataId, toBar(bar), metadata),
       getData: (): Bar[] => this._dataLayer.indexedBars(dataId).map((ib) => ib.bar),
       applyOptions: (patch: Partial<SeriesStyle>): void => {
         for (const key of Object.keys(patch) as (keyof SeriesStyle)[]) delete owner.inheritedStyle[key];
@@ -1295,6 +1300,7 @@ export class Chart {
         const primary = this._primary?.record === record;
         owner.pane.removeSeries(record);
         this._dataLayer.removeSeries(dataId);
+        this._seriesProvenance.delete(dataId);
         if (this._firstDataId.value === dataId) this._firstDataId.value = null;
         if (this._primary?.record === record) this._primary = null;
         this._timeScale.setBaseIndex(this._dataLayer.baseIndex);
@@ -1314,12 +1320,13 @@ export class Chart {
         return m;
       },
     };
+    this._seriesRecords.set(api, record);
+    bindSeriesProvenance(api, provenance);
+    this._seriesOwners.set(api, owner);
     if (isPrimary) {
       this._primary = { api, record };
       this.emit('objects:change', {});
     }
-    this._seriesRecords.set(api, record);
-    this._seriesOwners.set(api, owner);
     return api;
   }
 
@@ -1664,7 +1671,13 @@ export class Chart {
       && this._dataContext?.interval === context?.interval && !!this._dataContext === !!context) return;
     const instrumentChanged = this._dataContext?.symbol !== context?.symbol
       || this._dataContext?.exchange !== context?.exchange;
+    const sourceChanged = instrumentChanged || this._dataContext?.interval !== context?.interval;
     this._dataContext = context ? Object.freeze({ ...context }) : undefined;
+    if (sourceChanged) for (const state of this._seriesProvenance.values()) state.contextChanged();
+    if (this._indicators.length > 0) {
+      this._indicatorsDirty = true;
+      this._loop.requestFrame();
+    }
     if (instrumentChanged && this._events.length) {
       this._events = [];
       this._syncEvents();
@@ -1814,6 +1827,13 @@ export class Chart {
       removeIndicatorTable: (table): void => this.removePrimitive(table),
       sourceBars: (): readonly Bar[] =>
         this._firstDataId.value === null ? [] : this._dataLayer.seriesBars(this._firstDataId.value),
+      sourceState: () => {
+        const state = this._seriesProvenance.get(this._firstDataId.value ?? -1)?.snapshot();
+        const replay = replayWindow(this);
+        return state && replay ? {
+          ...state, provenance: 'replay', confirmation: replay.forming ? 'forming' : 'confirmed', confirmationSource: 'replay',
+        } : state;
+      },
       nextPaneIndex: (): number => this._panes.length,
       // The calendar a session anchor resets on and the calendar the axis is
       // labelled in have to be the same one, or a VWAP restarts in the middle
@@ -2769,9 +2789,14 @@ export class Chart {
   }
 
   /** Apply one live bar; auto-scroll only on a genuine right-edge append. */
-  private _updateBar(dataId: number, bar: Bar): void {
+  private _updateBar(dataId: number, bar: Bar, options?: SeriesUpdateOptions): void {
+    validateSeriesOptions(options, true);
+    const bars = this._dataLayer.seriesBars(dataId);
+    const tailTime = bars[bars.length - 1]?.time;
+    const change = tailTime === undefined || bar.time > tailTime ? 'append' : bar.time === tailTime ? 'replace' : 'correction';
     const wasAtRight = this._timeScale.rightOffset >= 0;
     const kind = this._dataLayer.update(dataId, bar);
+    this._seriesProvenance.get(dataId)?.record(change, Math.max(tailTime ?? bar.time, bar.time), options);
     this._timeScale.setBaseIndex(this._dataLayer.baseIndex);
     // Only a real append advances the view; late/historical inserts must not
     // be treated as a new right-edge bar (would wrongly auto-scroll / shift).
@@ -2801,9 +2826,12 @@ export class Chart {
     for (const paneIndex of added) this.emit('paneAdded', { paneIndex });
   }
 
-  private _setData(dataId: number, bars: readonly Bar[]): void {
+  private _setData(dataId: number, bars: readonly Bar[], options?: BarConfirmationOptions): void {
+    validateSeriesOptions(options);
     if (dataId === this._firstDataId.value) this._stopNavigationMotion();
     this._dataLayer.setSeriesData(dataId, bars);
+    const sorted = this._dataLayer.seriesBars(dataId);
+    this._seriesProvenance.get(dataId)?.record('reset', sorted[sorted.length - 1]?.time, options);
     // An indicator's plots are series in this same layer, so `baseIndex` is the
     // longest of *all* of them, this one included. Replacing the primary series
     // wholesale can therefore leave the axis measured against an indicator that
@@ -2837,6 +2865,8 @@ export class Chart {
   /** History paging: merge older bars, preserving the viewport (§4.2). */
   private _prependData(dataId: number, bars: readonly Bar[]): void {
     this._dataLayer.addBars(dataId, bars);
+    const sorted = this._dataLayer.seriesBars(dataId);
+    this._seriesProvenance.get(dataId)?.record('prepend', sorted[sorted.length - 1]?.time);
     // baseIndex shifts up by the inserted count; updating it keeps the same
     // bars on screen because (rightEdge − index) is invariant.
     this._timeScale.setBaseIndex(this._dataLayer.baseIndex);
@@ -3537,6 +3567,7 @@ export class Chart {
     for (const record of [...pane.series()]) {
       pane.removeSeries(record);
       this._dataLayer.removeSeries(record.dataId);
+      this._seriesProvenance.delete(record.dataId);
       if (this._firstDataId.value === record.dataId) this._firstDataId.value = null;
     }
     pane.destroy();
@@ -5035,6 +5066,7 @@ export class Chart {
     this._pointers.clear();
     for (const pane of this._panes) pane.destroy(); // detaches primitives + removes element
     this._panes.length = 0;
+    this._seriesProvenance.clear();
     // Announced last, with the chart already torn down: a 'destroy' listener is
     // there to let go of it (unsubscribe, drop it from a link group), not to
     // read it, and it must see the same dead object every other holder sees.

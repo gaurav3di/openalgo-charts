@@ -8,7 +8,7 @@
  * indicators draw through the same Family-A renderers as any other series.
  */
 import type { Bar } from './bar';
-import type { PriceFormat, SeriesApi } from './series';
+import type { PriceFormat, SeriesApi, SeriesDataState } from './series';
 import type { PriceLine } from '../primitives/price-line';
 import type { PaneLegend, LegendValue } from '../primitives/pane-legend';
 import type { SeriesMarkers } from '../primitives/markers';
@@ -152,6 +152,8 @@ export interface IndicatorHost {
   resourcesChanged?(): void;
   /** Bars of the primary price series — the calculation input. */
   sourceBars(): readonly Bar[];
+  /** Optional mutation metadata; absent hosts retain the legacy timestamp heuristic. */
+  sourceState?(): SeriesDataState | undefined;
   /** Selected candle after native or linked hover; absent means latest. */
   legendIndex?(): number | undefined;
   /** Index of a fresh pane for an indicator that wants its own. */
@@ -311,6 +313,10 @@ export class IndicatorInstance implements IndicatorApi {
   private _alertTime = 0;
   /** Set once a tail-only change lands, which is what a live feed looks like. */
   private _live = false;
+  private _sourceId: number | undefined;
+  private _sourceRevision: number | null = null;
+  private _sourceHistoryRevision: number | null = null;
+  private _sourceLastTime: number | undefined;
   private _visible = true;
   /** Set once the constructor's own recompute has passed; see `recompute`. */
   private _constructed = false;
@@ -758,17 +764,19 @@ export class IndicatorInstance implements IndicatorApi {
    * not the duration of the first candle after it. Count-driven bars cannot be
    * confirmed from a clock reading.
    */
-  private _calcContext(bars: readonly Bar[], appended: boolean): IndicatorCalcContext {
+  private _calcContext(bars: readonly Bar[], appended: boolean, source?: SeriesDataState): IndicatorCalcContext {
     const n = bars.length;
     const now = (): number => this._host.now?.() ?? Date.now() / 1000;
     const interval = this._host.interval?.();
     const timezone = this._host.timezone?.() ?? DEFAULT_TIMEZONE;
     const step = n > 1 ? bars[n - 1].time - bars[n - 2].time : 0;
     let isConfirmed = n === 0;
+    let confirmationSource: NonNullable<IndicatorCalcContext['execution']>['confirmationSource'] = n === 0 ? 'empty' : 'unknown';
     if (n > 0) {
       const open = bars[n - 1].time;
       if (interval === undefined) {
         isConfirmed = step <= 0 || now() >= open + step;
+        confirmationSource = 'clock';
       } else {
         const bucketing = tryResolveInterval(interval)?.bucketing;
         // Fixed bars can be session-aligned rather than epoch-aligned. Their
@@ -777,13 +785,28 @@ export class IndicatorInstance implements IndicatorApi {
           ? (bucketing.seconds > 0 ? open + bucketing.seconds : null)
           : bucketing === undefined ? null : nextBucketStart(bucketing, open, timezone);
         isConfirmed = close !== null && now() >= close;
+        if (close !== null) confirmationSource = 'clock';
       }
     }
+    if (n > 0 && source?.confirmation !== undefined) {
+      isConfirmed = source.confirmation === 'confirmed';
+      confirmationSource = source.confirmationSource ?? 'provider';
+    }
+    const initial = this._sourceRevision === null || source?.sourceId !== this._sourceId;
+    const changed = source !== undefined && source.revision !== this._sourceRevision;
+    const realtime = source === undefined ? this._live : !initial && changed && source.provenance === 'live';
     return {
+      ...(source === undefined ? {} : { execution: {
+        sourceId: source.sourceId,
+        provenance: source.provenance === 'replay' ? 'replay' as const : realtime ? 'live' as const : 'history' as const,
+        change: initial ? 'initial' as const : changed ? source.change : 'refresh' as const,
+        revision: source.revision, historyRevision: source.historyRevision, confirmationSource,
+      } }),
       barState: {
-        isNew: appended,
+        isNew: source === undefined ? appended : realtime && n > 0 &&
+          (this._sourceLastTime === undefined || bars[n - 1].time > this._sourceLastTime),
         isConfirmed,
-        isRealtime: this._live,
+        isRealtime: realtime,
         lastIndex: n - 1,
       },
       symbol: this._host.symbol?.(),
@@ -1008,6 +1031,7 @@ export class IndicatorInstance implements IndicatorApi {
 
   private _recompute(): void {
     const bars = this._host.sourceBars();
+    const source = this._host.sourceState?.();
     const n = bars.length;
     // Resolved once: the zone is fixed for the frame, and calc, calcTail and
     // every colorBy below must be told the same calendar.
@@ -1019,21 +1043,18 @@ export class IndicatorInstance implements IndicatorApi {
     // page of history arriving at the left edge, or a symbol change, can land on
     // a matching count and would then splice new values onto a history that no
     // longer exists, leaving the plot silently wrong until the next full calc.
-    // So gate it on the times instead: the first bar must be unchanged, and the
-    // last bar must either be the same one (replaced in place) or sit directly
-    // after it (appended). Reading the bucket off `bars[n - 2]` avoids guessing
-    // the interval, which a session gap or a holiday makes unguessable anyway.
-    // The same signal answers `barState.isNew`: an append is exactly the branch
-    // that is not a replacement of the last bar, and inventing a second way to
-    // decide that would be a second thing to keep in step with this one.
+    // Native revisions retain historical invalidation across coalesced writes.
+    // Hosts without them retain the timestamp heuristic: the first bar is
+    // unchanged and the last is replaced or followed by exactly one new bar.
     const appended = this._barCount > 0 && n === this._barCount + 1 &&
       bars[n - 2].time === this._lastTime && bars[0].time === this._firstTime;
     const tailOnly = n > 0 && this._barCount > 0 && bars[0].time === this._firstTime &&
-      ((n === this._barCount && bars[n - 1].time === this._lastTime) || appended);
-    // A tail-only change is what a live feed looks like from here; a history
-    // load replaces everything and never lands on this branch.
-    if (tailOnly) this._live = true;
-    const ctx = this._calcContext(bars, appended);
+      ((n === this._barCount && bars[n - 1].time === this._lastTime) || appended) &&
+      (source === undefined || (source.sourceId === this._sourceId && source.revision !== this._sourceRevision &&
+        source.historyRevision === this._sourceHistoryRevision && source.provenance === 'live'));
+    // Older hosts have no mutation provenance and retain the live heuristic.
+    if (source === undefined && tailOnly) this._live = true;
+    const ctx = this._calcContext(bars, appended, source);
     if (tailOnly && this._d.calcTail !== undefined) {
       const from = this._barCount - 1; // the previously-last bar may have been replaced
       const tail = this._d.calcTail(bars, settings, from, this._values, this._store, ctx);
@@ -1045,6 +1066,12 @@ export class IndicatorInstance implements IndicatorApi {
     this._barCount = n;
     this._firstTime = n > 0 ? bars[0].time : 0;
     this._lastTime = n > 0 ? bars[n - 1].time : 0;
+    if (source !== undefined) {
+      this._sourceId = source.sourceId;
+      this._sourceRevision = source.revision;
+      this._sourceHistoryRevision = source.historyRevision;
+      this._sourceLastTime = bars[n - 1]?.time;
+    }
 
     for (const plot of this._d.plots) {
       const series = this._series.get(plot.key);

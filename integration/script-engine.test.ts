@@ -7,6 +7,7 @@ import type { Bar } from '../src/model/bar';
 import type { SeriesMarker } from '../src/primitives/markers';
 import { ChartTable } from '../src/primitives/table';
 import { securityExpression } from '../src/indicators/security';
+import { ReplayController } from '../src/replay/controller';
 import { fakeDocument } from '../tests/helpers/fake-dom';
 
 const charts: Chart[] = [];
@@ -28,7 +29,7 @@ function compile(text: string): IndicatorDescriptor {
   return descriptor;
 }
 
-function makeChart(data: Bar[], now: number) {
+function makeChart(data: Bar[], now: number, updatesOnly = false) {
   const clock = { now };
   const document = fakeDocument();
   const chart = new Chart(document.createElement('div'), {
@@ -40,13 +41,134 @@ function makeChart(data: Bar[], now: number) {
   chart.applySize(800, 600);
   chart.setDataContext({ symbol: 'SAMPLE', interval: '1m' });
   const series = chart.addSeries('candlestick');
-  series.setData(data);
+  if (updatesOnly) for (const item of data) series.update(item);
+  else series.setData(data);
   return { chart, series, clock };
 }
 
 const bar = (time: number, close: number): Bar => ({ time, open: 1, high: close + 1, low: 0, close });
 
 describe('compiled script engine on an actual Chart', () => {
+  it('rebuilds the compiled execution when a replacement primary has overlapping source revisions', () => {
+    const descriptor = compile(`version 1
+study("Source replacement")
+var accumulated = 0
+accumulated = accumulated + close
+plot(accumulated, "Total")
+`);
+    registerIndicator(descriptor);
+    const { chart, series } = makeChart([bar(120, 1), bar(180, 2)], 240, true);
+    const indicator = chart.addIndicator(descriptor.id);
+    const key = descriptor.plots[0].key;
+    expect(indicator.values()[key]).toEqual([1, 3]);
+    series.remove();
+    const replacement = chart.addSeries('candlestick');
+    replacement.update(bar(120, 10));
+    replacement.update(bar(180, 20));
+    replacement.update(bar(180, 30));
+    expect(indicator.values()[key]).toEqual([10, 40]);
+  });
+
+  it('rebuilds persistent calculations after same-shaped history replacement and coalesced corrections', () => {
+    const descriptor = compile(`version 1
+study("Accumulated values")
+var accumulated = 0
+accumulated = accumulated + close
+plot(accumulated, "Total")
+`);
+    registerIndicator(descriptor);
+    const { chart, series } = makeChart([bar(120, 2), bar(180, 3), bar(240, 4)], 300);
+    const indicator = chart.addIndicator(descriptor.id);
+    const key = descriptor.plots[0].key;
+    expect(indicator.values()[key]).toEqual([2, 5, 9]);
+    series.setData([bar(120, 20), bar(180, 30), bar(240, 40)]);
+    expect(indicator.values()[key]).toEqual([20, 50, 90]);
+    series.update(bar(180, 10));
+    series.update(bar(240, 8));
+    expect(indicator.values()[key]).toEqual([20, 30, 38]);
+  });
+
+  it('rolls back ordinary persistent values across repeated updates to a forming bar', () => {
+    const descriptor = compile(`version 1
+study("Persistent tail")
+var accumulated = 0
+accumulated = accumulated + close
+plot(accumulated, "Total")
+`);
+    registerIndicator(descriptor);
+    const { chart, series } = makeChart([bar(120, 2), bar(180, 3)], 190);
+    const indicator = chart.addIndicator(descriptor.id);
+    const key = descriptor.plots[0].key;
+    expect(indicator.values()[key]).toEqual([2, 5]);
+    for (const close of [4, 5, 6]) {
+      series.update(bar(180, close));
+      expect(indicator.values()[key]).toEqual([2, 2 + close]);
+    }
+    series.update(bar(240, 7));
+    expect(indicator.values()[key]).toEqual([2, 8, 15]);
+    const fresh = makeChart([bar(120, 2), bar(180, 6), bar(240, 7)], 250);
+    expect(fresh.chart.addIndicator(descriptor.id).values()[key]).toEqual(indicator.values()[key]);
+  });
+
+  it('publishes a provider-confirmed count-bar signal without a price change', () => {
+    const descriptor = compile(`version 1
+study("Provider confirmation", overlay = true)
+if close > open
+    signal("SETTLED", shape = "triangleUp", at = "below", color = lime)
+plot(close, "Close")
+`);
+    let drawn: readonly SeriesMarker[] = [];
+    const markers = descriptor.markers;
+    descriptor.markers = context => { drawn = markers?.(context) ?? []; return drawn; };
+    registerIndicator(descriptor);
+    const { chart, series } = makeChart([bar(120, 2), bar(180, 3)], 10000);
+    chart.setDataContext({ symbol: 'SAMPLE', interval: '100t' });
+    series.setData([bar(120, 2), bar(180, 3)], { confirmation: 'forming' });
+    const indicator = chart.addIndicator(descriptor.id);
+    expect(drawn.map(marker => marker.time)).toEqual([120]);
+    series.update(bar(180, 3), { confirmation: 'confirmed' });
+    indicator.values();
+    expect(drawn.map(marker => marker.time)).toEqual([120, 180]);
+    series.update(bar(180, 3));
+    indicator.values();
+    expect(drawn.map(marker => marker.time)).toEqual([120, 180]);
+  });
+
+  it('passes historical and replay provenance and replay confirmation through the existing adapter', () => {
+    const descriptor = compile(`version 1
+study("Execution state")
+plot(bar.isRealtime ? 1 : 0, "Live")
+plot(bar.isConfirmed ? 1 : 0, "Confirmed")
+`);
+    registerIndicator(descriptor);
+    const data = [bar(120, 2), bar(180, 3), bar(240, 4)];
+    const { chart, series } = makeChart(data, 10000);
+    const indicator = chart.addIndicator(descriptor.id);
+    const liveKey = descriptor.plots.find(plot => plot.title === 'Live')!.key;
+    const confirmedKey = descriptor.plots.find(plot => plot.title === 'Confirmed')!.key;
+    series.update(bar(240, 5));
+    expect(indicator.values()[liveKey][2]).toBe(1);
+    series.setData(data);
+    expect(indicator.values()[liveKey][2]).toBe(0);
+    const replay = new ReplayController(chart, {
+      series, bars: data, startIndex: 0,
+      subBars: data.flatMap(item => [bar(item.time, 2), bar(item.time + 20, 3), bar(item.time + 40, 4)]),
+    });
+    try {
+      expect(indicator.values()[liveKey]).toEqual([0]);
+      expect(indicator.values()[confirmedKey]).toEqual([1]);
+      replay.step();
+      expect(indicator.values()[liveKey]).toEqual([0, 0]);
+      expect(indicator.values()[confirmedKey]).toEqual([1, 0]);
+      replay.step(2);
+      expect(indicator.values()[confirmedKey]).toEqual([1, 1]);
+      replay.stepBack(3);
+      expect(indicator.values()[liveKey]).toEqual([0]);
+      expect(indicator.values()[confirmedKey]).toEqual([1]);
+    } finally { replay.stop(); }
+    expect(indicator.values()[liveKey]).toEqual([0, 0, 0]);
+  });
+
   it('composes a compiled calculation with native timeframe aggregation and live alignment', () => {
     const compiled = compile(`version 1
 study("Requested mean")
