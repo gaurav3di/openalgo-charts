@@ -393,7 +393,12 @@ export interface IndicatorCalcContext {
   barState: {
     /** The most recent update appended a bar rather than replacing one. */
     isNew: boolean;
-    /** The last bar has closed: its interval has elapsed on the chart clock. */
+    /**
+     * The last bar's declared duration or calendar period has elapsed on the
+     * chart clock. Count-driven and unknown intervals cannot be confirmed by
+     * the clock. Without an interval, retains the legacy last-gap estimate
+     * (a single bar is confirmed). Empty history is confirmed.
+     */
     isConfirmed: boolean;
     /** A live feed is driving updates, rather than a one-off history load. */
     isRealtime: boolean;

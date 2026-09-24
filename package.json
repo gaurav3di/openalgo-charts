@@ -97,6 +97,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:script-engine": "node scripts/check-script-engine.mjs",
     "e2e": "playwright test",
     "baseline": "node scripts/build-baseline.mjs",
     "lint": "eslint .",

@@ -75,7 +75,12 @@ const BUNDLE = new URL('../dist/openalgo-charts.mjs', import.meta.url).pathname.
 // events in 2.5.3 also serve raw chart hosts. Against 253ae71, the chart-only
 // build grows from 54.67 to 55.58 KiB (929 bytes Brotli); allow 55.75 KiB.
 // Drawing groups, widget controls and the optional controllers still shake out.
-const LIMIT_BYTES = 55.75 * 1024;
+// Known-interval indicator confirmation now shares the interval registry and
+// calendar boundary logic. This prevents session gaps becoming bar durations
+// and confirms calendar bars in their configured zone. The unchanged a1828e9
+// base bundle measures 55.58 KiB, versus 56.09 KiB with this fix (0.51 KiB).
+// These semantics also govern compiled studies on raw charts; allow 56.25 KiB.
+const LIMIT_BYTES = 56.25 * 1024;
 
 // Absent from a chart-only build. Each is a string that appears in the adapter
 // source and nowhere in the rendering core.

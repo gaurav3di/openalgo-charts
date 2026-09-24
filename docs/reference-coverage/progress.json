@@ -1,0 +1,113 @@
+{
+  "schema": 1,
+  "goalStatus": "active",
+  "scope": {
+    "indicatorCapabilities": true,
+    "nativeChartApis": true,
+    "preserveScriptEngineCompatibility": true,
+    "dropInApis": false,
+    "additionalFeedCompatibilityAdapter": false,
+    "sourceLanguageExecution": false
+  },
+  "coverage": {
+    "functionalPercentage": null,
+    "reason": "Full behavioral mapping and verification remain incomplete."
+  },
+  "streams": [
+    {
+      "id": "indicator-lifecycle",
+      "status": "partial",
+      "implemented": [
+        "Known-duration confirmation",
+        "Calendar confirmation",
+        "Sparse and single-bar confirmation",
+        "Legacy host fallback"
+      ],
+      "remaining": [
+        "Provider-confirmed count-driven bars",
+        "Historical/live/replay provenance",
+        "Realtime and rollback contract"
+      ],
+      "evidence": [
+        "tests/indicator-confirmation.test.ts",
+        "integration/script-engine.test.ts"
+      ]
+    },
+    {
+      "id": "indicator-calculations",
+      "status": "incomplete",
+      "remaining": [
+        "Missing-value and warmup contracts",
+        "Helper inventory",
+        "Series-valued lengths",
+        "Independent numerical fixtures"
+      ]
+    },
+    {
+      "id": "requested-contexts",
+      "status": "incomplete",
+      "remaining": [
+        "Requested-context expressions",
+        "Confirmed/developing/lookahead policies",
+        "Intrabar arrays",
+        "External datasets and provider capabilities"
+      ]
+    },
+    {
+      "id": "study-dependencies",
+      "status": "incomplete",
+      "remaining": [
+        "Study output inputs",
+        "Dependency ordering and cycles",
+        "Removal and persistence"
+      ]
+    },
+    {
+      "id": "inputs-visuals-alerts",
+      "status": "incomplete",
+      "remaining": [
+        "Typed and interactive inputs",
+        "Dynamic and gradient fill descriptors",
+        "Multiple tables",
+        "Drawing and marker variants",
+        "Alert frequency and confirmation policies"
+      ]
+    },
+    {
+      "id": "native-chart-apis",
+      "status": "incomplete",
+      "remaining": [
+        "Capability mapping",
+        "Chart and scale behavior",
+        "Widget and navigation",
+        "Layouts and persistence",
+        "Events",
+        "Desktop/mobile bar density",
+        "Trading and provider APIs"
+      ]
+    },
+    {
+      "id": "script-engine-integration",
+      "status": "partial",
+      "pinnedRevision": "833ce15f7ec1bb0ab8ae203b800c8858ce3b4339",
+      "implemented": [
+        "Real descriptor type assignment",
+        "Compiled-program chart tests",
+        "Pinned engine validation"
+      ],
+      "remaining": [
+        "Wider output and request fixtures",
+        "Adapter extensions for new chart capabilities",
+        "Recheck latest development revision"
+      ],
+      "evidence": [
+        "scripts/check-script-engine.mjs",
+        "integration/script-engine.test.ts"
+      ]
+    }
+  ],
+  "next": [
+    "Verify the retained native fix and script-engine integration after scope cleanup.",
+    "Complete missing native capabilities with independently authored implementation and tests."
+  ]
+}

@@ -21,6 +21,7 @@ import { IndicatorBackground } from '../primitives/indicator-background';
 
 import { isInvisible, withAlpha } from '../render/pill';
 import { DEFAULT_TIMEZONE } from '../feed/time';
+import { nextBucketStart, tryResolveInterval } from '../feed/intervals';
 import { precisionForStep } from '../scale/ticks';
 import {
   indicatorDefaults,
@@ -699,25 +700,42 @@ export class IndicatorInstance implements IndicatorApi {
    * The optional fourth argument to `calc`, rebuilt per recompute because
    * `barState` is the whole reason it exists and it moves every tick.
    *
-   * `isConfirmed` is inferred from the last bar gap against the chart clock,
-   * which is the only interval signal the engine has: it is handed bars and
-   * never a timeframe. A session break or a holiday widens that gap, so read it
-   * as "this bar's own span has elapsed", not as an exchange close.
+   * A known interval supplies the bar's duration or calendar boundary. Only
+   * legacy hosts without an interval use the observed gap: a session break is
+   * not the duration of the first candle after it. Count-driven bars cannot be
+   * confirmed from a clock reading.
    */
   private _calcContext(bars: readonly Bar[], appended: boolean): IndicatorCalcContext {
     const n = bars.length;
     const now = (): number => this._host.now?.() ?? Date.now() / 1000;
+    const interval = this._host.interval?.();
+    const timezone = this._host.timezone?.() ?? DEFAULT_TIMEZONE;
     const step = n > 1 ? bars[n - 1].time - bars[n - 2].time : 0;
+    let isConfirmed = n === 0;
+    if (n > 0) {
+      const open = bars[n - 1].time;
+      if (interval === undefined) {
+        isConfirmed = step <= 0 || now() >= open + step;
+      } else {
+        const bucketing = tryResolveInterval(interval)?.bucketing;
+        // Fixed bars can be session-aligned rather than epoch-aligned. Their
+        // recorded opening is authoritative; calendar bars use local boundaries.
+        const close = bucketing?.mode === 'interval'
+          ? (bucketing.seconds > 0 ? open + bucketing.seconds : null)
+          : bucketing === undefined ? null : nextBucketStart(bucketing, open, timezone);
+        isConfirmed = close !== null && now() >= close;
+      }
+    }
     return {
       barState: {
         isNew: appended,
-        isConfirmed: n === 0 || step <= 0 || now() >= bars[n - 1].time + step,
+        isConfirmed,
         isRealtime: this._live,
         lastIndex: n - 1,
       },
       symbol: this._host.symbol?.(),
-      interval: this._host.interval?.(),
-      timezone: this._host.timezone?.() ?? DEFAULT_TIMEZONE,
+      interval,
+      timezone,
       now,
       // Pane 0's, not this indicator's own pane: `calc` runs on the
       // instrument's bars, so the step it sizes a range in is the instrument's,
