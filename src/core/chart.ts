@@ -803,7 +803,7 @@ export class Chart {
   private readonly _seriesRecords = new WeakMap<SeriesApi, SeriesRecord>();
   private readonly _indicators: IndicatorInstance[] = [];
   private readonly _seriesOwners = new WeakMap<SeriesApi, {
-    pane: Pane; priceFormat?: AddSeriesOptions['priceFormat']; inheritedStyle: Partial<SeriesStyle>;
+    pane: Pane; priceFormat?: AddSeriesOptions['priceFormat']; inheritedStyle: Partial<SeriesStyle>; indicatorOwned: boolean;
   }>();
   private _dataContext: Readonly<ChartDataContext> | undefined;
   private _barsProvider: IndicatorBarsProvider | null = null;
@@ -1169,6 +1169,28 @@ export class Chart {
   }
 
   /**
+   * Assign a host-owned series to a scale on its current pane without replacing it.
+   * Both scales retain their configuration. Explicit series formatting applies to
+   * the target as it does when adding a series, including a shared target scale.
+   * Returns false for invalid IDs, unchanged assignments, unavailable handles or
+   * indicator-owned plots, whose pane-bound visuals must move with the whole study.
+   */
+  public setSeriesPriceScale(series: SeriesApi, scaleId: PriceScaleId): boolean {
+    if (typeof scaleId !== 'string' || (scaleId !== 'right' && scaleId !== 'left' && scaleId !== '' && !scaleId.startsWith('overlay:'))
+      || this.seriesType(series) === null) return false;
+    const record = this._seriesRecords.get(series)!, owner = this._seriesOwners.get(series)!;
+    if (owner.indicatorOwned || record.scaleId === scaleId) return false;
+    const target = owner.pane.scaleFor(scaleId);
+    record.scaleId = scaleId;
+    this._applySeriesPriceFormat(target, owner.priceFormat);
+    if (record.style.precision !== undefined) this._applyPrecision(target, record.style.precision);
+    this._recomputeAxisColumns();
+    this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
+    this.emit('objects:change', {});
+    return true;
+  }
+
+  /**
    * Change a live series' renderer without replacing its handle, data or attachments.
    * Explicit styles survive; inherited renderer defaults give way to the new type.
    * Transform renderers expect host-prepared bars and never transform data here.
@@ -1249,7 +1271,7 @@ export class Chart {
      */
     const inheritedStyle = { ...getChartType(type).defaultStyle };
     for (const key of Object.keys(options.style ?? {}) as (keyof SeriesStyle)[]) delete inheritedStyle[key];
-    const owner = { pane: this._panes[paneIndex], priceFormat: options.priceFormat, inheritedStyle };
+    const owner = { pane: this._panes[paneIndex], priceFormat: options.priceFormat, inheritedStyle, indicatorOwned: !claimPrimary };
     const scale = owner.pane.scaleOf(record);
     this._applySeriesPriceFormat(scale, options.priceFormat);
     if (record.style.precision !== undefined) this._applyPrecision(scale, record.style.precision);
@@ -3409,8 +3431,9 @@ export class Chart {
   private _recomputeAxisColumns(): void {
     const anyLeft = this._panes.some((p) => p.hasLeftScale());
     const anyRight = this._panes.some((p) => p.usesScale('right'));
+    const anySeries = this._panes.some((p) => p.series().length > 0);
     const left = anyLeft ? this._priceAxisWidth : 0;
-    const right = anyRight || !anyLeft ? this._priceAxisWidth : 0;
+    const right = anyRight || !anySeries ? this._priceAxisWidth : 0;
     if (left === this._leftAxisWidth && right === this._rightAxisWidth) return;
     this._leftAxisWidth = left;
     this._rightAxisWidth = right;

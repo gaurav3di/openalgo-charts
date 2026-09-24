@@ -11,6 +11,14 @@
  * For helpers accepting missing-value options, omitted options keep the
  * established calculation. Supplied options treat NaN and infinities as
  * missing. An empty options object selects chronological propagation.
+ *
+ * Varying window lengths must align with the source. Each bar uses its own
+ * positive safe-integer length; NaN lengths produce gaps without discarding
+ * source history. Other invalid numeric lengths throw RangeError, malformed
+ * elements throw TypeError, and unequal array lengths throw RangeError.
+ * Array lengths default to chronological propagation. With `skip`, changed
+ * lengths reevaluate finite history even on missing source bars. These paths
+ * use O(n + sum of evaluated window lengths) time and O(n) working storage.
  */
 
 import type { NumericalWindowOptions } from './statistics';
@@ -54,6 +62,49 @@ function observationWindows(
       if (window.length > period && !Number.isFinite(window.shift()!.value)) missing--;
     }
     if (!previousOnly && window.length === period && missing === 0) out[i] = evaluate(window, i);
+  }
+  return out;
+}
+
+function checkedVaryingParameter(value: number, minimum: number, label: string, missingAllowed: boolean): void {
+  if (typeof value !== 'number') throw new TypeError(`${label} must contain numbers`);
+  if (missingAllowed && Number.isNaN(value)) return;
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    throw new RangeError(`${label} must be a safe integer greater than or equal to ${minimum}`);
+  }
+}
+
+function checkedParameterSeries(parameters: readonly number[], length: number, minimum: number, label: string): void {
+  if (!Array.isArray(parameters)) throw new TypeError(`${label} must be an array`);
+  if (parameters.length !== length) throw new RangeError(`${label} array length must match the source`);
+  for (let i = 0; i < parameters.length; i++) checkedVaryingParameter(parameters[i], minimum, label, true);
+}
+
+/** Retained history lets later windows grow past an earlier, shorter window. */
+function varyingWindows(
+  values: readonly number[], periods: readonly number[], options: NumericalWindowOptions | undefined,
+  evaluate: (window: readonly Observation[], index: number) => number,
+  previousOnly = false,
+): number[] {
+  checkedParameterSeries(periods, values.length, 1, 'Window length');
+  const policy = checkedPolicy(1, options === undefined ? {} : options);
+  const out = new Array<number>(values.length).fill(NaN);
+  const history: Observation[] = [];
+  let consecutive = 0;
+  const observe = (value: number, index: number): void => {
+    const finite = Number.isFinite(value);
+    consecutive = finite ? consecutive + 1 : 0;
+    if (policy === 'propagate' || finite) history.push({ value, index });
+  };
+  for (let i = 0; i < values.length; i++) {
+    const value = values[i];
+    if (!previousOnly) observe(value, i);
+    const period = periods[i];
+    if (!Number.isNaN(period) && period <= history.length &&
+        (policy === 'skip' || period <= consecutive) && (!previousOnly || Number.isFinite(value))) {
+      out[i] = evaluate(history.slice(history.length - period), i);
+    }
+    if (previousOnly) observe(value, i);
   }
   return out;
 }
@@ -193,7 +244,11 @@ function observedSmoothing(
  * window. Warmup is NaN. Option-path periods must be positive safe integers;
  * invalid periods throw RangeError and malformed options throw TypeError.
  */
-export function sma(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
+export function sma(values: readonly number[], period: number, options?: NumericalWindowOptions): number[];
+/** Bar-aligned lengths use each current window; NaN lengths give gaps. Arrays default to propagation. */
+export function sma(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[];
+export function sma(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[] {
+  if (typeof period !== 'number') return varyingWindows(values, period, options, observationMean);
   if (options !== undefined) return observationWindows(values, period, options, observationMean);
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
@@ -226,7 +281,12 @@ export function sma(values: readonly number[], period: number, options?: Numeric
  * chronological window. Warmup is NaN. The option path validates a positive
  * safe-integer period and a missing policy, throwing RangeError or TypeError.
  */
-export function wma(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
+export function wma(values: readonly number[], period: number, options?: NumericalWindowOptions): number[];
+/** Bar-aligned lengths weight the newest selected observation most; NaN lengths give gaps. */
+export function wma(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[];
+export function wma(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[] {
+  if (typeof period !== 'number') return varyingWindows(values, period, options,
+    (window) => finiteAverage(window.map((item) => item.value), window.map((_, i) => i + 1)));
   if (options !== undefined) return observationWindows(values, period, options, (window) => {
     return finiteAverage(window.map((item) => item.value), window.map((_, i) => i + 1));
   });
@@ -274,7 +334,12 @@ export function rma(values: readonly number[], period: number, options?: Numeric
  * warmup is NaN. Invalid option-path periods throw RangeError, malformed
  * options TypeError. A period must be a positive safe integer.
  */
-export function stdev(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
+export function stdev(values: readonly number[], period: number, options?: NumericalWindowOptions): number[];
+/** Bar-aligned lengths select the current population; NaN lengths give gaps. Arrays default to propagation. */
+export function stdev(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[];
+export function stdev(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[] {
+  if (typeof period !== 'number') return varyingWindows(values, period, options,
+    (window) => observationDeviation(window, true));
   if (options !== undefined) return observationWindows(values, period, options,
     (window) => observationDeviation(window, true));
   const n = values.length;
@@ -300,7 +365,12 @@ export function stdev(values: readonly number[], period: number, options?: Numer
  * all-missing history is NaN. Invalid option-path periods throw RangeError;
  * malformed policies throw TypeError. Periods must be positive safe integers.
  */
-export function highest(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
+export function highest(values: readonly number[], period: number, options?: NumericalWindowOptions): number[];
+/** Bar-aligned lengths select the current maximum window; NaN lengths give gaps. */
+export function highest(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[];
+export function highest(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[] {
+  if (typeof period !== 'number') return varyingWindows(values, period, options,
+    (window) => observationExtreme(window, true).value);
   if (options !== undefined) return observationWindows(values, period, options,
     (window) => observationExtreme(window, true).value);
   const n = values.length;
@@ -321,7 +391,12 @@ export function highest(values: readonly number[], period: number, options?: Num
  * all-missing history is NaN. Invalid option-path periods throw RangeError;
  * malformed policies throw TypeError. Periods must be positive safe integers.
  */
-export function lowest(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
+export function lowest(values: readonly number[], period: number, options?: NumericalWindowOptions): number[];
+/** Bar-aligned lengths select the current minimum window; NaN lengths give gaps. */
+export function lowest(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[];
+export function lowest(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[] {
+  if (typeof period !== 'number') return varyingWindows(values, period, options,
+    (window) => observationExtreme(window, false).value);
   if (options !== undefined) return observationWindows(values, period, options,
     (window) => observationExtreme(window, false).value);
   const n = values.length;
@@ -404,7 +479,12 @@ export function roc(values: readonly number[], n: number): number[] {
  * multiplicity and warmup is NaN. Invalid option-path periods throw RangeError,
  * malformed options TypeError. Periods must be positive safe integers.
  */
-export function dev(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
+export function dev(values: readonly number[], period: number, options?: NumericalWindowOptions): number[];
+/** Bar-aligned lengths select the current deviation window; NaN lengths give gaps. */
+export function dev(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[];
+export function dev(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[] {
+  if (typeof period !== 'number') return varyingWindows(values, period, options,
+    (window) => observationDeviation(window, false));
   if (options !== undefined) return observationWindows(values, period, options,
     (window) => observationDeviation(window, false));
   const n = values.length;
@@ -428,7 +508,15 @@ export function dev(values: readonly number[], period: number, options?: Numeric
  * Invalid option-path periods throw RangeError; malformed policies throw
  * TypeError. Periods must be positive safe integers.
  */
-export function percentRank(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
+export function percentRank(values: readonly number[], period: number, options?: NumericalWindowOptions): number[];
+/** Bar-aligned lengths count previous observations. A missing current subject or length gives NaN. */
+export function percentRank(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[];
+export function percentRank(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[] {
+  if (typeof period !== 'number') return varyingWindows(values, period, options, (window, index) => {
+    let count = 0;
+    for (const item of window) if (item.value <= values[index]) count++;
+    return count * 100 / window.length;
+  }, true);
   if (options !== undefined) return observationWindows(values, period, options, (window, index) => {
     let count = 0;
     for (const item of window) if (item.value <= values[index]) count++;
@@ -499,7 +587,12 @@ export function vwma(
  * history are NaN. Invalid option-path periods throw RangeError; malformed
  * policies throw TypeError. Periods must be positive safe integers.
  */
-export function highestBars(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
+export function highestBars(values: readonly number[], period: number, options?: NumericalWindowOptions): number[];
+/** Bar-aligned lengths retain original offsets and latest ties; NaN lengths give gaps. */
+export function highestBars(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[];
+export function highestBars(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[] {
+  if (typeof period !== 'number') return varyingWindows(values, period, options,
+    (window, index) => observationExtreme(window, true).index - index);
   if (options !== undefined) return observationWindows(values, period, options,
     (window, index) => observationExtreme(window, true).index - index);
   return extremeBars(values, period, true);
@@ -514,7 +607,12 @@ export function highestBars(values: readonly number[], period: number, options?:
  * RangeError; malformed policies throw TypeError. Periods must be positive
  * safe integers.
  */
-export function lowestBars(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
+export function lowestBars(values: readonly number[], period: number, options?: NumericalWindowOptions): number[];
+/** Bar-aligned lengths retain original offsets and latest ties; NaN lengths give gaps. */
+export function lowestBars(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[];
+export function lowestBars(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[] {
+  if (typeof period !== 'number') return varyingWindows(values, period, options,
+    (window, index) => observationExtreme(window, false).index - index);
   if (options !== undefined) return observationWindows(values, period, options,
     (window, index) => observationExtreme(window, false).index - index);
   return extremeBars(values, period, false);
@@ -696,12 +794,58 @@ export function cci(values: readonly number[], period: number): number[] {
  * value `right` bars back. Comparisons are strict on both sides, so a tie is
  * not a pivot.
  */
-export function pivotHigh(values: readonly number[], left: number, right: number): number[] {
+export function pivotHigh(values: readonly number[], left: number, right: number): number[];
+/**
+ * Array widths align with the source and are read on the confirmation bar.
+ * NaN array elements give gaps; scalar companions and other array elements
+ * must be nonnegative safe integers. Mismatched array lengths throw RangeError.
+ * Zero widths are valid. Finite neighbors and strict comparisons are required.
+ * Results stay on confirmation bars, including repeated confirmations of one
+ * candidate. Invalid numbers throw RangeError; malformed elements TypeError.
+ */
+export function pivotHigh(values: readonly number[], left: number | readonly number[], right: number | readonly number[]): number[];
+export function pivotHigh(values: readonly number[], left: number | readonly number[], right: number | readonly number[]): number[] {
+  if (typeof left !== 'number' || typeof right !== 'number') return varyingPivot(values, left, right, true);
   return pivot(values, left, right, true);
 }
 
-export function pivotLow(values: readonly number[], left: number, right: number): number[] {
+export function pivotLow(values: readonly number[], left: number, right: number): number[];
+/**
+ * Array widths follow pivotHigh's validation and confirmation placement, with
+ * strictly lower candidates. Missing widths or neighbors give NaN. Both widths
+ * are read from the current confirmation bar, even if the candidate repeats.
+ */
+export function pivotLow(values: readonly number[], left: number | readonly number[], right: number | readonly number[]): number[];
+export function pivotLow(values: readonly number[], left: number | readonly number[], right: number | readonly number[]): number[] {
+  if (typeof left !== 'number' || typeof right !== 'number') return varyingPivot(values, left, right, false);
   return pivot(values, left, right, false);
+}
+
+function varyingPivot(
+  values: readonly number[], left: number | readonly number[], right: number | readonly number[], wantHigh: boolean,
+): number[] {
+  for (const [label, widths] of [['Left pivot width', left], ['Right pivot width', right]] as const) {
+    if (typeof widths === 'number') checkedVaryingParameter(widths, 0, label, false);
+    else checkedParameterSeries(widths, values.length, 0, label);
+  }
+  const out = new Array<number>(values.length).fill(NaN);
+  for (let i = 0; i < values.length; i++) {
+    const before = typeof left === 'number' ? left : left[i];
+    const after = typeof right === 'number' ? right : right[i];
+    // Check available history before adding widths or scanning a large span.
+    if (Number.isNaN(before) || Number.isNaN(after) || after > i || before > i - after) continue;
+    const candidate = i - after;
+    const value = values[candidate];
+    if (!Number.isFinite(value)) continue;
+    let extreme = true;
+    for (let index = candidate - before; index <= i && extreme; index++) {
+      if (index === candidate) continue;
+      const neighbor = values[index];
+      if (!Number.isFinite(neighbor) || (wantHigh ? neighbor >= value : neighbor <= value)) extreme = false;
+    }
+    if (extreme) out[i] = value;
+  }
+  return out;
 }
 
 function pivot(values: readonly number[], left: number, right: number, wantHigh: boolean): number[] {

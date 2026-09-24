@@ -28,7 +28,7 @@ const scale = series.priceScale();         // the PriceScale this series maps to
 series.remove();                           // detach from the pane + free its data
 ```
 
-`addSeries` also accepts `priceScaleId` (`'right'` / `'left'` / `''` overlay) and
+`addSeries` also accepts `priceScaleId` (`'right'`, `'left'`, `''` or `overlay:name`) and
 `priceFormat`. See [Scales & panes](/docs/scales-and-panes#left-right--overlay-price-scales).
 `applyOptions` / `remove` make dynamic charts (add, restyle, hide, and remove series at
 runtime) straightforward without recreating the chart.
@@ -52,6 +52,25 @@ type on a live owned series throws before mutation. Transform renderers require
 host-prepared bars; this operation does not transform the supplied data.
 `widget.setChartType` uses this operation, so stored `widget.series` handles and
 markers remain valid across type changes.
+
+### Change a live series price scale
+
+```ts
+chart.setSeriesPriceScale(series, 'left');
+chart.setSeriesPriceScale(series, 'overlay:spread');
+chart.setSeriesPriceScale(series, 'right');
+```
+
+The series keeps its handle, data, styles, pane, primary role and markers. Source
+and target scales retain their settings, including manual ranges and ratio locks.
+Explicit series formatting applies to the target and any series sharing it.
+Axis columns update, the chart repaints and `objects:change` fires once, without
+resetting data or recalculating studies.
+
+The method returns `false` for an unchanged assignment, invalid scale ID, foreign
+or removed handle, destroyed chart, or indicator-owned plot. Whole-study scale
+reassignment is not implemented. See [live scale reassignment](/docs/scales-and-panes#reassign-a-live-series)
+for formatting and axis behavior.
 
 `setData`, `prependData`, and `update` accept three item shapes (normalized to
 bars internally, so `getData` always returns `Bar[]`):

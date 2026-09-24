@@ -135,7 +135,11 @@ Per frame, for each active scale on a pane: skip if `autoScale` is false; scan o
 | `''` | None (hidden) | Independently | Volume pinned inside the price pane. |
 | `'overlay:name'` | None (hidden) | Independently per name | Multiple comparison instruments without sharing price units. |
 
-A pane creates the left and overlay scales lazily, on the first `addSeries` that names them (`Pane._scaleFor`). When any pane has a live left scale, the chart reserves a chart-wide left column of `priceAxisWidth` px and shifts every plot right by it.
+A pane creates the left and overlay scales lazily when first requested. When any
+pane has a series on the left scale, the chart reserves a chart-wide left column
+of `priceAxisWidth` px and shifts every plot right by it. A right column is
+reserved while any series uses it. A chart containing only hidden-scale series
+reserves neither column; a chart with no series keeps its default right column.
 
 Series using the same named overlay on the same pane share its scale. Named
 overlays add no axis column and are released when their last series is removed.
@@ -150,11 +154,44 @@ const vol = chart.addSeries('histogram', {
 vol.priceScale().setOptions({ marginTop: 0.82, marginBottom: 0 });  // bottom ~18%
 ```
 
-**`pane.priceScale` is the `'right'` scale only.** The left and overlay scales are private; reach them with `series.priceScale()` or `pane.scaleOf(record)`.
+**`pane.priceScale` is the `'right'` scale only.** Reach other scales with
+`series.priceScale()`, `pane.scaleOf(record)` or `pane.scaleFor(scaleId)`.
 
-**Prices quoted for a pane follow its readout scale**, which is the scale its first visible price series maps to and falls back to the right one. That covers the crosshair price tag, the last-price line and tag, `chart.priceToCoordinate` / `coordinateToPrice`, and the axis drag, so a pane whose series were moved to the left strip is labelled and read in the same scale rather than tagging the cursor with the right scale's untouched `0..1` placeholder. `pane.readoutScale()` returns it.
+### Reassign a live series
 
-**`PrimitiveRenderContext.priceScale` and the `getState` snapshot still read the right scale.** A primitive on a pane whose prices live on the left axis therefore draws against a scale nothing has measured. Keep primitives on panes whose values sit on the right scale until that context carries the readout scale too.
+```ts
+chart.setSeriesPriceScale(series, 'left');
+chart.setSeriesPriceScale(series, 'overlay:spread');
+chart.setSeriesPriceScale(series, 'right');
+```
+
+`setSeriesPriceScale(series, scaleId): boolean` changes one host-created series
+on its current pane. Its handle, data, styles, primary role and marker bindings
+survive. Source and target scales retain their settings, manual ranges and ratio
+locks. Vacated scales remain available for reuse without drawing unused labels;
+the chart releases an axis column when no series uses that side on any pane.
+Crosshair price tags are omitted when the readout scale is hidden.
+Last-price and series-value tags currently render only on the right axis; the
+left axis shows its tick labels and crosshair tag.
+
+Explicit series `priceFormat` is applied to the target, followed by its style
+precision, just as with `addSeries`. Formatting is shared by all series on that
+target scale; the source scale's formatting is unchanged. Without an explicit
+format or precision, the target keeps its formatter. The operation repaints and
+emits one `objects:change`, with no data reset or indicator recalculation.
+
+It returns false before mutation for an invalid ID, unchanged assignment,
+foreign or removed handle, destroyed chart, or indicator-owned plot. A study's
+plots, fills, levels and other scale-bound visuals need a whole-study move;
+independent plot reassignment is unsupported. `movePriceAxis` instead moves all
+series on one visible side together with that scale's configuration.
+
+**Prices quoted for a pane follow its readout scale**, which is the scale its first visible price series maps to and falls back to the right one. That covers the crosshair price tag, last-price line, `chart.priceToCoordinate` / `coordinateToPrice`, and the axis drag, so a pane whose series were moved to the left strip is labelled and read in the same scale rather than tagging the cursor with the right scale's untouched `0..1` placeholder. `pane.readoutScale()` returns it. Last-price tags currently render only on the right axis.
+
+**`PrimitiveRenderContext.priceScale` reads the right scale.** A primitive using
+that field does not follow a series reassignment; its owner must select the
+appropriate scale. Series-bound markers follow their series automatically.
+State snapshots include the right scale and all configured secondary scales.
 
 ## TimeScaleOptions
 

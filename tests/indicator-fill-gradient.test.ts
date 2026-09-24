@@ -15,20 +15,20 @@ import { makeCtx, type RecordingContext } from './helpers/fake-ctx';
  */
 interface Calls {
   translate: number[][];
-  gradients: { y1: number; stops: [number, string][] }[];
+  gradients: { y0: number; y1: number; stops: [number, string][] }[];
   fills: unknown[];
   path: number[][];
 }
 
 function read(rec: RecordingContext): Calls {
   const out: Calls = { translate: [], gradients: [], fills: [], path: [] };
-  let current: { y1: number; stops: [number, string][] } | null = null;
+  let current: { y0: number; y1: number; stops: [number, string][] } | null = null;
   for (const op of rec.ops) {
     if (op.type === 'translate') out.translate.push(op.args);
     else if (op.type === 'moveTo' || op.type === 'lineTo') out.path.push(op.args);
     else if (op.type === 'fill') out.fills.push(op.fillStyle);
     else if (op.type === 'createLinearGradient') {
-      current = { y1: op.args[3], stops: [] };
+      current = { y0: op.args[1], y1: op.args[3], stops: [] };
       out.gradients.push(current);
     } else if (op.type === 'addColorStop' && current !== null) {
       current.stops.push([op.args[0], op.text ?? '']);
@@ -73,9 +73,8 @@ describe('IndicatorFill gradient', () => {
     f.draw(ctx, rc);
     const calls = read(rec);
     // y(70) = (100-70)*2 = 60, y(30) = (100-30)*2 = 140
-    expect(calls.translate).toEqual([[0, 60]]);
     expect(calls.gradients).toHaveLength(1);
-    expect(calls.gradients[0].y1).toBe(80);
+    expect([calls.gradients[0].y0, calls.gradients[0].y1]).toEqual([60, 140]);
     expect(calls.gradients[0].stops).toEqual([[0, '#aaa'], [1, '#bbb']]);
     expect(calls.fills).toHaveLength(1);
     expect(calls.fills[0]).not.toBe('#0f0');
@@ -92,8 +91,7 @@ describe('IndicatorFill gradient', () => {
     f.draw(ctx, rc);
     const calls = read(rec);
     // max 90 -> y 20, min 10 -> y 180
-    expect(calls.translate).toEqual([[0, 20], [0, 20]]);
-    expect(calls.gradients[0].y1).toBe(160);
+    expect([calls.gradients[0].y0, calls.gradients[0].y1]).toEqual([20, 180]);
   });
 
   it('one value given, the other from the band', () => {
@@ -106,8 +104,7 @@ describe('IndicatorFill gradient', () => {
     f.draw(ctx, rc);
     const calls = read(rec);
     // top pinned at 100 -> y 0; bottom from the band's low 40 -> y 120
-    expect(calls.translate).toEqual([[0, 0]]);
-    expect(calls.gradients[0].y1).toBe(120);
+    expect([calls.gradients[0].y0, calls.gradients[0].y1]).toEqual([0, 120]);
   });
 
   it('a degenerate band still paints', () => {
@@ -119,7 +116,7 @@ describe('IndicatorFill gradient', () => {
     const { ctx, rec } = makeCtx();
     f.draw(ctx, rc);
     const calls = read(rec);
-    expect(calls.gradients[0].y1).toBe(1);
+    expect(calls.gradients[0].y1 - calls.gradients[0].y0).toBe(1);
     expect(calls.fills).toHaveLength(1);
   });
 
@@ -140,7 +137,8 @@ describe('IndicatorFill gradient', () => {
     expect(calls.fills).not.toContain('#0f0');
     expect(calls.fills).not.toContain('#f00');
     // same anchor for both runs: the shading does not restart per run
-    expect(calls.translate).toEqual([[0, 80], [0, 80]]);
+    expect(calls.gradients).toHaveLength(1);
+    expect([calls.gradients[0].y0, calls.gradients[0].y1]).toEqual([80, 120]);
   });
 
   it('setOptions clears the gradient back to the flat fill', () => {
@@ -225,7 +223,6 @@ describe('IndicatorFill per-bar colour', () => {
     f.draw(ctx, rc);
     const calls = read(rec);
     expect(calls.gradients).toHaveLength(1);
-    expect(calls.translate).toHaveLength(1);
     expect(calls.fills[1]).toBe('#333');
   });
 

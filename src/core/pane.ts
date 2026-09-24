@@ -235,9 +235,8 @@ export class Pane {
   /**
    * The scale for an id, created if this pane has never used it. A host acting
    * on one axis (a price-axis menu) needs the scale a side *would* use, not
-   * only the ones series happen to occupy; an empty scale draws nothing,
-   * because both the axis strip and the left column are gated on a scale
-   * having been measured.
+   * only the ones series happen to occupy. Unused scales retain their settings,
+   * while axis labels and columns follow the series that use them.
    */
   public scaleFor(id: PriceScaleId): PriceScale {
     return this._scaleFor(id);
@@ -674,7 +673,7 @@ export class Pane {
     }
 
     // Left price axis strip (absolute coords), drawn before the plot is shifted.
-    if (this._leftScale && layout.plotLeft > 0) {
+    if (this._leftScale && this.usesScale('left') && layout.plotLeft > 0) {
       if (this._leftScale.scaled) {
         drawLeftPriceAxis(g, this._leftScale, layout.plotLeft, layout.plotHeight, dpr, axisStyle);
       }
@@ -842,7 +841,9 @@ export class Pane {
     const allowed = bands.length > 0 ? resolveAxisLabels(bands, 2 * dpr) : [];
     const reserved: AxisLabelBand[] | undefined =
       bands.length > 0 ? bands.filter((_, i) => allowed[i]) : undefined;
-    if (this.priceScale.scaled) drawPriceAxis(g, this.priceScale, layout, dpr, axisStyle, reserved);
+    if (layout.priceAxisWidth > 0 && this.priceScale.scaled && (this.usesScale('right') || this._series.length === 0)) {
+      drawPriceAxis(g, this.priceScale, layout, dpr, axisStyle, reserved);
+    }
     if (showValueTags) {
       for (let i = 0; i < valueTags.length; i++) {
         if (!allowed[tagBase + i]) continue;
@@ -908,12 +909,14 @@ export class Pane {
       // (hovered pane only)
       if (showTags && cross.yLocal !== null) {
         const scale = this._readoutScale();
-        const text = scale.format(scale.yToPrice(cross.yLocal));
         const onLeft = scale === this._leftScale && layout.plotLeft > 0;
-        // The tag is drawn rightward from the x it is given, so putting one in
-        // the left strip means starting a whole tag-width back from the plot.
-        const x = onLeft ? -this._tagWidth(g, text, dpr) : layout.plotWidth * dpr;
-        drawCrosshairTag(g, text, x, cross.yLocal * dpr, dpr, tagBg, ctx.theme.lastPriceText, 'right');
+        const onRight = scale === this._rightScale && layout.priceAxisWidth > 0 && (this.usesScale('right') || this._series.length === 0);
+        if (onLeft || onRight) {
+          const text = scale.format(scale.yToPrice(cross.yLocal));
+          // A left tag starts one tag-width before the plot because it draws rightward.
+          const x = onLeft ? -this._tagWidth(g, text, dpr) : layout.plotWidth * dpr;
+          drawCrosshairTag(g, text, x, cross.yLocal * dpr, dpr, tagBg, ctx.theme.lastPriceText, 'right');
+        }
       }
       // date/time tag on the bottom pane's axis strip (cross.x is plot-relative)
       if (showTags && cross.showTimeTag && cross.x >= 0 && cross.x <= layout.plotWidth) {

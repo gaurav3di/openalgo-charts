@@ -564,8 +564,10 @@ export class IndicatorInstance implements IndicatorApi {
       for (let j = 0; j < this._barCount; j++) {
         const first = a[j] ?? null;
         const second = b[j] ?? null;
-        const color = spec.colorBy?.({ index: j, a: first, b: second, values: this._values, settings });
-        pts.push({ index: j + shift, a: first, b: second, color });
+        const context = { index: j, a: first, b: second, values: this._values, settings };
+        const color = spec.colorBy?.(context);
+        const gradient = spec.gradientBy?.(context);
+        pts.push({ index: j + shift, a: first, b: second, color, gradient });
       }
       band.setPoints(pts);
     }

@@ -17,7 +17,7 @@
   {
     "name": "Indicator tier (105 built-ins + Tier-2 contract)",
     "path": "dist/openalgo-charts.indicators.mjs",
-    "limit": "32.5 kB",
+    "limit": "33 kB",
     "brotli": true
   },
   {

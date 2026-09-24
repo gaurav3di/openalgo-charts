@@ -42,17 +42,20 @@
         "Running extrema and crossing/rising/falling predicates",
         "Explicit missing-observation policies on new helpers",
         "Opt-in missing-observation policies on eleven established helpers",
-        "Finite extreme averages and centered deviations in opt-in paths"
+        "Finite extreme averages and centered deviations in opt-in paths",
+        "Aligned per-bar lengths on nine window helpers",
+        "Per-bar pivot widths resolved at confirmation indices"
       ],
       "evidence": [
         "tests/indicator-statistics.test.ts",
-        "tests/indicator-missing-values.test.ts"
+        "tests/indicator-missing-values.test.ts",
+        "tests/indicator-varying-windows.test.ts"
       ],
       "remaining": [
         "Missing-value and warmup contracts",
         "Missing-value options on remaining composed helpers",
         "Composed calculations and arbitrary anchor policies",
-        "Series-valued lengths",
+        "Varying parameters on remaining composed calculations",
         "Independent numerical fixtures"
       ]
     },
@@ -90,15 +93,18 @@
       "status": "partial",
       "implemented": [
         "Per-bar fill colors and whole-band computed gradients",
-        "Multiple named tables and overlay ownership"
+        "Multiple named tables and overlay ownership",
+        "Per-bar fill gradient anchors and colors",
+        "Gradient price anchoring across frames and pane transforms"
       ],
       "evidence": [
         "tests/indicator-visual-descriptors.test.ts",
-        "tests/e2e/indicator-visuals.spec.ts"
+        "tests/e2e/indicator-visuals.spec.ts",
+        "tests/indicator-fill-varying-gradient.test.ts",
+        "tests/e2e/native-fill-gradients.spec.ts"
       ],
       "remaining": [
         "Typed and interactive inputs",
-        "Per-bar gradient anchors and colors",
         "Additional table cell formatting",
         "Drawing and marker variants",
         "Alert frequency and confirmation policies"
@@ -108,7 +114,8 @@
       "id": "native-chart-apis",
       "status": "partial",
       "remaining": [
-        "Multiple visible axes and runtime scale reassignment",
+        "Multiple visible axes and left-axis value tags",
+        "Whole-study scale reassignment",
         "Pane placement and collapse",
         "History beyond drawing edits",
         "Widget and navigation",
@@ -122,7 +129,9 @@
         "Complete existing scale snapshots and ratio-lock restoration",
         "Secondary scales in workspace documents and symbol-change view reset",
         "Direct time-scale mutation repaint, events and linked navigation",
-        "Stable series renderer changes with widget state synchronization"
+        "Stable series renderer changes with widget state synchronization",
+        "Runtime price-scale reassignment for independent host-owned series",
+        "Retained vacant scale settings without unused axis columns"
       ],
       "evidence": [
         "tests/navigation-settings.test.ts",
@@ -136,7 +145,9 @@
         "tests/time-scale-notifications.test.ts",
         "tests/widget-chart-type-state.test.ts",
         "tests/e2e/native-timeframe-navigation.spec.ts",
-        "tests/e2e/widget-ui-253.spec.ts"
+        "tests/e2e/widget-ui-253.spec.ts",
+        "tests/series-scale-assignment.test.ts",
+        "tests/e2e/native-series-scale-assignment.spec.ts"
       ]
     },
     {
@@ -178,21 +189,21 @@
     ]
   },
   "validation": {
-    "chartTests": 6377,
-    "chartTestFiles": 277,
+    "chartTests": 6486,
+    "chartTestFiles": 280,
     "compiledProgramTests": 5,
     "demoTests": 424,
     "demoTestFiles": 35,
-    "browserEvidence": "Density, autofit, visual descriptors and scale restoration pass on all three browser engines. Twelve further cases verify requested calculations, linked navigation, retained series state and example-host autofit. The new executable website example passes on all three engines. Screenshots were inspected; traffic uses fixtures rather than live brokers.",
+    "browserEvidence": "Earlier density, autofit, visual descriptors, scale restoration, requested calculations and navigation checks passed. Six further cases verify per-bar gradient pixels and live series scale reassignment on all three engines. Updated fill and varying-window website examples run on all three engines. Screenshots were inspected; traffic uses fixtures rather than live brokers.",
     "website": "63 static pages built successfully",
-    "chartOnlyBrotliKiB": 57.55,
-    "chartOnlyBudgetKiB": 57.75,
-    "baseBrotliKB": 98.13,
-    "indicatorBrotliKB": 32.28,
-    "allTiersBrotliKB": 270.69,
-    "budgetChange": "After visual ownership and scale snapshots, settled navigation and stable renderer changes add 0.42 KiB to the chart-only build. Requested expressions and opt-in missing policies add 1.40 kB to the optional indicator tier. Full package budgets retain strict optional-tier removal checks.",
-    "review": "Four earlier findings and six further numerical, navigation and renderer-state findings were reproduced, fixed and independently rechecked.",
-    "packageVerification": "Full verify passed. A subsequent private function extraction for static dependency tracing passed all 99 affected numerical tests, rebuild, typecheck, declaration checks, size and tree-shake checks, compiled integration and the website build.",
+    "chartOnlyBrotliKiB": 57.84,
+    "chartOnlyBudgetKiB": 58,
+    "baseBrotliKB": 98.28,
+    "indicatorBrotliKB": 32.74,
+    "allTiersBrotliKB": 271.29,
+    "budgetChange": "Runtime series scale assignment and price-anchored per-bar gradients add 0.29 KiB to chart-only imports (57.55 to 57.84); allow 58 KiB. Varying windows and pivot widths add 0.46 kB to the optional indicator tier (32.28 to 32.74); allow 33 kB. Other tier limits are unchanged. Optional-tier removal checks pass.",
+    "review": "Earlier numerical, navigation and renderer-state findings were fixed and independently rechecked. New review found no blocking defects in varying windows, scale assignment or fills; 40,000 bounded numerical oracle comparisons and strict SVG gradient probes passed. Crossing semantics were clarified in comments.",
+    "packageVerification": "Verify passed lint, typecheck, 6486 unit tests, seven endurance-harness checks, build, 424 example tests and declaration identity. Its size stage reported the measured feature increase; adjusted indicator and chart-only budgets then passed size and tree-shake checks. Five compiled-program checks and public adapter typechecking passed.",
     "latestEngineSourceReview": "d95bd70daf598892d40a9265607537b86ce712dd has no source changes relative to the pinned tested engine revision.",
     "apiDocumentation": "Generated with warnings treated as errors",
     "skillsCoverage": "972 of 972 named exports and registry entries; not functional coverage"

@@ -8,13 +8,15 @@ The [design](design.md) sets the boundaries and the [plan](plan.md) lists the re
 
 - A saved CSS-pixel spacing preference keeps candle density consistent across screen widths. The widget defaults to 8 pixels while explicit count preferences remain supported.
 - Mouse and pen drift up to 3 pixels no longer disables price autofit during horizontal dragging. Deliberate vertical panning and already-manual axes retain their behavior.
-- Fill descriptors support per-bar colors and static or computed gradients across a whole band.
+- Fill descriptors support per-bar colors and gradients, plus static or computed whole-band gradients. Price anchors remain aligned during panning, inversion and pane movement.
 - Indicators can own multiple named tables, including price-pane overlays. Their resources follow visibility, updates, pane moves and removal.
 - Fourteen numerical helpers add statistics, running extrema and crossing/rising/falling predicates with explicit missing-observation rules.
 - Eleven established numerical helpers accept optional missing-value policies while retaining omitted-option behavior. The new paths preserve finite extreme averages and deviations.
+- Nine window helpers accept aligned per-bar lengths; both pivot helpers accept per-bar left/right widths. Scalar behavior remains unchanged, and missing observations retain their original indices.
 - `securityExpression` calculates on aggregate timeframe bars before aligning results, with confirmed, developing and explicit lookahead modes. Session anchors use local wall-clock time across offset changes.
 - Direct time-scale navigation repaints and publishes settled range events to linked charts. Explicit same-range requests cancel pending motion, and reentrant restore callbacks receive a final repaint.
 - Native series renderer changes and widget chart-type changes retain series handles, data, styles, price scales and marker bindings. Live type lookup keeps host controls and saved state synchronized.
+- Independent host-owned series can change price scales while retaining their handle, data, markers and pane. Configured vacant scales retain their settings without reserving visible axis columns. Whole-study reassignment remains unfinished.
 - Chart and workspace snapshots preserve existing secondary scales, precision, fixed/manual ranges and ratio locks. Symbol changes clear view ranges from every scale.
 - Known fixed intervals confirm the newest bar at its recorded opening plus its duration, including sparse data and weekend gaps.
 - Registered calendar intervals use the next boundary in their configured timezone.

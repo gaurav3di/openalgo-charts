@@ -43,6 +43,42 @@ function mount(fill: IndicatorFillSpec, extra: Partial<IndicatorDescriptor> = {}
 }
 
 describe('native fill descriptor rendering', () => {
+  it('resolves per-bar gradient anchors before plot displacement', () => {
+    const f = mount({
+      between: ['a', 'b'],
+      gradientBy: ({ index, a, b, values }) => {
+        expect(a).toBe(values.a[index]);
+        expect(b).toBe(values.b[index]);
+        return { topValue: index < 2 ? 80 : 60, bottomValue: index < 2 ? 60 : 40, topColor: '#aabbcc', bottomColor: '#ddeeff' };
+      },
+    }, { plots: [{ key: 'a', title: 'A', type: 'line', offset: 3 }, { key: 'b', title: 'B', type: 'line', offset: 3 }] });
+    const ops = f.paint();
+    expect(ops.filter(op => op.type === 'createLinearGradient').map(op => op.args)).toEqual([[0, 20, 0, 40], [0, 40, 0, 60]]);
+    expect(ops.find(op => op.type === 'moveTo')?.args[0]).toBe(f.chart.timeScale.indexToX(3));
+  });
+
+  it('refreshes per-bar gradients on settings and live changes, restoring global fallback', () => {
+    const f = mount({
+      between: ['a', 'b'],
+      gradient: { topValue: 90, bottomValue: 10, topColor: '#112233', bottomColor: '#445566' },
+      gradientBy: ({ settings, values }) => settings.graded && values.a[3]! > 65
+        ? { topValue: 70, bottomValue: 30, topColor: '#aabbcc', bottomColor: '#ddeeff' } : undefined,
+    }, { inputs: [{ key: 'graded', label: 'Gradient', type: 'boolean', default: true }] });
+    const stops = () => f.paint().filter(op => op.type === 'addColorStop').map(op => op.text);
+    expect(stops()).toEqual(['#112233', '#445566']);
+    f.source.update(bar(3, 70));
+    expect(stops()).toEqual(['#aabbcc', '#ddeeff']);
+    f.indicator.setVisible(false);
+    expect(stops()).toEqual([]);
+    f.indicator.setVisible(true);
+    expect(stops()).toEqual(['#aabbcc', '#ddeeff']);
+    f.indicator.setSettings({ graded: false });
+    expect(stops()).toEqual(['#112233', '#445566']);
+    f.indicator.setSettings({ graded: true });
+    f.source.update(bar(3));
+    expect(stops()).toEqual(['#112233', '#445566']);
+  });
+
   it('paints colors computed per bar and retains plot displacement', () => {
     const f = mount({
       between: ['a', 'b'], colorUp: '#123456',
@@ -77,7 +113,7 @@ describe('native fill descriptor rendering', () => {
       between: ['a', 'b'], gradient: { topValue: 70, bottomValue: 30, topColor: '#aabbcc', bottomColor: '#ddeeff' },
     });
     const ops = f.paint();
-    expect(ops.filter(op => op.type === 'translate').map(op => op.args)).toEqual([[0, 30]]);
+    expect(ops.filter(op => op.type === 'createLinearGradient').map(op => op.args)).toEqual([[0, 30, 0, 70]]);
     expect(ops.filter(op => op.type === 'addColorStop').map(op => [op.args[0], op.text])).toEqual([[0, '#aabbcc'], [1, '#ddeeff']]);
   });
 

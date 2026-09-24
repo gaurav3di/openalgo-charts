@@ -172,7 +172,15 @@ export interface IndicatorFillSpec {
     values: IndicatorValues;
     settings: Readonly<IndicatorSettings>;
   }) => FillGradient | undefined);
-  /** Per-bar color takes precedence over the gradient and the up/down colors. */
+  /** Per-bar gradient takes precedence over the whole-band gradient. Undefined uses the band default. */
+  gradientBy?(ctx: {
+    index: number;
+    a: number | null;
+    b: number | null;
+    values: IndicatorValues;
+    settings: Readonly<IndicatorSettings>;
+  }): FillGradient | undefined;
+  /** Per-bar color takes precedence over both gradients and the up/down colors. */
   colorBy?(ctx: {
     index: number;
     a: number | null;

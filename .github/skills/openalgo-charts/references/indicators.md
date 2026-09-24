@@ -621,11 +621,20 @@ Optional descriptor members: `fills`, `markers`, `markerAnchor` / `hasSource` (2
 
 `IndicatorFillSpec.colorBy({ index, a, b, values, settings })` returns a per-bar
 color or `undefined`. The index addresses the original calculation columns; the
-fill still follows the first plot's offset. A color overrides `gradient`, which
-overrides the existing up/down colors. `gradient` accepts a `FillGradient` or a
+fill still follows the first plot's offset. `gradientBy` accepts the same context
+and returns a `FillGradient` or `undefined` for that bar. Precedence is point color,
+point gradient, whole-band gradient, then the existing up/down colors.
+`gradient` accepts a `FillGradient` or a
 callback `({ bars, values, settings }) => FillGradient | undefined`. Its price
-anchors and colors apply to the entire band. Both callbacks refresh after every
+anchors and colors apply to the entire band. All callbacks refresh after every
 calculation, including settings changes and same-bar updates.
+
+`FillGradient` has `topColor`, `bottomColor`, and optional `topValue`/`bottomValue`.
+Omitted anchors use the whole band's finite maximum/minimum. Return `a` and `b`
+as explicit anchors for a local range. Changed gradients share the bar edge;
+simultaneous plot crossings split at the intersection. Missing plot values break
+the run. Stops follow their prices during pan, inversion and scale changes.
+Direct primitive users set `FillPoint.gradient`; `FillPoint.color` still wins.
 
 `IndicatorDescriptor.tables({ bars, values, settings })` returns a list of
 `IndicatorTableSpec`: `{ id, rows, options?, overlay? }`. Each ID must be a nonempty
@@ -986,8 +995,9 @@ rejected because time bars cannot determine their closes.
 
 `sma`, `wma`, `rma`, `smaSeededEma`, `stdev`, `dev`, `highest`, `lowest`,
 `highestBars`, `lowestBars` and `percentRank` accept a final
-`NumericalWindowOptions` argument. Omitting it preserves each existing helper's
-calculation and warmup behavior. Passing `{}` selects `missing: 'propagate'`.
+`NumericalWindowOptions` argument. With a scalar period, omitting it preserves each
+existing helper's calculation and warmup behavior. Passing `{}` selects
+`missing: 'propagate'`.
 
 With options, NaN and infinities are missing. Propagation requires a complete
 chronological finite window. Skip mode collects the last `period` finite
@@ -1003,6 +1013,81 @@ Option-path periods must be positive safe integers. Invalid periods throw
 sma([1, 3, NaN, 5], 2, { missing: 'skip' }); // [NaN, 2, 2, 4]
 highestBars([5, 1, NaN, NaN], 2, { missing: 'skip' }); // [NaN, -1, -2, -3]
 ```
+
+## Varying window lengths
+
+`sma`, `wma`, `stdev`, `dev`, `highest`, `lowest`, `highestBars`,
+`lowestBars` and `percentRank` also accept a `readonly number[]` for `period`.
+Every existing scalar call keeps its calculation, including calls with missing-value
+options. With an array, bar `i` uses `period[i]`; omitted options and `{}` both select
+`missing: 'propagate'`. A constant length array matches the scalar call with `{}`.
+
+Length arrays must match the source length exactly. Each element must be a positive
+safe integer or `NaN`. A `NaN` length produces a gap at that bar, without forgetting
+its source observation. Insufficient history also produces `NaN`. Zero, negative,
+fractional, infinite and unsafe lengths throw `RangeError`; nonnumeric elements
+and array holes throw `TypeError`. A length mismatch throws `RangeError`. The entire
+parameter array is validated even when the source is empty or still warming up.
+
+Propagation uses a complete chronological window. Skip mode collects the requested
+number of finite observations, keeping their original order and bar indices. A
+changed length reevaluates that history even on a missing source bar. Earlier
+observations remain available when a length grows after shrinking. Extremum offsets
+stay negative into the original history, and ties select the latest bar. Rank uses
+previous observations only, counts equality and requires a finite current subject.
+
+```ts
+import { barsSince, sma, highestBars, nulls } from 'openalgo-charts/indicators';
+
+const values = [100, 2, 4, 6, 8, 10];
+const resets = [false, true, false, false, true, false];
+const lengths = barsSince(resets).map(distance => distance + 1);
+const mean = sma(values, lengths);
+// [NaN, 2, 3, 4, 8, 9]: average since the latest reset, including that bar.
+const plotColumn = nulls(mean);
+
+sma([2, 4, NaN], [1, 2, 1], { missing: 'skip' }); // [2, 3, 4]
+highestBars([5, NaN, 5, 4], [1, 1, 2, 2], { missing: 'skip' }); // [0, -1, 0, -1]
+```
+
+These array overloads preserve output length and never mutate inputs. Work is
+proportional to the input plus the total evaluated window lengths, with linear
+working storage; choosing long windows on every bar can take quadratic time.
+`rma`, `smaSeededEma` and the statistics helpers below still take scalar periods.
+
+## Varying pivot widths
+
+`pivotHigh(values, left, right)` and `pivotLow(values, left, right)` accept each
+width independently as a scalar or `readonly number[]`. Calls with two scalar
+widths keep their existing behavior. When either width is an array, arrays must
+align with the source, and widths must be nonnegative safe integers. `NaN` array
+elements give local gaps; a scalar companion cannot be `NaN`. Invalid numbers
+or mismatched lengths throw `RangeError`; malformed arrays or elements throw
+`TypeError`. Both sides are validated before calculation, including warmup bars.
+
+At confirmation index `i`, both widths come from that index. The candidate is
+`i - right[i]`, using the scalar right width when supplied. Its left neighbors and
+all bars through `i` must be available and finite. A high must be strictly greater
+than every neighbor; a low must be strictly smaller. Ties on either side reject the
+candidate. Zero widths are valid; two zero widths return the finite current value.
+
+```ts
+import { pivotHigh } from 'openalgo-charts/indicators';
+
+const highs = [1, 5, 2, 1, 0];
+const right = [1, 1, 1, 2, 3];
+const confirmed = pivotHigh(highs, 1, right);
+// [NaN, NaN, 5, 5, 5]
+// Confirmation indices 2, 3 and 4 all refer to candidate index 1.
+```
+
+Results stay on confirmation bars. A varying right width can confirm the same
+candidate more than once; the helpers do not deduplicate those results. Missing
+widths invalidate only the current evaluation. Candidate-bar widths do not control
+a later confirmation. To anchor a marker or drawing at the candidate, recover its
+index as `i - right[i]` and use that source bar's time. A single `plot.offset` cannot
+represent varying right widths. Numerical confirmation requires the supplied bars;
+it does not additionally check whether the current market bar has closed.
 
 ## Coverage additions (2.4.0)
 

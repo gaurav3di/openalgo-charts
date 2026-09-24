@@ -121,6 +121,18 @@ Returned by `addSeries`. Full surface (`src/model/series.ts`):
 
 Items are `{ time, open, high, low, close, volume?, color? }`, `{ time, value, color? }`, or `{ time }` (whitespace gap). See [data-and-time](data-and-time.md).
 
+`chart.setSeriesPriceScale(series, scaleId): boolean` reassigns a host-created
+series to `'right'`, `'left'`, `''` or `overlay:name` on its current pane. Its
+handle, data, styles, primary ownership and bound markers remain intact. Both
+scale objects keep their settings, including manual ranges and ratio locks.
+Explicit series `priceFormat` and style precision apply to the target as with
+`addSeries`, affecting any other series sharing that target; the source scale's
+formatting remains unchanged. The change updates axis columns, repaints and emits
+one `objects:change` without replacing data or recalculating studies. It returns
+false for an unchanged assignment, invalid ID, foreign or removed handle,
+destroyed chart, or indicator-owned plot. Study plots require a whole-study move,
+which this method does not implement. See [scales-and-panes](scales-and-panes.md#reassign-a-live-series).
+
 `chart.setSeriesType(series, type): boolean` switches a registered renderer on a
 live series. The handle, data, pane, price scale, primary ownership, explicit
 styles and bound markers remain intact. Outgoing inherited renderer defaults are

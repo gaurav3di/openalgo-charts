@@ -87,7 +87,10 @@ const BUNDLE = new URL('../dist/openalgo-charts.mjs', import.meta.url).pathname.
 // They add 0.42 KiB, from 57.13 to 57.55 KiB, including type lookup and formatter
 // restoration. The ceiling is 57.75 KiB; optional calculation
 // helpers remain outside the chart-only import.
-const LIMIT_BYTES = 57.75 * 1024;
+// Runtime series-to-scale assignment and price-anchored per-bar gradients add
+// 0.29 KiB, from 57.55 to 57.84 KiB. Both serve native chart hosts; allow 58 KiB.
+// Variable-window calculations remain in the optional indicator tier.
+const LIMIT_BYTES = 58 * 1024;
 
 // Absent from a chart-only build. Each is a string that appears in the adapter
 // source and nowhere in the rendering core.

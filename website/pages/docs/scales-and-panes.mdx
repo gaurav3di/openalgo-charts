@@ -349,6 +349,36 @@ Assign a series to a price axis with `priceScaleId`:
 
 Reach a series' scale with `series.priceScale()` and tune it via `.setOptions(...)`.
 
+### Reassign a live series
+
+```ts
+const changed = chart.setSeriesPriceScale(series, 'left');
+chart.setSeriesPriceScale(series, 'overlay:spread');
+chart.setSeriesPriceScale(series, 'right');
+```
+
+`setSeriesPriceScale` moves one host-created series to a scale on its current
+pane. The handle, data, styles, primary role and marker bindings survive. Both
+scale objects keep their configuration, including manual ranges and ratio locks.
+An unused source scale remains available for a later return without drawing
+stale labels. A side's column disappears when no series uses it on any pane;
+a chart containing only hidden-scale series reserves neither axis column.
+Crosshair price tags are omitted for a hidden readout scale.
+Last-price and series-value tags currently render only on the right axis; a
+left axis shows its tick labels and crosshair tag.
+
+Explicit series `priceFormat` applies to the target, followed by its style
+precision, just as with `addSeries`. This also changes formatting for other
+series sharing the target scale; the source scale's formatter is unchanged.
+Without an explicit format or precision, the target keeps its formatter.
+
+A successful move repaints and publishes one `objects:change`, without resetting
+data or recalculating studies. The method returns `false` before mutation for an
+unchanged assignment, invalid ID, removed or foreign handle, destroyed chart, or
+indicator-owned plot. A study's plots, fills and levels need to move together;
+whole-study reassignment is not implemented. To move every series on one visible
+axis along with that axis's configuration, use `movePriceAxis`.
+
 ### Dual left / right axes
 
 <RunnableExample height={380} code={`const chart = lib.createChart(el);
@@ -386,8 +416,8 @@ return chart;`} />
 
 ### Per-series price format
 
-`priceFormat` sets a series' axis and crosshair-tag formatting without affecting other
-series (each has its own scale):
+`priceFormat` sets formatting on the series' scale, including its axis and
+crosshair tag. Other series sharing that scale use the same formatting:
 
 ```ts
 // currency
