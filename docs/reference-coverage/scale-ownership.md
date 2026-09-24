@@ -2,7 +2,24 @@
 
 The existing series reassignment API intentionally rejects indicator plots. Moving
 one plot would leave its fills, levels, drawings and legend on another scale.
-Complete this capability as one indicator transaction after the lifecycle work.
+This capability now moves those resources in one indicator transaction.
+
+## Verified implementation
+
+The native host implements the contract below. Twenty-six whole-study cases,
+22 range-ownership cases, 19 binding cases, five drag cases and 21 workspace
+cases pass. Six real-browser cases cover the transaction and exact documented
+example across all three engines. Browser pixels check fills, levels, drawings,
+markers and overlays; vector checks verify left-axis bounds. Nine existing scale
+cases and three example autofit cases also pass against the same built bundle.
+
+Manual view overrides retain their range when a study changes its declared
+default; explicit autofit uses the updated default. Calculated fill columns need
+not have visible plot series. Native renderer changes retain the plot handle.
+
+Whole-axis moves currently reject mixed local assignments and explicit price-pane
+overlays atomically. One saved whole-study override cannot represent a partial
+transfer. Per-plot placement and multiple visible axes remain additional work.
 
 ## Public contract
 

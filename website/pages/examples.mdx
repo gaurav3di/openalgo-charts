@@ -466,6 +466,94 @@ chart.addIndicator('demo-requested-mean');
 chart.fitContent();
 return chart;`} />
 
+### External values with explicit availability
+
+This example supplies a separate set of simulated observations. Its two-value
+average is calculated before alignment to the minute chart. Orange holds the
+latest eligible result; blue dots appear only when a new result becomes
+available. Confirmation and availability are supplied explicitly, with no fetch
+or clock inference. The same helpers accept observations loaded by your host.
+
+<RunnableExample height={340} tiers={['indicators']} code={`const start = 1700000000;
+const requested = {
+  bars: Array.from({ length: 40 }, (_, i) => {
+    const close = 100 + Math.sin(i / 4) * 6 + i / 5;
+    return { time: start + i * 180, open: close, high: close, low: close, close };
+  }),
+  availableAt: Array.from({ length: 40 }, (_, i) => start + (i + 1) * 180),
+  confirmed: Array.from({ length: 40 }, () => true),
+};
+lib.registerIndicator({
+  id: 'demo-requested-availability', name: 'External mean', placement: 'pane', inputs: [],
+  plots: [
+    { key: 'carry', type: 'step', title: 'Carried mean', style: { color: '#e8a23a', lineWidth: 2 } },
+    { key: 'missing', type: 'line', title: 'New result', style: { color: '#4f8cff', markers: true, markersOnly: true, markerRadius: 4 } },
+  ],
+  calc(bars) {
+    const expression = input => ({
+      mean: input.map((bar, i) => i === 0 ? null : (bar.close + input[i - 1].close) / 2),
+    });
+    const times = bars.map(bar => bar.time);
+    return {
+      carry: lib.alignRequestedExpression(times, requested, expression).mean,
+      missing: lib.alignRequestedExpression(times, requested, expression, { gaps: 'missing' }).mean,
+    };
+  },
+});
+const chart = lib.createChart(el, { timezone: 'Etc/UTC' });
+chart.addSeries('candlestick').setData(lib.generateBars(start, 120, 60));
+chart.addIndicator('demo-requested-availability');
+chart.fitContent();
+return chart;`} />
+
+## Move a whole study between scales
+
+The buttons move both plots, their gradient fill and reference level together.
+The left scale keeps its configured range. The hidden scale retains independent
+price coordinates while releasing its axis column. Descriptor defaults restores
+the assignments declared by the study.
+
+<RunnableExample height={440} caption="Move the study without replacing its plot handles or recalculating its values." code={`const controls = document.createElement('div');
+controls.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;padding:8px';
+el.appendChild(controls);
+const host = document.createElement('div');
+host.style.height = '380px';
+el.appendChild(host);
+lib.registerIndicator({
+  id: 'demo-study-scale-move', name: 'Moving band', placement: 'pane', inputs: [],
+  plots: [
+    { key: 'upper', type: 'line', title: 'Upper', style: { color: '#26a69a' } },
+    { key: 'lower', type: 'line', title: 'Lower', style: { color: '#4f8cff' } },
+  ],
+  calc(bars) {
+    return { upper: bars.map((bar, i) => 70 + Math.sin(i / 7) * 10),
+      lower: bars.map((bar, i) => 30 + Math.sin(i / 7) * 10) };
+  },
+  fills: [{ between: ['upper', 'lower'], opacity: 0.35,
+    gradient: { topValue: 80, bottomValue: 20, topColor: '#26a69a', bottomColor: '#4f8cff' } }],
+  levels: () => [{ price: 50, title: 'Middle', color: '#e8a23a' }],
+  range: () => ({ min: 0, max: 100 }),
+});
+const chart = lib.createChart(host);
+chart.addSeries('candlestick').setData(lib.generateBars(1700000000, 100, 60));
+const study = chart.addIndicator('demo-study-scale-move');
+chart.setPaneWeight(study.paneIndex, 0.7);
+const left = chart.panes()[study.paneIndex].scaleFor('left');
+left.setAutoScale(false);
+left.setPriceRange({ min: -25, max: 125 });
+chart.fitContent();
+for (const [label, id] of [['Right', 'right'], ['Left', 'left'], ['Hidden', 'overlay:band'], ['Descriptor defaults', null]]) {
+  const button = document.createElement('button');
+  button.textContent = label;
+  button.style.cssText = 'padding:5px 10px;border:1px solid #334155;border-radius:4px;background:#172033;color:#e2e8f0;cursor:pointer';
+  button.onclick = () => {
+    study.setPriceScale(id);
+    for (const child of controls.children) child.style.background = child === button ? '#2563eb' : '#172033';
+  };
+  controls.appendChild(button);
+}
+return chart;`} />
+
 ## Computed fills and multiple summary grids
 
 A descriptor can color each part of a band and publish several tables. The fill

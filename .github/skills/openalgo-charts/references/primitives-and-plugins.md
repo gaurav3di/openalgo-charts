@@ -48,6 +48,7 @@ interface PrimitiveHit {
   distance: number;      // media px from the cursor; smaller wins
   cursor?: string;
   draggable?: boolean;   // arms a two-axis drag on press
+  priceScale?: PriceScale; // coordinate scale for bound drag prices
 }
 ```
 
@@ -62,17 +63,35 @@ interface PrimitiveHit {
 | Field | Type | Notes |
 |---|---|---|
 | `timeScale` | `TimeScale` | `indexToX(index)` returns **media** px; accepts fractional indices. |
-| `priceScale` | `PriceScale` | The pane's **right** scale. `priceToY`/`yToPrice` in media px, plus `format(price)`. |
+| `priceScale` | `PriceScale` | Explicit primitive binding, or the pane's right scale when unbound. `priceToY`/`yToPrice` in media px, plus `format(price)`. |
+| `readoutPriceScale?` | `PriceScale` | The primary visible price series' scale, independent of the primitive binding. |
 | `dataLayer` | `DataLayer` | `timeToIndex`, `timeToIndexFloat`, `indexToTime`, `indexedBars`, `visibleBars`. |
 | `plotWidth` / `plotHeight` | `number` | Media px, excluding the price axis and time axis strips. |
-| `priceAxisWidth` | `number` | Media px. |
+| `priceAxisWidth` | `number` | Bound scale's column width in media px; zero for hidden scales. |
+| `priceAxisSide?` | `'left' \| 'right' \| 'hidden'` | Price-label placement; absent retains right-axis behavior. |
 | `dpr` | `number` | Device pixel ratio for this frame. |
 | `theme` | `ChartTheme` | Palette. `theme.background` may be the literal `'transparent'`. |
 | `bars?` | `() => readonly Bar[]` | Lazy; the pane's primary price series. Optional, guard with `rc.bars?.()`. |
 | `hoverId?` | `string \| null` | `externalId` currently hovered, for hover styling. |
 | `dragId?` | `string \| null` | `externalId` currently being dragged. |
 
-A primitive attached to a pane with a left or overlay scale still receives the **right** scale in `rc.priceScale`. Convert against it, or carry your own values.
+`pane.bindPrimitiveScale(primitive, id)` binds an attached primitive to `'left'`,
+`'right'`, `''` or `overlay:name`; null removes the override. It returns false for
+invalid, unavailable or unchanged requests. `pane.primitiveScaleId(primitive)`
+returns the override or null. The owner schedules layout and repaint after the
+resource transaction. Study-owned price resources use this binding automatically.
+
+Bindings route every paint layer, hit-test and SVG export through the same scale,
+follow pane transfers and whole-axis moves, and clear on removal. Bound resources
+keep their scale alive and count toward visible axis occupancy. The pane adds
+`PrimitiveHit.priceScale` to explicitly bound hits without mutating the primitive's
+hit object. Chart retains that coordinate scale for drag start, movement and end;
+unbound hits keep their legacy readout routing. Pointer cancellation retains it
+through the compatibility release before clearing it.
+
+`PriceLine` draws its axis pill in the bound left or right column and omits it for
+hidden scales. Left pills fit inside the column and pane edges. The plot line,
+its optional segmented label and its hit-test remain active on hidden scales.
 
 ## The dpr contract
 
@@ -90,11 +109,11 @@ The reason is in `src/core/canvas.ts`: the backing buffer is sized `round(media 
 
 `pane.paintBase()` draws to the base canvas (z-index 0) in this exact order:
 
-1. Pane background, then the left price axis strip (if any)
+1. Pane background
 2. Grid
 3. **`zOrder() === 'bottom'` primitives**
 4. Series (registry-driven)
-5. Right price axis ticks
+5. Left and right price axis ticks, with per-side value-tag reservations
 6. Last-price line and tag
 7. **`zOrder() === 'normal'` primitives**
 8. Time axis (bottom pane only)
@@ -143,7 +162,9 @@ Record hit geometry during `draw` and read it in `hitTest`, that is how `PriceLi
 
 ## `autoscaleInfo`
 
-Returning `{ min, max }` **expands the pane's right price scale** so the primitive is not clipped. It is consulted only for the right scale, only when that scale is on `autoScale`, and once per autoscale pass alongside every visible bar.
+Returning `{ min, max }` expands the primitive's bound price scale while that scale
+is on `autoScale`. Unbound primitives contribute to the right scale. Each primitive
+is consulted once per applicable autoscale pass, alongside that scale's visible bars.
 
 Return `null` for anything that overlays rather than drives the range, the drawing layer, indicator fills, watermarks, legends, and on-chart buttons all do. `PriceLine` returns `{ min: price, max: price }`, which is what keeps an order line on screen.
 

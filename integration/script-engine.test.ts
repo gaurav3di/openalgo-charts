@@ -7,6 +7,7 @@ import type { Bar } from '../src/model/bar';
 import type { SeriesMarker } from '../src/primitives/markers';
 import { ChartTable } from '../src/primitives/table';
 import { securityExpression } from '../src/indicators/security';
+import { alignRequestedExpression, type RequestedExpression } from '../src/indicators/requested-context';
 import { ReplayController } from '../src/replay/controller';
 import { fakeDocument } from '../tests/helpers/fake-dom';
 
@@ -49,6 +50,46 @@ function makeChart(data: Bar[], now: number, updatesOnly = false) {
 const bar = (time: number, close: number): Bar => ({ time, open: 1, high: close + 1, low: 0, close });
 
 describe('compiled script engine on an actual Chart', () => {
+  it('calculates a compiled expression on separate requested bars before availability alignment', () => {
+    const compiled = compile(`version 1
+study("External mean")
+plot(sma(close, 2), "Mean")
+`);
+    const requested = {
+      bars: [bar(0, 10), bar(120, 20), bar(240, 30)],
+      availableAt: [60, 180, 300], confirmed: [true, true, true],
+    };
+    const observed: number[][] = [];
+    const expression: RequestedExpression = bars => {
+      observed.push(bars.map(item => item.close));
+      return compiled.calc(bars, {}, {});
+    };
+    const key = compiled.plots[0].key;
+    const descriptor: IndicatorDescriptor = {
+      ...compiled,
+      plots: [
+        { key: 'carry', type: 'line', title: 'Carried mean' },
+        { key: 'missing', type: 'line', title: 'New mean' },
+      ],
+      calcTail: undefined,
+      calc: bars => {
+        const times = bars.map(item => item.time);
+        return {
+          carry: alignRequestedExpression(times, requested, expression)[key],
+          missing: alignRequestedExpression(times, requested, expression, { gaps: 'missing' })[key],
+        };
+      },
+    };
+    registerIndicator(descriptor);
+    const { chart } = makeChart([0, 60, 120, 180, 240, 300].map(time => bar(time, 1000 + time)), 360);
+    const indicator = chart.addIndicator(descriptor.id);
+    expect(observed).toEqual([[10, 20, 30], [10, 20, 30]]);
+    expect(indicator.values().carry).toEqual([null, null, null, 15, 15, 25]);
+    expect(indicator.values().missing).toEqual([null, null, null, 15, null, 25]);
+    expect(indicator.series('carry')?.getData()[4].close).toBe(15);
+    expect(Number.isNaN(indicator.series('missing')!.getData()[4].close)).toBe(true);
+  });
+
   it('rebuilds the compiled execution when a replacement primary has overlapping source revisions', () => {
     const descriptor = compile(`version 1
 study("Source replacement")

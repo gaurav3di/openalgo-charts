@@ -124,6 +124,9 @@ export class PriceScale {
    * to find its way back to it. See `setFixedRange`.
    */
   private _fixedRange: PriceRange | null = null;
+  private _fixedRangeOwner: object | null = null;
+  /** Host writes can keep the same numeric range and still take control of the view. */
+  private _manualRangeOverride = false;
   private _priceFormatter: ((price: number) => string) | null = null;
 
   public constructor(options: Partial<PriceScaleOptions> = {}) {
@@ -154,6 +157,14 @@ export class PriceScale {
   }
 
   public setPriceRange(range: PriceRange): void {
+    this._manualRangeOverride = true;
+    this._writePriceRange(range);
+  }
+
+  /** Internal renderer projection update, preserving host ownership of the view. */
+  public setComputedRange(range: PriceRange): void { this._writePriceRange(range); }
+
+  private _writePriceRange(range: PriceRange): void {
     this._min = range.min;
     this._max = range.max;
     this._scaled = true;
@@ -204,13 +215,14 @@ export class PriceScale {
   }
 
   public setAutoScale(on: boolean): void {
+    this._manualRangeOverride = !on;
     // A declared range is this axis' idea of a fit, so asking for auto-fit puts
     // it back rather than handing the axis to the measuring pass. Without this,
     // a chart-wide "Auto" sweep re-measured every oscillator pane against its
     // own values: an RSI band pinned to 0..100 came back as 18..86, relabelled,
     // and nothing could put it back, with the declared range gone.
     if (on && this._fixedRange !== null) {
-      this.setPriceRange(this._fixedRange);
+      this._writePriceRange(this._fixedRange);
       return;
     }
     this._autoScale = on;
@@ -230,11 +242,53 @@ export class PriceScale {
    * whether anything is left on the pane to measure.
    */
   public setFixedRange(range: PriceRange | null): void {
+    this._fixedRangeOwner = null;
     this._fixedRange = range === null ? null : { ...range };
     if (range !== null) {
+      this._manualRangeOverride = true;
       this._autoScale = false;
-      this.setPriceRange(range);
+      this._writePriceRange(range);
     }
+  }
+
+  /** Internal host helper: install a study default without taking over a host-controlled range. */
+  public setOwnedFixedRange(owner: object, range: PriceRange): boolean {
+    if (this._fixedRangeOwner === owner && this._manualRangeOverride) {
+      this._fixedRange = { ...range };
+      return true;
+    }
+    if (this._manualRangeOverride || (this._fixedRangeOwner !== owner && (this._fixedRange !== null || !this._autoScale))) return false;
+    this._fixedRangeOwner = owner;
+    this._fixedRange = { ...range };
+    this._autoScale = false;
+    this._writePriceRange(range);
+    return true;
+  }
+
+  /** Internal host helper: withdraw only this owner's default, preserving later host range writes. */
+  public clearOwnedFixedRange(owner: object): boolean {
+    if (!this.ownsFixedRange(owner)) return false;
+    this._fixedRangeOwner = null;
+    this._fixedRange = null;
+    if (!this._manualRangeOverride) this._autoScale = true;
+    return true;
+  }
+
+  /** Internal host helper: ownership is identity-based, independent of equal numeric endpoints. */
+  public ownsFixedRange(owner: object): boolean {
+    return this._fixedRangeOwner === owner && this._fixedRange !== null;
+  }
+
+  /** Internal host metadata for saving an owned default and any later manual view override. */
+  public ownedFixedRangeState(owner: object): { manual: boolean } | null {
+    return this.ownsFixedRange(owner) ? { manual: this._manualRangeOverride } : null;
+  }
+
+  /** Whether an unused scale retains configuration beyond a measured automatic range. */
+  public hasConfiguration(): boolean {
+    return this._manualRangeOverride || this._fixedRange !== null || this._priceFormatter !== null
+      || (Object.keys(DEFAULT_PRICE_SCALE_OPTIONS) as (keyof PriceScaleOptions)[])
+        .some(key => this._options[key] !== DEFAULT_PRICE_SCALE_OPTIONS[key]);
   }
 
   /** The declared range this scale is holding, or null. See `setFixedRange`. */
@@ -271,6 +325,7 @@ export class PriceScale {
    * scale to manual mode so autoscale stops overriding it.
    */
   public scaleAroundCenter(factor: number): void {
+    this._manualRangeOverride = true;
     const centre = (this._min + this._max) / 2;
     const half = ((this._max - this._min) / 2) * factor;
     this._min = centre - half;
@@ -306,6 +361,7 @@ export class PriceScale {
     const delta = span * ((this._options.inverted ? -dy : dy) / this._height);
     this._min = this._tInv(lo + delta);
     this._max = this._tInv(hi + delta);
+    this._manualRangeOverride = true;
     this._autoScale = false;
   }
 
@@ -320,7 +376,7 @@ export class PriceScale {
    */
   public autoscale(low: number, high: number, progress = 1): boolean {
     if (this._fixedRange !== null) {
-      this.setPriceRange(this._fixedRange);
+      this._writePriceRange(this._fixedRange);
       return false;
     }
     const target = autoscaleRange(low, high, this._options.marginTop, this._options.marginBottom);
@@ -332,7 +388,7 @@ export class PriceScale {
     const nextSpan = nextHi - nextLo;
     const displacement = Math.max(Math.abs((nextLo - lo) / span), Math.abs((nextHi - hi) / span)) * this._height;
     if (!this._scaled || progress >= 1 || !Number.isFinite(progress) || !(span > 0) || !(nextSpan > 0) || displacement < 0.1) {
-      this.setPriceRange(target);
+      this._writePriceRange(target);
       return false;
     }
     const fraction = clamp(progress, 0, 1);
@@ -340,7 +396,7 @@ export class PriceScale {
     // towards a tall new candle spends most of the screen movement immediately.
     const slope = (1 - fraction) / span + fraction / nextSpan;
     const min = ((1 - fraction) * lo / span + fraction * nextLo / nextSpan) / slope;
-    this.setPriceRange({ min: this._tInv(min), max: this._tInv(min + 1 / slope) });
+    this._writePriceRange({ min: this._tInv(min), max: this._tInv(min + 1 / slope) });
     return true;
   }
 

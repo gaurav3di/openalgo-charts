@@ -70,17 +70,20 @@
       "implemented": [
         "Same-source aggregate expression calculation before alignment",
         "Confirmed, developing and explicit lookahead readings",
-        "Local wall-clock session anchors across offset changes"
+        "Local wall-clock session anchors across offset changes",
+        "Separate supplied observations with explicit confirmation and availability",
+        "Whole-expression calculation before carry or missing-result alignment",
+        "Intrabar arrays with opening-window membership and availability cutoffs"
       ],
       "evidence": [
         "tests/security-expression.test.ts",
         "integration/script-engine.test.ts",
-        "tests/e2e/native-timeframe-navigation.spec.ts"
+        "tests/e2e/native-timeframe-navigation.spec.ts",
+        "tests/requested-context.test.ts"
       ],
       "remaining": [
-        "External-symbol expression contexts and gap policies",
+        "Provider lifecycle integration for external expression contexts",
         "Cancellation, replay and provider confirmation boundaries",
-        "Intrabar arrays",
         "External datasets and provider capabilities"
       ]
     },
@@ -124,7 +127,7 @@
       "status": "partial",
       "remaining": [
         "Multiple visible axes on the same side",
-        "Whole-study scale reassignment",
+        "Per-plot persistence for mixed and explicit-overlay whole-axis moves",
         "Pane placement and collapse",
         "History beyond drawing edits",
         "Widget and navigation",
@@ -141,7 +144,11 @@
         "Stable series renderer changes with widget state synchronization",
         "Runtime price-scale reassignment for independent host-owned series",
         "Retained vacant scale settings without unused axis columns",
-        "Left-axis primary price, countdown and secondary series value labels"
+        "Left-axis primary price, countdown and secondary series value labels",
+        "Whole-study scale reassignment with stable resources and overlay exceptions",
+        "Primitive scale binding for rendering, measurement, hit-testing, drag and vector export",
+        "Scale-specific owned study defaults with manual and shared range preservation",
+        "Study scale overrides and owned defaults in chart, workspace and template state"
       ],
       "evidence": [
         "tests/navigation-settings.test.ts",
@@ -158,7 +165,13 @@
         "tests/e2e/widget-ui-253.spec.ts",
         "tests/series-scale-assignment.test.ts",
         "tests/left-axis-value-tags.test.ts",
-        "tests/e2e/native-series-scale-assignment.spec.ts"
+        "tests/e2e/native-series-scale-assignment.spec.ts",
+        "tests/indicator-scale-assignment.test.ts",
+        "tests/price-scale-range-ownership.test.ts",
+        "tests/primitive-scale-binding.test.ts",
+        "tests/primitive-scaled-drag.test.ts",
+        "tests/workspace-indicator-scales.test.ts",
+        "tests/e2e/native-study-scale-assignment.spec.ts"
       ]
     },
     {
@@ -171,7 +184,8 @@
         "Pinned engine validation",
         "Compiled calculation composed with native timeframe alignment",
         "Persistent-history replacement and forming-tail rollback",
-        "Provider confirmation, replay and primary-source replacement"
+        "Provider confirmation, replay and primary-source replacement",
+        "Compiled expression alignment against explicit requested-observation availability"
       ],
       "remaining": [
         "Wider output and request fixtures",
@@ -202,23 +216,23 @@
     ]
   },
   "validation": {
-    "chartTests": 6569,
-    "chartTestFiles": 283,
-    "compiledProgramTests": 10,
+    "chartTests": 6725,
+    "chartTestFiles": 289,
+    "compiledProgramTests": 11,
     "demoTests": 424,
     "demoTestFiles": 35,
-    "browserEvidence": "Earlier density, visual descriptors, scale restoration, requested calculations, navigation and gradient checks passed. This batch passed 54 browser cases: three lifecycle, 27 table layout, 15 navigation, six scale assignment and three example autofit cases across all three engines. Autofit expands when an extreme enters view and contracts when it leaves. The new merged-table website example runs on all three engines. Representative screenshots were inspected; traffic uses fixtures rather than live brokers.",
+    "browserEvidence": "This batch passed 18 browser cases across all three engines: six whole-study scale cases, nine existing scale cases and three example autofit cases. Autofit expands when an extreme enters view and contracts when it leaves. Both new examples also ran on the built website, including all four scale controls. Screenshots were inspected; traffic uses fixtures rather than live brokers.",
     "website": "63 static pages built successfully",
-    "chartOnlyBrotliKiB": 59.62,
-    "chartOnlyBudgetKiB": 59.75,
-    "baseBrotliKB": 100.1,
-    "indicatorBrotliKB": 32.74,
-    "allTiersBrotliKB": 273.11,
-    "budgetChange": "Provider confirmation, source revisions, left value labels and table formatting increase the base from 98.28 to 100.10 kB and chart-only from 57.84 to 59.62 KiB. Limits are 100.25 kB base, 108.25 kB base plus trade, 234 kB terminal, 273.25 kB all tiers and 59.75 KiB chart-only. Individual optional-tier budgets remain unchanged and removal checks pass.",
-    "review": "Independent review found and rechecked source identity collisions and replay started during primary-series notification. Original reproductions and all 23 provenance tests now pass. Table review corrected legacy automatic font sizing and fractional merged-cell boundaries; browser pixels confirm formatting and clipping. Left labels passed large-font and hidden-axis checks.",
-    "packageVerification": "Verify passed lint, typecheck, 6569 unit tests, seven endurance-harness checks, build, 424 example tests and declaration identity. The measured feature increase exceeded size limits; narrowly adjusted budgets then passed size and tree-shake checks. Ten compiled-program checks and public adapter typechecking passed.",
+    "chartOnlyBrotliKiB": 61.71,
+    "chartOnlyBudgetKiB": 61.75,
+    "baseBrotliKB": 102.2,
+    "indicatorBrotliKB": 33.59,
+    "allTiersBrotliKB": 276.11,
+    "budgetChange": "Whole-study transactions, primitive scale binding and owned defaults increase base from 100.10 to 102.20 kB and chart-only from 59.62 to 61.71 KiB. Requested calculations increase the optional indicator tier from 32.74 to 33.59 kB. Limits are 102.25 kB base, 110.25 kB base plus trade, 33.75 kB indicators, 236.75 kB terminal, 276.25 kB all tiers and 61.75 KiB chart-only. Other optional-tier budgets are unchanged and removal checks pass.",
+    "review": "Independent review checked scale transactions, shared/manual ownership, restoration, formatter order and atomic axis refusal. Requested-context helpers passed 63 tests and 12000 independent comparisons across 4000 snapshots. Full-suite regressions exposed unplotted fill columns and comparison projections being mistaken for manual host ranges; both were corrected and the complete suite passed.",
+    "packageVerification": "Verify passed lint, typecheck, 6725 unit tests, seven endurance-harness checks, build, 424 example tests and declaration identity. Measured feature growth required the documented budget adjustments; size and tree-shake checks then passed. Eleven compiled-program checks and public adapter typechecking passed.",
     "latestEngineSourceReview": "d95bd70daf598892d40a9265607537b86ce712dd has no source changes relative to the pinned tested engine revision.",
     "apiDocumentation": "Generated with warnings treated as errors",
-    "skillsCoverage": "972 of 972 named exports and registry entries; not functional coverage"
+    "skillsCoverage": "974 of 974 named exports and registry entries; not functional coverage"
   }
 }

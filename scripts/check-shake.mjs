@@ -94,7 +94,12 @@ const BUNDLE = new URL('../dist/openalgo-charts.mjs', import.meta.url).pathname.
 // serve raw chart hosts. Together with native table formatting, this batch
 // moves the base from 98.28 to 100.10 kB and chart-only from 57.84 to 59.62 KiB.
 // Allow 59.75 KiB while retaining the optional-tier removal checks below.
-const LIMIT_BYTES = 59.75 * 1024;
+// Whole-study scale transactions, primitive projection and owned range defaults
+// keep native studies coherent across axes and manual views. They add 2.09 KiB
+// to chart-only imports (59.62 to 61.71), and 2.10 kB to the base bundle
+// (100.10 to 102.20). Allow 61.75 KiB; requested-context calculations remain
+// in the optional indicator tier and all removal checks below still apply.
+const LIMIT_BYTES = 61.75 * 1024;
 
 // Absent from a chart-only build. Each is a string that appears in the adapter
 // source and nowhere in the rendering core.

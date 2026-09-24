@@ -1006,6 +1006,77 @@ are absent; the last bucket is not confirmed by wall-clock time. Session anchors
 use local wall-clock time across offset changes. Tick and volume intervals are
 rejected because time bars cannot determine their closes.
 
+## Requested data with explicit availability
+
+Use `alignRequestedExpression` or `requestedIntrabars` when the requested bars
+already come from another symbol or interval. Both are pure helpers: the host
+supplies the observations and metadata. Neither fetches data, registers a
+provider, aggregates candles or changes the existing `securitySeries` and
+`securityExpression` defaults.
+
+All eight exports come from `openalgo-charts/indicators`:
+
+| Export | Contract |
+| --- | --- |
+| `alignRequestedExpression` | `(targetTimes, snapshot, expression, options?) -> IndicatorValues` |
+| `requestedIntrabars` | `(targetWindows, snapshot, expression, options?) -> RequestedIntrabarValues` |
+| `RequestedBarsSnapshot` | Aligned `bars`, `availableAt: (number \| null)[]`, and `confirmed: boolean[]`. |
+| `RequestedExpression` | Pure, causal callback over readonly requested bars, returning one named column per result. |
+| `RequestedAlignmentOptions` | `gaps?: 'carry' \| 'missing'`, default `carry`. |
+| `RequestedTimeWindow` | `{ start: number, end: number }` in UTC seconds. |
+| `RequestedIntrabarOptions` | Optional finite inclusive availability cutoff `asOf`. |
+| `RequestedIntrabarValues` | `{ times: number[][], values: Record<string, (number \| null)[][]> }`. |
+
+`availableAt[i]` is when observation `i` became known, at or after its opening.
+Null means unknown. An unconfirmed bar or unknown availability ends the eligible
+prefix: that row and every later row cannot emit. The observations stay in the
+expression input, with their original indices. Earlier eligible rows can still
+carry. Each result waits for the greatest availability timestamp in its prefix,
+so a delayed earlier observation cannot expose a dependent result prematurely.
+Confirmation is explicit, including for count-driven bars; no clock infers it.
+
+The callback runs once on frozen copies of the entire requested history, before
+alignment or grouping. Each output column must match that history's length.
+Output at index `i` must use only observations through `i`; causality is the
+callback author's responsibility. Null, NaN and infinities become null. A newer
+null result replaces an older finite value. Empty requested history returns no
+columns without calling the expression. Empty targets with nonempty requested
+history still evaluate to obtain named empty columns.
+
+For scalar alignment, evaluation times are finite and strictly increasing.
+`carry` reads the latest eligible row at or before each target time. `missing`
+emits only when that selected row changes; the first target is an initial
+reading. Several rows becoming available together select the latest row.
+
+```ts
+import { alignRequestedExpression, type RequestedExpression } from 'openalgo-charts/indicators';
+
+const snapshot = {
+  bars: [10, 20, 30].map((close, i) => ({ time: i * 120, open: close, high: close, low: close, close })),
+  availableAt: [60, 180, 300], confirmed: [true, true, true],
+};
+const expression: RequestedExpression = bars => ({
+  mean: bars.map((bar, i) => i === 0 ? null : (bar.close + bars[i - 1].close) / 2),
+});
+const times = [0, 60, 120, 180, 240, 300];
+alignRequestedExpression(times, snapshot, expression).mean; // [null, null, null, 15, 15, 25]
+alignRequestedExpression(times, snapshot, expression, { gaps: 'missing' }).mean; // [null, null, null, 15, null, 25]
+```
+
+Intrabar windows must be finite, ordered and nonoverlapping, with `start < end`.
+Opening-time membership is `[start, end)`; effective availability must also be at
+or before `end` and optional `asOf`. Delayed observations are not moved into later
+windows. Results retain timestamps, null positions and requested order. Empty
+windows return empty arrays. A rolling expression spans the entire requested
+history and does not restart at each window. Build session windows explicitly
+from the desired calendar; a missing next candle does not define a session close.
+There is no timezone or session inference in these helpers.
+
+Malformed snapshots, metadata, target order, options or expression output throw
+`IndicatorInputError`. All input rows are validated before the callback, including
+rows beyond an ineligible prefix. These helpers cannot reconstruct historical
+forming-bar updates or availability metadata from final OHLC alone.
+
 ## Optional missing-value policies on established helpers
 
 `sma`, `wma`, `rma`, `smaSeededEma`, `stdev`, `dev`, `highest`, `lowest`,

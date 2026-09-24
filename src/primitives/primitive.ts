@@ -14,13 +14,17 @@ export type ZOrder = 'bottom' | 'normal' | 'top';
 
 export interface PrimitiveRenderContext {
   timeScale: TimeScale;
+  /** Explicitly bound scale, or the pane's right scale for an unbound primitive. */
   priceScale: PriceScale;
   /** The pane's primary visible price series scale, including a moved left axis. */
   readoutPriceScale?: PriceScale;
   dataLayer: DataLayer;
   plotWidth: number;
   plotHeight: number;
+  /** Width of the bound scale's axis column; zero for hidden scales. */
   priceAxisWidth: number;
+  /** Axis placement for price labels. Absent retains the default right axis. */
+  priceAxisSide?: 'left' | 'right' | 'hidden';
   dpr: number;
   theme: ChartTheme;
   /**
@@ -41,6 +45,8 @@ export interface PrimitiveHit {
   /** Pixel distance from the cursor (smaller wins ties before z-order). */
   distance: number;
   cursor?: string;
+  /** Coordinate scale for a bound primitive's drag prices. Unbound hits omit it. */
+  priceScale?: PriceScale;
   /**
    * Arm a drag on press. Price lines set `cursor: 'ns-resize'` and move on one
    * axis; anything that moves on **both** (a drawing anchor, a whole shape)

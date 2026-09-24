@@ -15,9 +15,12 @@ The [design](design.md) sets the boundaries and the [plan](plan.md) lists the re
 - Eleven established numerical helpers accept optional missing-value policies while retaining omitted-option behavior. The new paths preserve finite extreme averages and deviations.
 - Nine window helpers accept aligned per-bar lengths; both pivot helpers accept per-bar left/right widths. Scalar behavior remains unchanged, and missing observations retain their original indices.
 - `securityExpression` calculates on aggregate timeframe bars before aligning results, with confirmed, developing and explicit lookahead modes. Session anchors use local wall-clock time across offset changes.
+- Requested-observation helpers calculate before alignment or intrabar grouping, using explicit confirmation and availability. Carry and missing-result policies retain original indices and block unavailable prefixes.
 - Direct time-scale navigation repaints and publishes settled range events to linked charts. Explicit same-range requests cancel pending motion, and reentrant restore callbacks receive a final repaint.
 - Native series renderer changes and widget chart-type changes retain series handles, data, styles, price scales and marker bindings. Live type lookup keeps host controls and saved state synchronized.
-- Independent host-owned series can change price scales while retaining their handle, data, markers and pane. Configured vacant scales retain their settings without reserving visible axis columns. Whole-study reassignment remains unfinished.
+- Independent host-owned series can change price scales while retaining their handle, data, markers and pane. Configured vacant scales retain their settings without reserving visible axis columns.
+- Whole studies can move their local plots, fills, levels and drawings between scales without replacing resources or recalculating. Explicit price-pane overlays retain their placement. Owned default ranges preserve manual views, shared studies and saved state.
+- Bound primitives use their assigned scale for painting, hit-testing, dragging, measurement and vector export. Left-side reference labels stay within the axis; hidden scales omit axis labels.
 - Left axes display primary price and countdown labels plus independent secondary-series tags. Hidden axes omit those labels, and label placement is bounded to the price-axis area.
 - Chart and workspace snapshots preserve existing secondary scales, precision, fixed/manual ranges and ratio locks. Symbol changes clear view ranges from every scale.
 - Known fixed intervals confirm the newest bar at its recorded opening plus its duration, including sparse data and weekend gaps.
@@ -30,7 +33,7 @@ The [design](design.md) sets the boundaries and the [plan](plan.md) lists the re
 
 ## Verification
 
-The confirmation regression suite has 12 cases; nine reproduced failures before the fix. A further 23 provenance cases cover native source lifecycle. Ten compiled-program integration cases passed against the pinned engine revision `833ce15f7ec1bb0ab8ae203b800c8858ce3b4339`, including native timeframe composition, persistent calculations, forming-bar rollback and provider confirmation. These checks cover specific behaviors, not every capability.
+The confirmation regression suite has 12 cases; nine reproduced failures before the fix. A further 23 provenance cases cover native source lifecycle. Eleven compiled-program integration cases passed against the pinned engine revision `833ce15f7ec1bb0ab8ae203b800c8858ce3b4339`, including native timeframe composition, persistent calculations, forming-bar rollback, provider confirmation and explicitly available requested observations. These checks cover specific behaviors, not every capability.
 
 Run against a built script-engine checkout:
 
@@ -44,4 +47,4 @@ The unchanged chart baseline `a1828e9ac948d2f9aebe0657f421987a85d6f2a7` measured
 
 ## Remaining work
 
-Requested-context lifecycle and calculations, dependent study inputs, numerical helpers, typed and interactive inputs, remaining visual variants, alert policies, chart APIs, persistence and provider capabilities still need implementation and behavioral checks. The next scale transaction is described in [scale ownership](scale-ownership.md). Comparative research belongs outside the repository. Implement features from documented behavior using independently written code and tests.
+Requested-context provider lifecycle, dependent study inputs, numerical helpers, typed and interactive inputs, remaining visual variants, alert policies, chart APIs, persistence and provider capabilities still need implementation and behavioral checks. [Scale ownership](scale-ownership.md) records the completed transaction and remaining axis work. Comparative research belongs outside the repository. Implement features from documented behavior using independently written code and tests.

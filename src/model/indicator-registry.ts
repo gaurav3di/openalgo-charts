@@ -153,9 +153,9 @@ export const INDICATOR_SOURCES: readonly { label: string; value: IndicatorSource
 export type IndicatorSettings = Record<string, unknown>;
 
 /** One plotted line/band/histogram. `type` is any registered chart type. */
-/** A shaded band between two of an indicator's plots. */
+/** A shaded band between two of an indicator's output columns. */
 export interface IndicatorFillSpec {
-  /** The two plot keys to fill between. */
+  /** Plot keys or unplotted calculated columns; unplotted columns use the band's local scale. */
   between: readonly [string, string];
   /** Colour where the first plot is above the second. */
   colorUp?: string;

@@ -343,7 +343,8 @@ Assign a series to a price axis with `priceScaleId`:
   the standard way to pin a volume histogram inside the price pane.
 - **`'overlay:name'`** creates an independent hidden scale. Series with the same
   name share its range and baseline; different names keep separate price units.
-  The scale is released when its last series is removed. Named overlays are
+  Bound primitives and explicit scale configuration keep the scale alive after
+  its last series is removed. Named overlays are
   included in pane-wide scale operations, excluded from axis-only operations,
   and reserve no visible axis column.
 
@@ -361,7 +362,7 @@ chart.setSeriesPriceScale(series, 'right');
 pane. The handle, data, styles, primary role and marker bindings survive. Both
 scale objects keep their configuration, including manual ranges and ratio locks.
 An unused source scale remains available for a later return without drawing
-stale labels. A side's column disappears when no visible series uses it on any pane;
+stale labels. A side's column disappears when no series or bound primitive uses it on any pane;
 a chart containing only hidden-scale series reserves neither axis column.
 Crosshair price tags are omitted for a hidden readout scale.
 Last-price and series-value tags follow their source's left or right axis. The
@@ -382,9 +383,72 @@ Without an explicit format or precision, the target keeps its formatter.
 A successful move repaints and publishes one `objects:change`, without resetting
 data or recalculating studies. The method returns `false` before mutation for an
 unchanged assignment, invalid ID, removed or foreign handle, destroyed chart, or
-indicator-owned plot. A study's plots, fills and levels need to move together;
-whole-study reassignment is not implemented. To move every series on one visible
-axis along with that axis's configuration, use `movePriceAxis`.
+indicator-owned plot. Use the study's `setPriceScale` to move its resources
+together. To move every series and bound primitive on one visible axis along
+with that axis's configuration, use `movePriceAxis`.
+
+### Reassign a whole study
+
+```ts
+const study = chart.addIndicator('rsi', { period: 14 }, { priceScaleId: 'left' });
+study.priceScaleId();                    // 'left', or null for descriptor defaults
+study.setPriceScale('overlay:momentum');  // hidden axis, independent range
+study.setPriceScale('right');
+study.setPriceScale(null);               // restore declared plot assignments
+```
+
+All local plots, fills, levels, drawings and attached price primitives move in
+one transaction. Plot markers follow their series. Explicit `overlay: true`
+resources retain their price-pane placement and declared scale; price-anchored
+markers retain their primary-series binding. Tables and background shading stay
+in screen space. A fill whose endpoints would use different panes or scales
+rejects the request before any resource moves.
+Unplotted calculation columns used by a fill take that fill's local band scale.
+
+The move retains the instance, plot handles, data and provider attachments,
+updates the legend and axis columns, then emits one `objects:change`. It does
+not recalculate the study or evaluate alerts. Invalid, unchanged and removed
+requests return `false`. The override survives settings changes and pane moves.
+Native plot type changes through settings also preserve the plot handle and its
+scale; transform types continue to require host-prepared data.
+
+Target ranges, modes and ratio locks remain authoritative. Explicit plot price
+formats and style precision apply in descriptor order to the shared target
+formatter. A descriptor's fixed range is an owned default for an eligible scale.
+Moving or removing its owner releases only that default and preserves host
+manual ranges, host fixed ranges and other sources' settings.
+If settings change the same owner's declared range, the fit default updates while
+the current manual view remains in force until auto-fit is enabled again.
+
+`movePriceAxis` has a narrower scope: it refuses studies with mixed local scale
+assignments or explicit price overlays, because a single saved study override
+cannot represent a partial move. `priceAxisState().movable` reflects this boundary.
+Uniform local studies and primitive-only studies adopt the moved side.
+`study.setPriceScale` still moves every local resource while retaining explicit
+price overlays.
+
+Saved `IndicatorState.priceScaleId` carries an explicit override; omission keeps
+descriptor defaults. Saved scales may include
+`indicatorRange: { instanceId, manual }`, identifying a study-owned fixed range
+and any later manual view intent. Preserve that metadata with the scale state so
+restoring a layout can distinguish the study default from a host range with the
+same endpoints. Source data and runtime formatter callbacks remain host-owned.
+
+See the [whole-study scale example](/examples#move-a-whole-study-between-scales).
+
+### Bind a custom price primitive
+
+`pane.bindPrimitiveScale(primitive, id)` assigns an attached primitive to a scale;
+`null` restores its default right-scale behavior. The owner schedules layout and
+repaint after its transaction. `pane.primitiveScaleId(primitive)` reads the
+explicit binding. Drawing, hit-testing, autoscale and SVG export use the bound
+scale. Bindings follow pane transfers and axis moves, and clear on removal.
+
+`PrimitiveRenderContext.priceAxisSide` identifies `'left'`, `'right'` or `'hidden'`,
+and `priceAxisWidth` is zero for hidden scales. Bound hits carry
+`PrimitiveHit.priceScale`, which supplies drag prices. A `PriceLine` uses the left
+column for a left binding and omits the axis pill for a hidden binding while
+keeping its plot line and label.
 
 ### Dual left / right axes
 

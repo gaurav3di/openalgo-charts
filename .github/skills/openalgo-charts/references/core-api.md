@@ -146,8 +146,8 @@ Explicit series `priceFormat` and style precision apply to the target as with
 formatting remains unchanged. The change updates axis columns, repaints and emits
 one `objects:change` without replacing data or recalculating studies. It returns
 false for an unchanged assignment, invalid ID, foreign or removed handle,
-destroyed chart, or indicator-owned plot. Study plots require a whole-study move,
-which this method does not implement. See [scales-and-panes](scales-and-panes.md#reassign-a-live-series).
+destroyed chart, or indicator-owned plot. Use the study's `setPriceScale` to move
+its resources together. See [scales-and-panes](scales-and-panes.md#reassign-a-whole-study).
 
 `chart.setSeriesType(series, type): boolean` switches a registered renderer on a
 live series. The handle, data, pane, price scale, primary ownership, explicit
@@ -164,6 +164,34 @@ data transformation.
 live owned series, including one that is not primary. It returns null for foreign
 or removed handles and destroyed charts. Use it when a host tracks series types
 that may also change through native chart calls.
+
+## Whole-study scale assignment
+
+```ts
+const study = chart.addIndicator('rsi', { period: 14 }, { priceScaleId: 'left' });
+study.priceScaleId();                    // 'left', or null for descriptor defaults
+study.setPriceScale('overlay:momentum');  // true when the assignment changes
+study.setPriceScale(null);               // restore each descriptor assignment
+```
+
+`chart.addIndicator(id, settings?, { paneIndex?, priceScaleId? })` returns
+`IndicatorApi`. Its scale override moves local plots, fills, levels, drawings and
+attached price primitives together. Plot-bound markers follow their series;
+explicit price-pane overlays keep their declared scales. Screen-space tables and
+background shading retain their placement. Invalid, unchanged or removed requests
+return false; incompatible fill endpoints also reject the whole move.
+
+The move preserves plot handles, data and lifecycle attachments, updates legend
+formatting and axis columns, and emits one `objects:change` without recalculation.
+Native plot renderer changes through `setSettings({ 'plotKey:type': 'area' })`
+also retain the plot handle, scale and marker binding. Transform data stays
+host-owned. `IndicatorState.priceScaleId` stores only an explicit override;
+omission restores descriptor defaults. See [scales-and-panes](scales-and-panes.md#reassign-a-whole-study)
+for shared formatting, fixed-range ownership and saved scales.
+`movePriceAxis` refuses mixed local study assignments and explicit price overlays;
+its `priceAxisState().movable` result reflects that limit. Uniform local and
+primitive-only studies adopt a successful whole-axis move. `setPriceScale` remains
+the operation for moving all local study resources while keeping overlays fixed.
 
 ## Lifecycle and sizing
 

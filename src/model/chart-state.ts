@@ -32,6 +32,8 @@ export interface PriceScaleState {
   range?: { min: number; max: number };
   /** The declared auto-fit band, independent of a temporary manual range. */
   fixedRange?: { min: number; max: number } | null;
+  /** Study default ownership; manual records a host view override without losing the default. */
+  indicatorRange?: { instanceId: string; manual: boolean };
   /** Geometry paired with the saved range, so reopening at another size preserves its proportion. */
   ratioLock?: { barSpacing: number; height: number };
 }
@@ -83,6 +85,13 @@ function scaleState(input: unknown, legacy: boolean): PriceScaleState {
   }
   if (value.range !== undefined) result.range = stateRange(value.range);
   if (value.fixedRange !== undefined) result.fixedRange = value.fixedRange === null ? null : stateRange(value.fixedRange);
+  if (value.indicatorRange !== undefined) {
+    const owner = stateRecord(value.indicatorRange);
+    if (typeof owner.instanceId !== 'string' || !owner.instanceId.trim() || typeof owner.manual !== 'boolean' || !result.fixedRange) {
+      throw new Error('Invalid indicator range ownership');
+    }
+    result.indicatorRange = { instanceId: owner.instanceId, manual: owner.manual };
+  }
   if (value.ratioLock !== undefined) {
     const lock = stateRecord(value.ratioLock);
     if (autoScale || !result.range) throw new Error('A scale ratio lock requires a manual range');
@@ -120,6 +129,8 @@ export interface IndicatorState {
   indicatorId: string;
   /** Stable workspace identity. Omitted by legacy states and reusable templates. */
   instanceId?: string;
+  /** Whole-study scale override. Omission retains the descriptor's plot assignments. */
+  priceScaleId?: PriceScaleId;
   settings: IndicatorSettings;
   paneIndex: number;
   /** Omitted by older layouts, which restore the indicator as visible. */

@@ -8,7 +8,7 @@
  * indicators draw through the same Family-A renderers as any other series.
  */
 import type { Bar } from './bar';
-import type { PriceFormat, SeriesApi, SeriesDataState } from './series';
+import type { PriceFormat, PriceScaleId, SeriesApi, SeriesDataState } from './series';
 import type { PriceLine } from '../primitives/price-line';
 import type { PaneLegend, LegendValue } from '../primitives/pane-legend';
 import type { SeriesMarkers } from '../primitives/markers';
@@ -76,6 +76,13 @@ function formatValue(v: number, tick?: number): string {
 
 /** The slice of the chart the runtime needs. Keeps this module testable alone. */
 export interface IndicatorHost {
+  assignIndicatorScale?(id: string,
+    series: readonly { api: SeriesApi; scaleId: PriceScaleId }[],
+    primitives: readonly { primitive: IPrimitive; scaleId: PriceScaleId }[],
+    commit: () => void): boolean;
+  bindIndicatorPrimitiveScale?(primitive: IPrimitive, scaleId: PriceScaleId): void;
+  setIndicatorRange?(id: string, paneIndex: number, scaleId: PriceScaleId,
+    range: { min: number; max: number } | null, series: readonly SeriesApi[]): void;
   /** Forget a disposed instance, including disposal through its public handle. */
   indicatorRemoved?(instanceId: string, failedOwnedPane?: number): void;
   /** Optional instrument identity and source-range notifications. */
@@ -100,6 +107,7 @@ export interface IndicatorHost {
     /** Axis/crosshair formatting for the scale this plot maps to. */
     priceFormat?: PriceFormat,
   ): SeriesApi;
+  setIndicatorSeriesType?(series: SeriesApi, type: string): boolean;
   /**
    * Add a reference level. One options object rather than seven positional
    * arguments: the list grew a width and a dash style in 1.7.1, and a call site
@@ -217,13 +225,17 @@ export interface IndicatorHost {
    * Asking the scale removes the second opinion. Optional so a host driving
    * this module alone still works, falling back to the magnitude ladder.
    */
-  formatPrice?(paneIndex: number, value: number): string | undefined;
+  formatPrice?(paneIndex: number, value: number, series?: SeriesApi): string | undefined;
   /** Pin a pane's price scale to a fixed range, or release it with `null`. */
   setPaneRange(paneIndex: number, range: { min: number; max: number } | null): void;
 }
 
 /** Public handle returned by `chart.addIndicator(...)`. */
 export interface IndicatorApi {
+  /** Whole-study scale override, or null for descriptor assignments. */
+  priceScaleId(): PriceScaleId | null;
+  /** Move local price resources together; null restores descriptor assignments. */
+  setPriceScale(scaleId: PriceScaleId | null): boolean;
   /** External data state, or null for a study without a managed lifecycle. */
   dataStatus(): Readonly<IndicatorDataStatus> | null;
   /** Observe changes; immediately receives the current managed status, if any. */
@@ -271,6 +283,7 @@ export class IndicatorInstance implements IndicatorApi {
   private readonly _d: IndicatorDescriptor;
   private readonly _ownPane: boolean;
   private _settings: IndicatorSettings;
+  private _scaleOverride: PriceScaleId | null;
   /** Memo for `_descriptorSettings`, keyed on the zone and the settings identity. */
   private _zoned: { zone: string; base: IndicatorSettings; merged: IndicatorSettings } | null = null;
   private readonly _series = new Map<string, SeriesApi>();
@@ -330,9 +343,11 @@ export class IndicatorInstance implements IndicatorApi {
     paneIndex?: number,
     instanceId?: string,
     reservedIds?: ReadonlySet<string>,
+    priceScaleId?: PriceScaleId,
   ) {
     this._host = host;
     this._d = descriptor;
+    this._scaleOverride = priceScaleId ?? null;
     this.indicatorId = descriptor.id;
     this.name = descriptor.name;
     let id = instanceId;
@@ -358,12 +373,16 @@ export class IndicatorInstance implements IndicatorApi {
       this._ownPane = true;
     }
 
+    if (priceScaleId !== undefined && (descriptor.fills ?? []).some(fill => this._fillScale(fill, this._scaleOverride) === null)) {
+      throw new RangeError('Indicator fill endpoints must share their pane and price scale');
+    }
+
     for (const plot of descriptor.plots) {
       const type = this._plotType(plot);
       this._plotTypes.set(plot.key, type);
       this._series.set(
         plot.key,
-        host.addIndicatorSeries(type, this._plotPane(plot), this._plotStyle(plot), plot.priceScaleId, plot.priceFormat),
+        host.addIndicatorSeries(type, this._plotPane(plot), this._plotStyle(plot), this._plotScale(plot), plot.priceFormat),
       );
     }
 
@@ -376,6 +395,8 @@ export class IndicatorInstance implements IndicatorApi {
       this._fills.push(band);
       // A band may follow its plots onto the price pane; see `IndicatorFillSpec.overlay`.
       host.addIndicatorFill(band, fill.overlay === true ? 0 : this.paneIndex);
+      const scale = this._fillScale(fill, this._scaleOverride);
+      if (scale !== null) host.bindIndicatorPrimitiveScale?.(band, scale);
     }
 
     this._legend = host.addIndicatorLegend({
@@ -406,6 +427,59 @@ export class IndicatorInstance implements IndicatorApi {
    */
   private _plotPane(plot: IndicatorPlot): number {
     return plot.overlay === true ? 0 : this.paneIndex;
+  }
+
+  private _plotScale(plot: IndicatorPlot, override = this._scaleOverride): PriceScaleId {
+    return (plot.overlay === true ? null : override) ?? plot.priceScaleId ?? 'right';
+  }
+
+  private _localScale(override = this._scaleOverride): PriceScaleId {
+    const first = this._d.plots.find(plot => plot.overlay !== true);
+    return first ? this._plotScale(first, override) : override ?? 'right';
+  }
+
+  private _fillScale(fill: IndicatorFillSpec, override: PriceScaleId | null, paneIndex = this.paneIndex): PriceScaleId | null {
+    const a = this._d.plots.find(plot => plot.key === fill.between[0]);
+    const b = this._d.plots.find(plot => plot.key === fill.between[1]);
+    const pane = fill.overlay === true ? 0 : paneIndex;
+    if ((a && (a.overlay === true ? 0 : paneIndex) !== pane) || (b && (b.overlay === true ? 0 : paneIndex) !== pane)) return null;
+    // A band can use calculated columns without creating visible plot series.
+    const fallback = fill.overlay === true ? 'right' : this._localScale(override);
+    const scale = a ? this._plotScale(a, override) : fallback;
+    return scale === (b ? this._plotScale(b, override) : fallback) ? scale : null;
+  }
+
+  public priceScaleId(): PriceScaleId | null { return this._scaleOverride; }
+
+  public canRelocate(paneIndex: number): boolean {
+    return (this._d.fills ?? []).every(fill => this._fillScale(fill, this._scaleOverride, paneIndex) !== null);
+  }
+
+  /** Keep a uniform study assignment synchronized with a whole-axis move. */
+  public adoptPriceScale(scaleId: PriceScaleId): void { this._scaleOverride = scaleId; }
+
+  public setPriceScale(scaleId: PriceScaleId | null): boolean {
+    if (this._removed || scaleId === this._scaleOverride || (scaleId !== null &&
+      (typeof scaleId !== 'string' || (scaleId !== 'right' && scaleId !== 'left' && scaleId !== '' && !scaleId.startsWith('overlay:'))))) return false;
+    const series = this._d.plots.flatMap(plot => {
+      if (plot.overlay === true) return [];
+      const api = this._series.get(plot.key);
+      return api ? [{ api, scaleId: this._plotScale(plot, scaleId) }] : [];
+    });
+    const primitives: { primitive: IPrimitive; scaleId: PriceScaleId }[] = [];
+    for (let i = 0; i < this._fills.length; i++) {
+      const scale = this._fillScale(this._d.fills![i], scaleId);
+      if (scale === null) return false;
+      if (this._d.fills![i].overlay !== true) primitives.push({ primitive: this._fills[i], scaleId: scale });
+    }
+    for (const primitive of [...this._levels, this._draws, ...this._attachedPrimitives]) {
+      if (primitive !== null) primitives.push({ primitive, scaleId: this._localScale(scaleId) });
+    }
+    return this._host.assignIndicatorScale?.(this.id, series, primitives, () => {
+      this._scaleOverride = scaleId;
+      this._applyRange();
+      this.updateLegendValues(this._host.legendIndex?.());
+    }) ?? false;
   }
 
   /**
@@ -486,7 +560,7 @@ export class IndicatorInstance implements IndicatorApi {
 
   /** Move the existing instance without rerunning its external attach lifecycle. */
   public relocate(paneIndex: number): void {
-    if (this._ownPane) this._host.setPaneRange(this.paneIndex, null);
+    if (this._ownPane && !this._host.setIndicatorRange) this._host.setPaneRange(this.paneIndex, null);
     this.paneIndex = paneIndex;
     this._applyRange();
     this._syncMarkers(this._host.sourceBars());
@@ -529,7 +603,7 @@ export class IndicatorInstance implements IndicatorApi {
       // broken legend, because from the outside it is one.
       const color = this._plotColor(plot);
       if (color !== undefined && isInvisible(color)) continue;
-      const text = this._host.formatPrice?.(pane, v)
+      const text = this._host.formatPrice?.(pane, v, this._series.get(plot.key))
         ?? formatValue(v, this._host.tickSize?.(pane));
       out.push({ text, color });
     }
@@ -680,6 +754,7 @@ export class IndicatorInstance implements IndicatorApi {
       this._draws = new IndicatorDrawings();
       this._draws.setVisible(this._visible);
       this._host.addIndicatorPrimitive(this._draws, this.paneIndex);
+      this._host.bindIndicatorPrimitiveScale?.(this._draws, this._localScale());
     }
     this._draws.setItems(items);
   }
@@ -894,7 +969,10 @@ export class IndicatorInstance implements IndicatorApi {
       timezone: () => this._host.timezone?.() ?? DEFAULT_TIMEZONE,
       now: () => this._host.now?.() ?? Date.now() / 1000,
       paneIndex: () => this.paneIndex,
-      addPrimitive: (p: IPrimitive) => { this._attachedPrimitives.add(p); this._host.addIndicatorPrimitive?.(p, this.paneIndex); },
+      addPrimitive: (p: IPrimitive) => {
+        this._attachedPrimitives.add(p); this._host.addIndicatorPrimitive?.(p, this.paneIndex);
+        this._host.bindIndicatorPrimitiveScale?.(p, this._localScale());
+      },
       removePrimitive: (p: IPrimitive) => { this._attachedPrimitives.delete(p); this._host.removeIndicatorPrimitive?.(p); },
       emit: (event: string, payload: unknown) => { this._host.emit?.(event, payload); },
     });
@@ -978,14 +1056,20 @@ export class IndicatorInstance implements IndicatorApi {
     // Restyle before recomputing — appearance is independent of the maths, so a
     // colour or thickness change must not wait on a full recalculation.
     for (const plot of this._d.plots) {
-      // A plot's chart type belongs to the series, not its style bag, so
-      // switching it means building a new series rather than restyling.
+      // Native hosts can retain the handle while changing its renderer.
+      // Older hosts keep their existing series-recreation path.
       const wanted = this._plotType(plot);
       if (wanted !== this._plotTypes.get(plot.key)) {
+        const current = this._series.get(plot.key);
+        if (current && this._host.setIndicatorSeriesType?.(current, wanted)) {
+          current.applyOptions(this._plotStyle(plot) as never);
+          this._plotTypes.set(plot.key, wanted);
+          continue;
+        }
         this._series.get(plot.key)?.remove();
         this._series.set(
           plot.key,
-          this._host.addIndicatorSeries(wanted, this._plotPane(plot), this._plotStyle(plot), plot.priceScaleId, plot.priceFormat),
+          this._host.addIndicatorSeries(wanted, this._plotPane(plot), this._plotStyle(plot), this._plotScale(plot), plot.priceFormat),
         );
         this._plotTypes.set(plot.key, wanted);
         continue;
@@ -1206,10 +1290,19 @@ export class IndicatorInstance implements IndicatorApi {
           this.paneIndex,
         ),
       );
+      this._host.bindIndicatorPrimitiveScale?.(this._levels[this._levels.length - 1], this._localScale());
     }
   }
 
   private _applyRange(): void {
+    if (this._host.setIndicatorRange) {
+      const local = this._d.plots.filter(plot => plot.overlay !== true).flatMap(plot => {
+        const series = this._series.get(plot.key);
+        return series ? [series] : [];
+      });
+      this._host.setIndicatorRange(this.id, this.paneIndex, this._localScale(), this._d.range?.(this._descriptorSettings()) ?? null, local);
+      return;
+    }
     if (!this._ownPane) return; // a shared pane belongs to whoever created it
     this._host.setPaneRange(this.paneIndex, this._d.range?.(this._descriptorSettings()) ?? null);
   }
@@ -1237,9 +1330,10 @@ export class IndicatorInstance implements IndicatorApi {
     this._tables.clear();
     if (this._draws !== null) { this._host.removeIndicatorPrimitive?.(this._draws); this._draws = null; }
     if (this._background !== null) { this._host.removeIndicatorPrimitive?.(this._background); this._background = null; }
+    this._host.setIndicatorRange?.(this.id, this.paneIndex, this._localScale(), null, []);
     // Withdraw the candle colours before anything else forgets who owned them.
     if (this._d.barColors !== undefined) this._host.setBarColors?.(null, this.id);
-    if (this._ownPane) this._host.setPaneRange(this.paneIndex, null);
+    if (this._ownPane && !this._host.setIndicatorRange) this._host.setPaneRange(this.paneIndex, null);
     this._host.indicatorRemoved?.(this.id, !this._constructed && this._ownPane ? this.paneIndex : undefined);
   }
 }

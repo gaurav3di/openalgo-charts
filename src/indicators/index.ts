@@ -120,3 +120,8 @@ export {
   crossesAbove, crossesBelow, crosses, rising, falling,
   type NumericalWindowOptions, type RollingVarianceOptions,
 } from './statistics';
+export {
+  alignRequestedExpression, requestedIntrabars,
+  type RequestedBarsSnapshot, type RequestedExpression, type RequestedAlignmentOptions,
+  type RequestedTimeWindow, type RequestedIntrabarOptions, type RequestedIntrabarValues,
+} from './requested-context';

@@ -706,6 +706,7 @@ export class Chart {
   private readonly _priceAxisWidth: number;
   private readonly _timeAxisHeight: number;
   private _pending: InvalidateMask | null = null;
+  private _scaleMutationDepth = 0;
   private _resizeObserver: ResizeObserver | null = null;
   private _width = 0;
   private _height = 0;
@@ -805,6 +806,11 @@ export class Chart {
   private readonly _seriesRecords = new WeakMap<SeriesApi, SeriesRecord>();
   private readonly _seriesProvenance = new Map<number, SeriesProvenance>();
   private readonly _indicators: IndicatorInstance[] = [];
+  private readonly _indicatorRanges = new Map<string, {
+    pane: Pane; scaleId: PriceScaleId; range: { min: number; max: number };
+    series: readonly SeriesApi[]; token: object;
+  }>();
+  private readonly _ownedScaleRanges = new Map<PriceScale, object>();
   private readonly _seriesOwners = new WeakMap<SeriesApi, {
     pane: Pane; priceFormat?: AddSeriesOptions['priceFormat']; inheritedStyle: Partial<SeriesStyle>; indicatorOwned: boolean;
   }>();
@@ -849,6 +855,7 @@ export class Chart {
   /** Pressure at the press; a click reports this, since its release always reads 0. */
   private _downPressure = 0;
   private _dragId: string | null = null; // externalId of the primitive being dragged
+  private _dragPriceScale: PriceScale | null = null;
   private _dragCancelOnEscape = false;
   private _hoverId: string | null = null; // externalId of the primitive under the pointer
   /** Whether that primitive draws below the overlay, so leaving it must repaint the base. */
@@ -1185,6 +1192,7 @@ export class Chart {
     if (owner.indicatorOwned || record.scaleId === scaleId) return false;
     const target = owner.pane.scaleFor(scaleId);
     record.scaleId = scaleId;
+    this._reconcileIndicatorRanges();
     this._applySeriesPriceFormat(target, owner.priceFormat);
     if (record.style.precision !== undefined) this._applyPrecision(target, record.style.precision);
     this._recomputeAxisColumns();
@@ -1201,6 +1209,10 @@ export class Chart {
    * An unregistered type throws before any state changes.
    */
   public setSeriesType(series: SeriesApi, type: SeriesType): boolean {
+    return this._setSeriesType(series, type, true);
+  }
+
+  private _setSeriesType(series: SeriesApi, type: SeriesType, notify: boolean): boolean {
     if (this.seriesType(series) === null) return false;
     const record = this._seriesRecords.get(series)!, owner = this._seriesOwners.get(series)!;
     const entry = getChartType(type);
@@ -1224,7 +1236,7 @@ export class Chart {
       if (record.style.precision === undefined) this._applySeriesPriceFormat(scale, owner.priceFormat);
     }
     this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
-    this.emit('objects:change', {});
+    if (notify) this.emit('objects:change', {});
     return true;
   }
 
@@ -1303,6 +1315,7 @@ export class Chart {
         this._seriesProvenance.delete(dataId);
         if (this._firstDataId.value === dataId) this._firstDataId.value = null;
         if (this._primary?.record === record) this._primary = null;
+        if (!owner.indicatorOwned) this._reconcileIndicatorRanges();
         this._timeScale.setBaseIndex(this._dataLayer.baseIndex);
         this._recomputeAxisColumns();
         this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
@@ -1323,6 +1336,7 @@ export class Chart {
     this._seriesRecords.set(api, record);
     bindSeriesProvenance(api, provenance);
     this._seriesOwners.set(api, owner);
+    if (!owner.indicatorOwned) this._reconcileIndicatorRanges();
     if (isPrimary) {
       this._primary = { api, record };
       this.emit('objects:change', {});
@@ -1483,8 +1497,9 @@ export class Chart {
   public addIndicator(
     indicatorId: string,
     settings: Readonly<IndicatorSettings> = {},
-    options: { paneIndex?: number } = {},
+    options: { paneIndex?: number; priceScaleId?: PriceScaleId } = {},
   ): IndicatorApi {
+    if (options.priceScaleId !== undefined && !this._validPriceScaleId(options.priceScaleId)) throw new TypeError('Invalid indicator price scale');
     const descriptor = getIndicator(indicatorId);
     const instance = new IndicatorInstance(
       this._indicatorHost(),
@@ -1493,6 +1508,7 @@ export class Chart {
       options.paneIndex,
       undefined,
       new Set(this._indicators.map(item => item.id)),
+      options.priceScaleId,
     );
     this._indicators.push(instance);
     this.emit('objects:change', {});
@@ -1541,8 +1557,9 @@ export class Chart {
   /** Move an existing study to an existing pane or a new pane at panes().length. */
   public moveIndicator(instanceId: string, paneIndex: number): boolean {
     const instance = this._indicators.find(item => item.id === instanceId);
-    if (this.isDestroyed || !instance || !Number.isInteger(paneIndex) || paneIndex < 0 || paneIndex > this._panes.length || instance.paneIndex === paneIndex) return false;
+    if (this.isDestroyed || !instance || !Number.isInteger(paneIndex) || paneIndex < 0 || paneIndex > this._panes.length || instance.paneIndex === paneIndex || !instance.canRelocate(paneIndex)) return false;
     const previous = instance.paneIndex;
+    const freshTarget = paneIndex === this._panes.length;
     this._ensurePane(paneIndex);
     const target = this._panes[paneIndex];
     const resources = instance.renderResources();
@@ -1556,7 +1573,7 @@ export class Chart {
       owner.pane.removeSeries(record);
       target.addSeries(record);
       owner.pane = target;
-      if (target.series().filter(item => item.scaleId === record.scaleId).length === 1) target.scaleOf(record).setOptions(options);
+      if (freshTarget && target.series().filter(item => item.scaleId === record.scaleId).length === 1) target.scaleOf(record).setOptions(options);
       this._applySeriesPriceFormat(target.scaleOf(record), owner.priceFormat);
       if (record.style.precision !== undefined) this._applyPrecision(target.scaleOf(record), record.style.precision);
     }
@@ -1565,7 +1582,6 @@ export class Chart {
       this._panes.find(pane => pane.hasPrimitive(primitive))?.transferPrimitive(primitive, target);
     }
     instance.relocate(paneIndex);
-    if (paneIndex === 0 || this._indicators.filter(item => item.paneIndex === paneIndex).length > 1) target.priceScale.setFixedRange(null);
     this._syncLegendPanes();
     // Alert visuals resolve the instance's new pane before we decide whether its old pane is empty.
     this.emit('objects:change', {});
@@ -1760,14 +1776,27 @@ export class Chart {
 
   private _indicatorHost(): IndicatorHost {
     return {
+      assignIndicatorScale: (id, series, primitives, commit) => this._assignIndicatorScale(id, series, primitives, commit),
+      bindIndicatorPrimitiveScale: (primitive, scaleId) => {
+        this._panes.find(pane => pane.hasPrimitive(primitive))?.bindPrimitiveScale(primitive, scaleId);
+        this._recomputeAxisColumns();
+        this.invalidate(mask => mask.invalidateGlobal(InvalidationLevel.Full));
+      },
+      setIndicatorRange: (id, paneIndex, scaleId, range, series) => {
+        const previous = this._indicatorRanges.get(id);
+        const pane = this._panes[paneIndex];
+        if (range && pane) this._indicatorRanges.set(id, { pane, scaleId, range, series, token: previous?.token ?? {} });
+        else this._indicatorRanges.delete(id);
+        this._reconcileIndicatorRanges();
+      },
       legendIndex: () => this._readoutIndex(),
       indicatorRemoved: (id, failedOwnedPane): void => this._forgetIndicator(id, failedOwnedPane),
       flushIndicators: (): void => this._flushIndicators(),
       resourcesChanged: (): void => this._reorderIndicatorResources(),
       // The scale that draws the ladder is the one that decides how a number on
       // that pane is written, floor, tick, custom formatter and all.
-      formatPrice: (paneIndex: number, value: number): string | undefined =>
-        this._panes[paneIndex]?.priceScale.format(value),
+      formatPrice: (paneIndex: number, value: number, series?: SeriesApi): string | undefined =>
+        (series?.priceScale() ?? this._panes[paneIndex]?.priceScale)?.format(value),
       addIndicatorLegend: (o): PaneLegend => {
         // The first legend on a non-price pane also carries the pane-level
         // controls (move / maximize), the way a charting pane toolbar does;
@@ -1792,6 +1821,7 @@ export class Chart {
       },
       legendRowsOn: (paneIndex): number => this._legends.filter((l) => l.paneIndex === paneIndex).length,
       primarySeries: (): SeriesApi | null => this.primarySeries(),
+      setIndicatorSeriesType: (series, type) => this._setSeriesType(series, type as SeriesType, false),
       addIndicatorSeries: (type, paneIndex, style, priceScaleId, priceFormat): SeriesApi =>
         this._createSeries(
           type as SeriesType,
@@ -1889,6 +1919,63 @@ export class Chart {
         if (range === null) pane.priceScale.setAutoScale(true);
       },
     };
+  }
+
+  private _validPriceScaleId(value: unknown): value is PriceScaleId {
+    return typeof value === 'string' && (value === 'right' || value === 'left' || value === '' || value.startsWith('overlay:'));
+  }
+
+  private _assignIndicatorScale(id: string,
+    series: readonly { api: SeriesApi; scaleId: PriceScaleId }[],
+    primitives: readonly { primitive: IPrimitive; scaleId: PriceScaleId }[], commit: () => void): boolean {
+    if (this._destroyed || !this._indicators.some(instance => instance.id === id)) return false;
+    for (const item of series) if (!this._validPriceScaleId(item.scaleId) || this.seriesType(item.api) === null) return false;
+    for (const item of primitives) if (!this._validPriceScaleId(item.scaleId) || !this._panes.some(pane => pane.hasPrimitive(item.primitive))) return false;
+    this._scaleMutationDepth++;
+    try {
+      for (const { api, scaleId } of series) {
+        const record = this._seriesRecords.get(api)!, owner = this._seriesOwners.get(api)!;
+        const target = owner.pane.scaleFor(scaleId);
+        record.scaleId = scaleId;
+        this._applySeriesPriceFormat(target, owner.priceFormat);
+        if (record.style.precision !== undefined) this._applyPrecision(target, record.style.precision);
+      }
+      for (const { primitive, scaleId } of primitives) this._panes.find(pane => pane.hasPrimitive(primitive))!.bindPrimitiveScale(primitive, scaleId);
+      commit();
+      this._recomputeAxisColumns();
+    } finally {
+      this._scaleMutationDepth--;
+      this.invalidate(mask => mask.invalidateGlobal(InvalidationLevel.Full));
+    }
+    this.emit('objects:change', {});
+    return true;
+  }
+
+  private _reconcileIndicatorRanges(): void {
+    const selected = new Map<PriceScale, { token: object; range: { min: number; max: number } }>();
+    for (const claim of this._indicatorRanges.values()) {
+      if (!this._panes.includes(claim.pane)) continue;
+      const scale = claim.pane.scaleFor(claim.scaleId);
+      if (selected.has(scale)) continue;
+      const peers = [...this._indicatorRanges.values()].filter(peer => peer.pane === claim.pane && peer.scaleId === claim.scaleId
+        && peer.range.min === claim.range.min && peer.range.max === claim.range.max);
+      const records = new Set(peers.flatMap(peer => peer.series.flatMap(api => {
+        const record = this._seriesRecords.get(api); return record ? [record] : [];
+      })));
+      if (claim.pane.series().some(record => record.scaleId === claim.scaleId && !records.has(record))) continue;
+      selected.set(scale, claim);
+    }
+    for (const [scale, token] of this._ownedScaleRanges) {
+      if (!selected.has(scale)) {
+        scale.clearOwnedFixedRange(token);
+        this._ownedScaleRanges.delete(scale);
+      }
+    }
+    for (const [scale, claim] of selected) {
+      const token = this._ownedScaleRanges.get(scale) ?? claim.token;
+      if (scale.setOwnedFixedRange(token, claim.range)) this._ownedScaleRanges.set(scale, token);
+      else if (!scale.ownsFixedRange(token)) this._ownedScaleRanges.delete(scale);
+    }
   }
 
   /**
@@ -2410,7 +2497,7 @@ export class Chart {
       mode: scale.options.mode,
       scaled: scale.scaled,
       lockRatio: pane.ratioLocked(scaleId),
-      movable: (scaleId === 'right' || scaleId === 'left') && pane.usesScale(scaleId) && !pane.usesScale(other),
+      movable: (scaleId === 'right' || scaleId === 'left') && this._canMovePriceAxis(paneIndex, scaleId, other),
     };
   }
 
@@ -2466,7 +2553,15 @@ export class Chart {
    */
   public movePriceAxis(paneIndex: number, from: 'right' | 'left', to: 'right' | 'left'): boolean {
     const pane = this._panes[paneIndex];
-    if (pane === undefined || !pane.moveSeriesScale(from, to)) return false;
+    if (!this._canMovePriceAxis(paneIndex, from, to) || !pane.moveSeriesScale(from, to)) return false;
+    for (const claim of this._indicatorRanges.values()) if (claim.pane === pane && claim.scaleId === from) claim.scaleId = to;
+    for (const instance of this._indicators) {
+      if (instance.paneIndex !== paneIndex) continue;
+      const local = instance.renderResources().series.filter(item => !item.overlay);
+      const localPrices = instance.renderResources().primitives.filter(item => !item.overlay && pane.primitiveScaleId(item.primitive) !== null);
+      if (local.length ? local.every(item => this._seriesRecords.get(item.api)?.scaleId === to)
+        : localPrices.length && localPrices.every(item => pane.primitiveScaleId(item.primitive) === to)) instance.adoptPriceScale(to);
+    }
     // The moved axis keeps its own formatting (the scale object travels with
     // it); the strip it vacated starts again from the chart-wide defaults, the
     // way a scale used for the first time does.
@@ -2476,6 +2571,25 @@ export class Chart {
     this._recomputeAxisColumns(); // the columns are reserved by what is in use
     this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
     this.emit('priceAxisMoved', { paneIndex, from, to });
+    return true;
+  }
+
+  private _canMovePriceAxis(paneIndex: number, from: 'right' | 'left', to: 'right' | 'left'): boolean {
+    const pane = this._panes[paneIndex];
+    if (!pane || from === to || !pane.usesScale(from) || pane.usesScale(to)) return false;
+    // One saved study override cannot represent a partial axis transfer or an
+    // explicit price overlay. Refuse before changing either scale object.
+    for (const instance of this._indicators) {
+      const resources = instance.renderResources();
+      const series = resources.series.filter(item => this._seriesOwners.get(item.api)?.pane === pane);
+      const primitives = resources.primitives.filter(item => pane.hasPrimitive(item.primitive) && pane.primitiveScaleId(item.primitive) !== null);
+      const movingSeries = series.filter(item => this._seriesRecords.get(item.api)?.scaleId === from);
+      const movingPrimitives = primitives.filter(item => pane.primitiveScaleId(item.primitive) === from);
+      if (!movingSeries.length && !movingPrimitives.length) continue;
+      if (movingSeries.some(item => item.overlay) || movingPrimitives.some(item => item.overlay)) return false;
+      if (series.some(item => !item.overlay && this._seriesRecords.get(item.api)?.scaleId !== from)
+        || primitives.some(item => !item.overlay && pane.primitiveScaleId(item.primitive) !== from)) return false;
+    }
     return true;
   }
 
@@ -2733,6 +2847,7 @@ export class Chart {
     for (let i = 0; i < this._panes.length; i++) {
       if (this._panes[i].removePrimitive(primitive)) {
         if (li >= 0) this._restackLegends();
+        this._recomputeAxisColumns();
         this.invalidate((m) => m.invalidatePane(i, { level: InvalidationLevel.Light, autoScale: false }));
         return;
       }
@@ -3074,7 +3189,14 @@ export class Chart {
    */
   public getState(): ChartState & ChartSettingsState & { timezone: string } {
     const panes: PaneState[] = this._panes.map((pane) => {
-      const { right, ...scales } = pane.scaleStates();
+      const states = pane.scaleStates();
+      for (const [instanceId, claim] of this._indicatorRanges) {
+        if (claim.pane !== pane) continue;
+        const scale = pane.scaleFor(claim.scaleId), token = this._ownedScaleRanges.get(scale);
+        const ownership = token ? scale.ownedFixedRangeState(token) : null;
+        if (ownership && states[claim.scaleId] && !states[claim.scaleId]!.indicatorRange) states[claim.scaleId]!.indicatorRange = { instanceId, manual: ownership.manual };
+      }
+      const { right, ...scales } = states;
       const state: PaneState = {
         weight: pane.weight,
         priceScale: right!,
@@ -3124,6 +3246,7 @@ export class Chart {
         settings: i.settings(),
         paneIndex: i.paneIndex,
         visible: i.visible(),
+        ...(i.priceScaleId() === null ? {} : { priceScaleId: i.priceScaleId()! }),
       })),
     };
     if (this._drawingState !== undefined) state.drawings = this._drawingState;
@@ -3166,6 +3289,7 @@ export class Chart {
       if (s.indicators !== undefined) {
         if (!Array.isArray(s.indicators)) throw new Error('Invalid indicator list');
         for (const spec of s.indicators) {
+          if (spec.priceScaleId !== undefined && !this._validPriceScaleId(spec.priceScaleId)) throw new Error('Invalid indicator price scale');
           if (spec.instanceId === undefined) continue;
           if (typeof spec.instanceId !== 'string' || !spec.instanceId.trim() || reservedIds.has(spec.instanceId)) {
             throw new Error('Invalid or duplicate indicator instance id');
@@ -3227,30 +3351,17 @@ export class Chart {
     let indicators = 0;
     if (s.indicators) {
       for (const instance of this._indicators.splice(0)) instance.remove();
-      // The band an oscillator declares for its own pane (RSI 0..100) is
-      // declared by the instance that *claimed* that pane. A restored instance
-      // is handed its pane index instead of claiming one, so it declares
-      // nothing, while the outgoing instance withdrew its band on the way out:
-      // the pane was left free-autoscaling and re-measured itself against the
-      // oscillator's own values. Re-declare it here, taking the first indicator
-      // on each pane as the one that made it, which is what creation order
-      // means and what the saved order preserves.
-      const declared = new Set<number>();
       for (const spec of s.indicators) {
         if (!hasIndicator(spec.indicatorId)) continue; // tier not loaded — skip, don't throw
         const descriptor = getIndicator(spec.indicatorId);
         const instance = new IndicatorInstance(
           this._indicatorHost(), descriptor, spec.settings, spec.paneIndex,
-          spec.instanceId, reservedIds,
+          spec.instanceId, reservedIds, spec.priceScaleId,
         );
         reservedIds.add(instance.id);
         this._indicators.push(instance);
         if (spec.visible === false) instance.setVisible(false);
         indicators += 1;
-        if (spec.paneIndex > 0 && !declared.has(spec.paneIndex)) {
-          declared.add(spec.paneIndex);
-          this._panes[spec.paneIndex]?.priceScale.setFixedRange(descriptor.range?.(spec.settings) ?? null);
-        }
       }
     }
 
@@ -3275,9 +3386,26 @@ export class Chart {
           // Legacy snapshots may carry an instrument tick broadcast into an oscillator.
           // New snapshots explicitly preserve the precision configured on each scale.
           scale.setOptions(id === 'right' && saved.minPrecision === undefined ? this._scalePatchFor(pane, options) : options);
-          if (saved.fixedRange !== undefined) scale.setFixedRange(saved.fixedRange);
-          scale.setAutoScale(saved.autoScale);
-          if (!saved.autoScale && saved.range) scale.setPriceRange(saved.range);
+          const claim = saved.indicatorRange ? this._indicatorRanges.get(saved.indicatorRange.instanceId) : undefined;
+          const ownDefault = claim && claim.pane === pane && claim.scaleId === id
+            && saved.fixedRange?.min === claim.range.min && saved.fixedRange?.max === claim.range.max;
+          if (ownDefault) {
+            if (!scale.ownsFixedRange(claim.token)) {
+              scale.setFixedRange(null);
+              scale.setAutoScale(true);
+              scale.setOwnedFixedRange(claim.token, claim.range);
+              this._ownedScaleRanges.set(scale, claim.token);
+            }
+            scale.setAutoScale(true);
+            if (saved.indicatorRange!.manual) {
+              scale.setAutoScale(false);
+              if (saved.range) scale.setPriceRange(saved.range);
+            }
+          } else {
+            if (saved.fixedRange !== undefined) scale.setFixedRange(saved.fixedRange);
+            scale.setAutoScale(saved.autoScale);
+            if (!saved.autoScale && saved.range) scale.setPriceRange(saved.range);
+          }
           if (saved.ratioLock) ratioLocks.push({ pane, id, reference: saved.ratioLock });
         }
       });
@@ -3358,7 +3486,7 @@ export class Chart {
   public invalidate(build: (mask: InvalidateMask) => void): void {
     if (this._pending === null) this._pending = new InvalidateMask();
     build(this._pending);
-    this._loop.requestFrame();
+    if (this._scaleMutationDepth === 0) this._loop.requestFrame();
   }
 
   /**
@@ -3461,7 +3589,7 @@ export class Chart {
   private _recomputeAxisColumns(): void {
     const anyLeft = this._panes.some((p) => p.hasLeftScale());
     const anyRight = this._panes.some((p) => p.usesScale('right'));
-    const anySeries = this._panes.some((p) => p.series().length > 0);
+    const anySeries = this._panes.some((p) => p.series().length > 0 || p.primitives().some(primitive => p.primitiveScaleId(primitive) !== null));
     const left = anyLeft ? this._priceAxisWidth : 0;
     const right = anyRight || !anySeries ? this._priceAxisWidth : 0;
     if (left === this._leftAxisWidth && right === this._rightAxisWidth) return;
@@ -4202,12 +4330,13 @@ export class Chart {
     // form is the original price-line path and still needs `subscribeDrag`.
     if (hit && (hit.draggable === true || (hit.cursor === 'ns-resize' && this._dragCb !== null))) {
       this._dragId = hit.externalId;
+      this._dragPriceScale = hit.priceScale ?? null;
       this._dragCancelOnEscape = hit.cancelOnEscape === true;
       this._dragMoved = false;
       this._ensureScaled(p.pane);
       this._dragFrom = {
         time: this._xToTime(p.x),
-        price: this._panes[p.pane].yToPrice(p.localY),
+        price: this._dragPriceScale?.yToPrice(p.localY) ?? this._panes[p.pane].yToPrice(p.localY),
       };
       this._setHover(hit); // active state + cursor even when no hover preceded (touch)
       // Hide the crosshair while dragging a line — a frozen crosshair at the
@@ -4311,7 +4440,7 @@ export class Chart {
     if (this._dragId !== null) {
       const localY = p.y - (this._paneLayout()[this._downPane]?.top ?? 0);
       if (Math.abs(p.x - this._downX) > 3 || Math.abs(localY - this._downLocalY) > 3) this._dragMoved = true;
-      const price = this._panes[this._downPane].yToPrice(localY);
+      const price = this._dragPriceScale?.yToPrice(localY) ?? this._panes[this._downPane].yToPrice(localY);
       const time = this._xToTime(p.x);
       this._dragCb?.(this._dragId, price, time);
       const drag: ChartDragEvent = {
@@ -4410,7 +4539,7 @@ export class Chart {
     if (this._dragId !== null) {
       const p = this._localPoint(e);
       const localY = p.y - (this._paneLayout()[this._downPane]?.top ?? 0);
-      const price = this._panes[this._downPane].yToPrice(localY);
+      const price = this._dragPriceScale?.yToPrice(localY) ?? this._panes[this._downPane].yToPrice(localY);
       const time = this._xToTime(p.x);
       this._dragEndCb?.(this._dragId, price, time);
       const end: ChartDragEndEvent = {
@@ -4435,6 +4564,7 @@ export class Chart {
         this.emit('click', click);
       }
       this._dragId = null;
+      this._dragPriceScale = null;
       // Re-evaluate hover at the release point (mouse keeps hovering the line;
       // touch has no pointer any more) and drop the dragging visual state.
       const hit = e.pointerType === 'touch'
@@ -4725,6 +4855,7 @@ export class Chart {
     this._pinchPane = pts[0].pane;
     // abort any single-pointer interaction so it doesn't fight the pinch
     this._dragging = false; this._axisDrag = null; this._axisDragScale = null; this._dragId = null; this._pointerMoved = true;
+    this._dragPriceScale = null;
     this._setHover(null);
   }
 
@@ -4758,6 +4889,7 @@ export class Chart {
     if (e.key === 'Escape' && this._dragCancelOnEscape && this._dragId !== null && !ShortcutManager.shouldIgnore(e.target)) {
       this._cancelPrimitiveDrag('escape');
       this._dragId = null;
+      this._dragPriceScale = null;
       this._dragging = false;
       this._pointerMoved = true;
       for (const id of this._pointers.keys()) this._endedPointers.add(id);

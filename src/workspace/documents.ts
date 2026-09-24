@@ -1,4 +1,4 @@
-import type { ChartState, ChartSettingsState, IndicatorState, SeriesState } from 'openalgo-charts';
+import type { ChartState, ChartSettingsState, IndicatorState, PriceScaleId, SeriesState } from 'openalgo-charts';
 import { parseAlertsDocument, parsePaneState } from 'openalgo-charts';
 import { boolean, choice, list, number, readJson, record, string, WorkspaceDocumentError, type Json } from './json';
 
@@ -49,6 +49,13 @@ function indicatorStates(input: Json | undefined, preserveIdentity = true): Indi
       paneIndex: number(entry.paneIndex, 'indicator paneIndex', 0, 31, true),
     };
     if (entry.visible !== undefined) out.visible = boolean(entry.visible, 'indicator visibility');
+    if (entry.priceScaleId !== undefined) {
+      const id = entry.priceScaleId;
+      if (typeof id !== 'string' || (id !== 'right' && id !== 'left' && id !== '' && !id.startsWith('overlay:'))) {
+        throw new WorkspaceDocumentError('Invalid indicator priceScaleId');
+      }
+      out.priceScaleId = id as PriceScaleId;
+    }
     if (preserveIdentity && entry.instanceId !== undefined) {
       out.instanceId = string(entry.instanceId, 'indicator instanceId');
       if (ids.has(out.instanceId)) throw new WorkspaceDocumentError('Duplicate indicator instance ID');

@@ -147,6 +147,8 @@ export class Pane {
   public weight = 1;
   private readonly _series: SeriesRecord[] = [];
   private readonly _primitives: IPrimitive[] = [];
+  private readonly _primitiveScales = new Map<IPrimitive, PriceScaleId>();
+  private _destroyed = false;
   private _width = 0;
   private _height = 0;
 
@@ -244,13 +246,15 @@ export class Pane {
     return this._scaleFor(id);
   }
 
-  /** True when some series on this pane maps to the named scale. */
+  /** True when a series or explicitly bound primitive uses the named scale. */
   public usesScale(id: PriceScaleId): boolean {
-    return this._series.some((s) => s.scaleId === id);
+    if (this._series.some((s) => s.scaleId === id)) return true;
+    for (const bound of this._primitiveScales.values()) if (bound === id) return true;
+    return false;
   }
 
   /**
-   * Move every series on one side's scale to the other side, axis and all.
+   * Move every series and bound primitive on one side to the other, axis and all.
    *
    * The two scale objects are swapped rather than their state copied across:
    * the range, mode, margins, tick size and any custom formatter are all
@@ -259,8 +263,8 @@ export class Pane {
    * behind carries nothing, so it is reset: keeping its range would label the
    * vacated strip with a ladder for prices that are no longer on that side.
    *
-   * Refuses when the target side already carries series. One side draws one
-   * axis, so a move onto an occupied side could only mean stacking two ladders
+   * Refuses when the target side already carries series or bound primitives.
+   * One side draws one axis, so a move onto an occupied side could only mean stacking two ladders
    * in one strip or silently sending the sitting tenant the other way, and
    * neither is what "move this axis to the left" asks for.
    */
@@ -276,6 +280,7 @@ export class Pane {
       this._leftScale = vacated;
     }
     for (const s of this._series) if (s.scaleId === from) s.scaleId = to;
+    for (const [primitive, id] of this._primitiveScales) if (id === from) this._primitiveScales.set(primitive, to);
     // `reset` declines to throw away a range a user set by hand, which is right
     // everywhere else and wrong here: there is no series left to re-measure it.
     // A declared band goes first, or the strip would keep the range and the
@@ -377,9 +382,9 @@ export class Pane {
     return out;
   }
 
-  /** True when a left-axis scale is active (some series maps to it). */
+  /** True when a series or explicitly bound primitive uses the left axis. */
   public hasLeftScale(): boolean {
-    return this._leftScale !== null && this._series.some((s) => s.scaleId === 'left');
+    return this._leftScale !== null && this.usesScale('left');
   }
 
   /** Remove a series record if present; returns true if it was found. */
@@ -390,9 +395,10 @@ export class Pane {
     // A scale with nothing left on it keeps describing what just left, and a
     // pane is reused when one indicator replaces another. Forget the range so
     // the next occupant is measured on its own terms, or not labelled at all.
-    if (!this._series.some((s) => s.scaleId === record.scaleId)) {
-      this._scaleFor(record.scaleId).reset();
-      if (record.scaleId !== '' && this._overlayScales.delete(record.scaleId)) this._ratioLocks.delete(record.scaleId);
+    if (!this.usesScale(record.scaleId)) {
+      const scale = this._scaleFor(record.scaleId);
+      scale.reset();
+      if (record.scaleId !== '' && !scale.hasConfiguration() && !this._ratioLocks.has(record.scaleId)) this._overlayScales.delete(record.scaleId);
     }
     return true;
   }
@@ -420,10 +426,36 @@ export class Pane {
   /** Transfer ownership without ending an attached primitive's lifetime. */
   public transferPrimitive(primitive: IPrimitive, target: Pane): boolean {
     const index = this._primitives.indexOf(primitive);
-    if (index < 0 || target === this) return false;
+    if (index < 0 || target === this || target._destroyed || target.hasPrimitive(primitive)) return false;
+    const scaleId = this._primitiveScales.get(primitive);
+    if (scaleId !== undefined) target._scaleFor(scaleId);
     this._primitives.splice(index, 1);
+    this._primitiveScales.delete(primitive);
     target._primitives.push(primitive);
+    if (scaleId !== undefined) target._primitiveScales.set(primitive, scaleId);
     return true;
+  }
+
+  /**
+   * Bind an attached primitive without detaching it. Null restores the right scale.
+   * The owner schedules layout and repaint after finishing its resource transaction.
+   */
+  public bindPrimitiveScale(primitive: IPrimitive, scaleId: PriceScaleId | null): boolean {
+    if (this._destroyed || !this.hasPrimitive(primitive)) return false;
+    if (scaleId !== null && (typeof scaleId !== 'string'
+      || (scaleId !== 'left' && scaleId !== 'right' && scaleId !== '' && !scaleId.startsWith('overlay:')))) return false;
+    if (this.primitiveScaleId(primitive) === scaleId) return false;
+    if (scaleId === null) this._primitiveScales.delete(primitive);
+    else {
+      this._scaleFor(scaleId);
+      this._primitiveScales.set(primitive, scaleId);
+    }
+    return true;
+  }
+
+  /** Explicit binding, or null for an unbound or unavailable primitive. */
+  public primitiveScaleId(primitive: IPrimitive): PriceScaleId | null {
+    return this._primitiveScales.get(primitive) ?? null;
   }
 
   /** Primitives attached to this pane, in draw order. */
@@ -446,12 +478,15 @@ export class Pane {
     const i = this._primitives.indexOf(primitive);
     if (i < 0) return false;
     this._primitives.splice(i, 1);
+    this._primitiveScales.delete(primitive);
     primitive.detached?.();
     return true;
   }
 
   /** Detach every primitive (lifecycle cleanup) and remove the pane element. */
   public destroy(): void {
+    this._destroyed = true;
+    this._primitiveScales.clear();
     for (const p of this._primitives) p.detached?.();
     this._primitives.length = 0;
     this._backend.destroy();
@@ -468,6 +503,7 @@ export class Pane {
       plotWidth: layout.plotWidth,
       plotHeight: layout.plotHeight,
       priceAxisWidth: ctx.priceAxisWidth,
+      priceAxisSide: 'right',
       dpr: ctx.dpr,
       theme: ctx.theme,
       hoverId: ctx.hoverId ?? null,
@@ -481,10 +517,23 @@ export class Pane {
     };
   }
 
+  private _boundPrimitiveContext(primitive: IPrimitive, context: PrimitiveRenderContext, leftAxisWidth: number): PrimitiveRenderContext {
+    const id = this._primitiveScales.get(primitive);
+    if (id === undefined) return context;
+    const side = id === 'left' || id === 'right' ? id : 'hidden';
+    return { ...context, priceScale: this._scaleFor(id), priceAxisSide: side,
+      priceAxisWidth: side === 'left' ? leftAxisWidth : side === 'right' ? context.priceAxisWidth : 0 };
+  }
+
   /** Topmost primitive hit at media-px (x,y) relative to this pane's plot. */
   public hitTestPrimitives(x: number, y: number, ctx: PaneRenderContext): PrimitiveHit | null {
     const prc = this._primitiveContext(ctx);
-    return bestHit(this._primitives.map((p) => (p.hitTest ? p.hitTest(x, y, prc) : null)));
+    return bestHit(this._primitives.map((p) => {
+      if (!p.hitTest) return null;
+      const context = this._boundPrimitiveContext(p, prc, ctx.leftAxisWidth ?? 0);
+      const hit = p.hitTest(x, y, context);
+      return hit !== null && this._primitiveScales.has(p) ? { ...hit, priceScale: context.priceScale } : hit;
+    }));
   }
 
   public resize(width: number, height: number, dpr: number): void {
@@ -536,11 +585,10 @@ export class Pane {
     let easing = false;
     const layout = this._layout(ctx);
     const range = ctx.timeScale.visibleRange();
-    // Right scale also expands for primitives (price lines etc.).
-    easing = this._autoscaleScale(this.priceScale, (s) => s.scaleId === 'right', true, ctx, layout.plotHeight, range, progress) || easing;
-    if (this._leftScale) easing = this._autoscaleScale(this._leftScale, (s) => s.scaleId === 'left', false, ctx, layout.plotHeight, range, progress) || easing;
+    easing = this._autoscaleScale(this.priceScale, 'right', ctx, layout.plotHeight, range, progress) || easing;
+    if (this._leftScale) easing = this._autoscaleScale(this._leftScale, 'left', ctx, layout.plotHeight, range, progress) || easing;
     for (const [id, scale] of this._overlayScales) {
-      easing = this._autoscaleScale(scale, (s) => s.scaleId === id, false, ctx, layout.plotHeight, range, progress) || easing;
+      easing = this._autoscaleScale(scale, id, ctx, layout.plotHeight, range, progress) || easing;
     }
     // After the measuring pass and before anything reads a range: a locked
     // scale is manual, so nothing above touched it, and the correction has to
@@ -555,13 +603,13 @@ export class Pane {
 
   private _autoscaleScale(
     scale: PriceScale,
-    match: (s: SeriesRecord) => boolean,
-    includePrimitives: boolean,
+    scaleId: PriceScaleId,
     ctx: PaneRenderContext,
     plotHeight: number,
     range: { from: number; to: number },
     progress: number,
   ): boolean {
+    const match = (s: SeriesRecord): boolean => s.scaleId === scaleId;
     scale.setHeight(plotHeight);
     // Before the manual-range early-out on purpose: an axis-dragged scale still
     // has to label itself, and the gather loop below never runs for it. Guarded
@@ -584,13 +632,12 @@ export class Pane {
         if (ext.max > high) high = ext.max;
       }
     }
-    if (includePrimitives) {
-      for (const p of this._primitives) {
-        const ext = p.autoscaleInfo?.();
-        if (ext) {
-          if (ext.min < low) low = ext.min;
-          if (ext.max > high) high = ext.max;
-        }
+    for (const p of this._primitives) {
+      if ((this._primitiveScales.get(p) ?? 'right') !== scaleId) continue;
+      const ext = p.autoscaleInfo?.();
+      if (ext) {
+        if (ext.min < low) low = ext.min;
+        if (ext.max > high) high = ext.max;
       }
     }
     return low <= high ? scale.autoscale(low, high, progress) : false;
@@ -707,7 +754,7 @@ export class Pane {
 
     // bottom-layer primitives (background zones) draw behind series
     const prc = this._primitiveContext(ctx);
-    for (const p of this._primitives) if (p.zOrder() === 'bottom') p.draw(g, prc);
+    for (const p of this._primitives) if (p.zOrder() === 'bottom') p.draw(g, this._boundPrimitiveContext(p, prc, layout.plotLeft));
 
     // series (registry-driven — the core never switches on type)
     const range = ctx.timeScale.visibleRange();
@@ -821,7 +868,7 @@ export class Pane {
     }
 
     // normal-layer primitives (price lines, markers, events) draw over series
-    for (const p of this._primitives) if (p.zOrder() === 'normal') p.draw(g, prc);
+    for (const p of this._primitives) if (p.zOrder() === 'normal') p.draw(g, this._boundPrimitiveContext(p, prc, layout.plotLeft));
 
     if (ctx.showTimeAxis) {
       // The zone goes to the axis rather than being pre-baked into a formatter
@@ -856,7 +903,7 @@ export class Pane {
     g.save();
     if (layout.plotLeft > 0) g.translate(Math.round(layout.plotLeft * dpr), 0);
     const prc = this._primitiveContext(ctx);
-    for (const p of this._primitives) if (p.zOrder() === 'top') p.draw(g, prc);
+    for (const p of this._primitives) if (p.zOrder() === 'top') p.draw(g, this._boundPrimitiveContext(p, prc, layout.plotLeft));
     if (cross !== null) {
       const style = resolveCrosshairStyle(ctx.theme, ctx.canvasOptions?.crosshair, dpr);
       drawCrosshair(g, cross.x, cross.yLocal, layout.plotWidth, layout.plotHeight, dpr,
