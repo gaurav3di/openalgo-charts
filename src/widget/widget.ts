@@ -435,13 +435,22 @@ class WidgetImpl implements Widget {
     if (reducedMotion && chartOpts.animZoom === undefined) chartOpts.animZoom = false;
     if (reducedMotion && chartOpts.animAutoscale === undefined) chartOpts.animAutoscale = false;
     // A routed widget hands the engine's shortcuts the same decision as its own
-    // chords, so a hovered chart that is not the routed one stays still.
+    // chords, so a hovered chart that is not the routed one stays still. A
+    // host's own manager, which a grid shares between its charts, is wrapped
+    // per chart rather than rebuilt, and its scope still decides whenever the
+    // route leaves the choice open.
     const route = options.keyboardRoute;
-    if (route !== undefined && options.shortcuts !== false && !(options.shortcuts instanceof ShortcutManager)) {
-      const shortcuts = new ShortcutManager({ ...options.shortcuts, scope: 'global' });
-      const resolve = shortcuts.resolve.bind(shortcuts);
-      shortcuts.resolve = (e) => ((route() ?? this._inChart()) ? resolve(e) : null);
-      chartOpts.shortcuts = shortcuts;
+    const given = options.shortcuts;
+    if (route !== undefined && given !== false) {
+      const target = given instanceof ShortcutManager ? given : new ShortcutManager(given);
+      chartOpts.shortcuts = new Proxy(target, {
+        get: (t, key) => {
+          if (key === 'scope') return 'global';
+          if (key === 'resolve') return (e: KeyboardEvent) => ((route() ?? (t.scope === 'global' || this._inChart())) ? t.resolve(e) : null);
+          const value = Reflect.get(t, key) as unknown;
+          return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(t) : value;
+        },
+      });
     }
     this.chart = createChart(chartEl, { ...(chartOpts as ChartOptions), theme: this._chartTheme, document: doc });
     chartEl.setAttribute('aria-label', options.ariaLabel ?? widgetText(options, 'Price chart'));

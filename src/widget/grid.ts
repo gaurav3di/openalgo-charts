@@ -104,6 +104,12 @@ export interface ChartGrid {
   /** Make a cell the one the keyboard and shared controls act on. False for an unknown id. */
   setActive(id: string, options?: { focus?: boolean }): boolean;
   layout(): ChartGridLayout;
+  /**
+   * What restoring the persisted workspace did when the grid was built: null
+   * when nothing was stored. A refused desk stays stored, untouched, until the
+   * user changes the grid.
+   */
+  restored(): ChartGridApplyReport | null;
   /** Reflow into a preset: surviving charts keep their state, new ones copy the active chart's instrument. */
   setPreset(preset: ChartGridPreset): void;
   linkOptions(): ResolvedLinkOptions;
@@ -148,6 +154,12 @@ const int = (v: unknown, lo: number, hi: number): boolean => Number.isInteger(v)
 const round = (v: number): number => Math.round(v * 1e4) / 1e4;
 const ones = (n: number): number[] => Array.from({ length: n }, () => 1);
 const tracks = (weights: readonly number[]): string => weights.map(w => `minmax(0,${w}fr)`).join(` ${GUTTER}px `);
+/**
+ * An instrument as the one string the link group compares. The exchange rides
+ * inside it: one ticker on two exchanges is two instruments, and a bare ticker
+ * would let a change of exchange alone pass the followers by.
+ */
+const instrument = (symbol: string, exchange: string): string => JSON.stringify([symbol, exchange]);
 
 /** What a grid cannot honour, checked before anything is built. Empty when the payload is usable. */
 function check(p: WorkspacePayload): string {
@@ -189,7 +201,7 @@ function check(p: WorkspacePayload): string {
   if (!ids.has(p.activePaneId)) return 'the active chart is missing';
   // Joining a linked group converges its members, which would overwrite a
   // chart saved on another instrument, so a disagreeing document is refused.
-  if (p.sync.symbol && new Set(p.panes.map(x => `${x.symbol}|${x.exchange}`)).size > 1) return 'linked symbols differ between charts';
+  if (p.sync.symbol && new Set(p.panes.map(x => instrument(x.symbol, x.exchange))).size > 1) return 'linked symbols differ between charts';
   if (p.sync.interval && new Set(p.panes.map(x => x.interval)).size > 1) return 'linked intervals differ between charts';
   return '';
 }
@@ -222,10 +234,16 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
   let preset: string | null = null;
   let theme: WidgetThemeName | ChartTheme = options.theme ?? 'dark';
   let themeSync = false, compact = false, pointerIn = false, destroyed = false;
-  /** The exchange that travels with a linked symbol; the link group carries a bare string. */
-  let linkExchange: string | null = null;
+  /** True while the grid itself moves a chart's window, which is no user navigation. */
+  let syncing = false;
+  /** The linked window as wall-clock times, from the last navigation while viewports were linked. */
+  let view: { from: number; to: number } | null = null;
   let nextId = 0;
   let saveTimer: ReturnType<typeof setTimeout> | 0 = 0;
+  let saveQueued = false;
+  /** A stored desk this grid refused to restore, kept until the user changes something. */
+  let held = false;
+  let restored: ChartGridApplyReport | null = null;
 
   const root = h(doc, 'div', 'oac-grid');
   const tabs = h(doc, 'div', 'oac-grid__tabs', { role: 'tablist', 'aria-label': widgetText(options, 'Charts') });
@@ -234,14 +252,28 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
   root.append(tabs, body);
 
   const emit = <K extends ChartGridEventName>(event: K, payload: ChartGridEvents[K]): void => bus.emit(event, payload);
+  /** A stream of changes (a pan, a zoom, a drag) settles before it is written. */
   const scheduleSave = (): void => {
+    held = false;
     if (!storage.enabled || destroyed) return;
     if (saveTimer !== 0) clearTimeout(saveTimer);
     saveTimer = setTimeout(saveNow, SAVE_DEBOUNCE_MS);
   };
+  /**
+   * A discrete change (a preset, a link, an instrument) is written before the
+   * task ends. A write left to a timer or to the unload flush can be lost when
+   * the page reloads at once: one browser engine was seen to drop storage
+   * writes made while the page unloads.
+   */
+  const saveSoon = (): void => {
+    held = false;
+    if (!storage.enabled || destroyed || saveQueued) return;
+    saveQueued = true;
+    queueMicrotask(() => { saveQueued = false; saveNow(); });
+  };
   function saveNow(): void {
     if (saveTimer !== 0) { clearTimeout(saveTimer); saveTimer = 0; }
-    if (storage.enabled && !destroyed && active !== null) storage.set(STATE_KEY, grid.getWorkspace());
+    if (storage.enabled && !destroyed && !held && active !== null) storage.set(STATE_KEY, grid.getWorkspace());
   }
   const paintTheme = (): void => {
     const t = resolveTheme(theme);
@@ -304,7 +336,7 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
     split.setAttribute('aria-valuenow', String(Math.round(w[b] / (w[b] + w[b + 1]) * 100)));
   };
 
-  const resize = (axis: Axis, b: number, first: number): void => {
+  const resize = (axis: Axis, b: number, first: number, dragging = false): void => {
     const w = (axis === 'column' ? colW : rowW).slice();
     const pair = w[b] + w[b + 1];
     const next = round(Math.min(pair * (1 - MIN_SHARE), Math.max(pair * MIN_SHARE, first)));
@@ -314,7 +346,8 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
     if (axis === 'column') { colW = w; body.style.gridTemplateColumns = tracks(w); }
     else { rowW = w; body.style.gridTemplateRows = tracks(w); }
     splits.forEach(valueNow);
-    scheduleSave();
+    if (dragging) scheduleSave();
+    else saveSoon();
     emit('layout', { reason: 'weights' });
   };
 
@@ -341,9 +374,11 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
       split.setPointerCapture?.(e.pointerId);
       split.classList.add('is-drag');
       const move = (m: PointerEvent): void => {
-        if (size > 0) resize(axis, b, first + ((col ? m.clientX : m.clientY) - start) / size * total);
+        if (size > 0) resize(axis, b, first + ((col ? m.clientX : m.clientY) - start) / size * total, true);
       };
       const end = (): void => {
+        // The drag is over, so its last weights are written now, not after the debounce.
+        if (saveTimer !== 0) saveNow();
         split.classList.remove('is-drag');
         split.removeEventListener('pointermove', move);
         split.removeEventListener('pointerup', end);
@@ -424,17 +459,35 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
     return cell;
   };
 
+  /**
+   * Put a chart on the linked window. A chart that was hidden (compact mode)
+   * had no width to take the mirrored range with, so it takes it when it is
+   * measured again; the window is kept as times, since a hidden leader's own
+   * range means nothing.
+   */
+  const adopt = (cell: Cell, width: number): void => {
+    const chart = cell.widget.chart, data = chart.dataLayer;
+    if (view === null || !(width > 0) || !links.options().viewport || data.length < 2) return;
+    const from = data.timeToIndexFloat(view.from), to = data.timeToIndexFloat(view.to);
+    if (!(to > from)) return;
+    syncing = true;
+    try { chart.setVisibleLogicalRange({ from, to }); }
+    finally { syncing = false; }
+  };
+
   /** Bring a built cell into the link group and the save and tab bookkeeping. */
   const join = (cell: Cell): void => {
     const { widget } = cell;
     const chart = widget.chart;
     let settling = false;
+    // A window set by fresh bars or by the grid is not the user's navigation.
+    const own = (): boolean => settling || syncing;
     cell.offs.push(chart.on('data:update', () => { settling = true; queueMicrotask(() => { settling = false; }); }));
     cell.member = {
       on: (event, cb) => chart.on(event, event === 'pan' || event === 'zoom'
-        ? payload => { if (!settling) cb(payload); }
+        ? payload => { if (!own()) cb(payload); }
         : event === 'symbol'
-          ? payload => { linkExchange = (payload as { exchange?: string }).exchange ?? null; cb(payload); }
+          ? payload => { const p = payload as { symbol: string; exchange: string }; cb({ symbol: instrument(p.symbol, p.exchange) }); }
           : cb),
       getVisibleLogicalRange: () => chart.getVisibleLogicalRange(),
       setVisibleLogicalRange: range => chart.setVisibleLogicalRange(range),
@@ -446,8 +499,8 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
       setLinkedCrosshairIndex: index => chart.setLinkedCrosshairIndex(index),
     };
     links.add(cell.member, {
-      symbol: widget.symbol(), interval: widget.interval(),
-      onSymbol: symbol => widget.setSymbol(symbol, linkExchange ?? widget.exchange()),
+      symbol: instrument(widget.symbol(), widget.exchange()), interval: widget.interval(),
+      onSymbol: key => { const [symbol, exchange] = JSON.parse(key) as [string, string]; widget.setSymbol(symbol, exchange); },
       onInterval: interval => {
         if (!isKnownInterval(interval)) return false;
         widget.setInterval(interval);
@@ -455,17 +508,32 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
       },
       appearance: { read: () => readChartSettings(chart), apply: values => applyChartSettings(chart, values) },
     });
-    const changed = (): void => { syncCompact(); scheduleSave(); };
+    // New bars fit their own view; the window from before them is no longer the linked one.
+    const changed = (): void => { view = null; syncCompact(); saveSoon(); };
+    const moved = (): void => {
+      if (own()) {
+        // Still written, but a desk held after a refused restore stays held.
+        if (!held) scheduleSave();
+        return;
+      }
+      const range = chart.getVisibleLogicalRange(), data = chart.dataLayer;
+      const from = data.indexToTimeFloat(range.from), to = data.indexToTimeFloat(range.to);
+      if (links.options().viewport && data.length > 1 && to > from) view = { from, to };
+      scheduleSave();
+    };
     cell.offs.push(
       widget.on('interval', ({ interval }) => links.setInterval(cell.member, interval)),
       widget.on('theme', ({ chartTheme }) => { if (!themeSync) grid.setTheme(chartTheme); }),
       widget.on('symbol', changed),
       widget.on('interval', changed),
       widget.on('layout', scheduleSave),
+      chart.on('pan', moved),
+      chart.on('zoom', moved),
+      chart.on('resize', payload => adopt(cell, (payload as { width: number }).width)),
     );
-    for (const event of ['pan', 'zoom', 'draw:add', 'draw:remove', 'draw:update', 'alert:created', 'alert:updated', 'alert:removed', 'objects:change']) {
-      cell.offs.push(chart.on(event, scheduleSave));
-    }
+    for (const event of ['draw:add', 'draw:remove', 'alert:created', 'alert:removed']) cell.offs.push(chart.on(event, saveSoon));
+    // These arrive once per frame while something is dragged.
+    for (const event of ['draw:update', 'alert:updated', 'objects:change']) cell.offs.push(chart.on(event, scheduleSave));
   };
 
   const drop = (cell: Cell): void => {
@@ -483,6 +551,7 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
   const grid: ChartGrid = {
     root,
     get isDestroyed() { return destroyed; },
+    restored: () => restored,
     cells: () => cells.slice(),
     active: () => active as Cell,
     theme: () => resolveTheme(theme).name,
@@ -499,7 +568,8 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
       markActive();
       if (opts.focus) cell.widget.root.querySelector<HTMLElement>('.oac-chart')?.focus({ preventScroll: true });
       if (changed) {
-        scheduleSave();
+        // Focus is no edit, so it never ends the hold on a refused desk.
+        if (!held) saveSoon();
         emit('active', { id });
       }
       return true;
@@ -511,6 +581,7 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
       if (destroyed) return;
       const [r, c] = size;
       const keep = cells.slice(0, r * c);
+      const before = active;
       const from = active?.widget;
       const source: Source = from === undefined ? options
         : { symbol: from.symbol(), exchange: from.exchange(), interval: from.interval(), chartType: from.chartType() };
@@ -532,19 +603,17 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
       rows = r; cols = c; rowW = ones(r); colW = ones(c); preset = next;
       if (active === null || !cells.includes(active)) active = cells[0];
       render();
-      scheduleSave();
+      saveSoon();
       emit('layout', { reason: 'preset' });
+      if (active !== before) emit('active', { id: active.id });
     },
 
     setLinks(patch) {
       // Recorded before the switch flips, so the group converges on the active chart.
-      if (active !== null && patch.symbol) {
-        linkExchange = active.widget.exchange();
-        links.setSymbol(active.member, active.widget.symbol());
-      }
+      if (active !== null && patch.symbol) links.setSymbol(active.member, instrument(active.widget.symbol(), active.widget.exchange()));
       if (active !== null && patch.interval) links.setInterval(active.member, active.widget.interval());
       links.setOptions(patch);
-      scheduleSave();
+      saveSoon();
       emit('links', links.options());
     },
 
@@ -554,7 +623,7 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
       themeSync = true;
       try { for (const c of cells) c.widget.setTheme(next); }
       finally { themeSync = false; }
-      scheduleSave();
+      saveSoon();
       emit('theme', { theme: resolveTheme(next).name });
     },
 
@@ -620,13 +689,15 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
       active = made.find(c => c.id === payload.activePaneId) as Cell;
       // The group still remembers the replaced charts' instrument, and turning a
       // channel on converges on what it remembers; record the new one first.
-      linkExchange = active.widget.exchange();
-      links.setSymbol(active.member, active.widget.symbol());
+      links.setSymbol(active.member, instrument(active.widget.symbol(), active.widget.exchange()));
       links.setInterval(active.member, active.widget.interval());
       links.setOptions({ crosshair: sync.crosshair, viewport: sync.viewport, symbol: sync.symbol, interval: sync.interval, appearance: sync.appearance === true });
+      // The replaced charts' window says nothing about these charts.
+      view = null;
       render();
-      scheduleSave();
+      saveSoon();
       emit('layout', { reason: 'workspace' });
+      emit('active', { id: active.id });
       return { applied: true };
     },
 
@@ -665,9 +736,20 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
     // A debounced save still pending when the tab closes is the user's last change.
     listen(win, 'pagehide', saveNow);
   }
+  // Hiding is the last moment a page is sure to see; unload may never come.
+  listen(doc, 'visibilitychange', () => { if (doc.visibilityState === 'hidden') saveNow(); });
 
   const saved = storage.get(STATE_KEY);
-  if (saved === null || !grid.applyWorkspace(saved as WorkspacePayload).applied) grid.setPreset(options.preset ?? '1x1');
+  restored = saved === null ? null : grid.applyWorkspace(saved as WorkspacePayload);
+  if (restored?.applied !== true) {
+    grid.setPreset(options.preset ?? '1x1');
+    if (restored !== null) {
+      // The stored desk may only be waiting for a study or chart type the page
+      // registers later, so it is kept, not overwritten by this fallback.
+      held = true;
+      grid.active().widget.context.toast(widgetText(options, 'The saved layout could not be restored: {error}', { error: restored.reason ?? '' }), 'error');
+    }
+  }
   measure();
   return grid;
 }
