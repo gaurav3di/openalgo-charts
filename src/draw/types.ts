@@ -140,8 +140,8 @@ export interface DrawingPolicy {
   selectable?: boolean;
   /**
    * `false`: read-only to the user. It still selects, copies and duplicates,
-   * but nothing moves, reshapes, restyles, hides, locks, cuts or deletes it,
-   * and undo and redo never touch it.
+   * but nothing moves, reshapes, restyles, hides, locks, cuts, deletes or
+   * regroups it, and undo and redo never touch it or the group it is in.
    */
   editable?: boolean;
   /**

@@ -138,7 +138,9 @@ export interface DrawingEditOptions {
    * which is what keeps every control a host wires to the user off them. The
    * host that placed such a drawing passes it to move, restyle, regroup or
    * retire it. A forced call is the host's own act, not the user's, so it
-   * records no undo step and leaves the redo branch as it was.
+   * records no undo step, and every step already recorded takes it too: no
+   * later undo or redo reverses it, and a step it leaves with nothing to do
+   * is dropped.
    */
   force?: boolean;
 }
@@ -475,11 +477,11 @@ export class DrawingController {
     if (this._destroyed || !name.trim() || !members.length) return null;
     let id: string;
     do { id = `group-${this._nextGroup++}`; } while (this._groups.some(group => group.id === id));
-    this._begin(!options.force);
     const group = { id, name: name.trim(), members };
     const moved = new Set(members);
-    for (const previous of this._groups) previous.members = previous.members.filter(member => !moved.has(member));
-    this._groups.push(group);
+    this._regroup(options.force, groups => groups
+      .map(previous => ({ ...previous, members: previous.members.filter(member => !moved.has(member)) }))
+      .concat({ ...group, members: [...members] }));
     this._sync();
     this._emitChange(members, 'update');
     return { ...group, members: [...members] };
@@ -489,8 +491,7 @@ export class DrawingController {
   public renameGroup(id: string, name: string, options: DrawingEditOptions = {}): boolean {
     const group = this._group(id, options);
     if (!group || !name.trim()) return false;
-    this._begin(!options.force);
-    group.name = name.trim();
+    this._regroup(options.force, groups => groups.map(item => item.id === id ? { ...item, name: name.trim() } : item));
     this._sync();
     this._emitChange(group.members, 'update');
     return true;
@@ -503,10 +504,19 @@ export class DrawingController {
   public removeGroup(id: string, removeDrawings = false, options: DrawingEditOptions = {}): boolean {
     const group = this._group(id, options);
     if (!group) return false;
-    this._begin(!options.force);
-    this._groups = this._groups.filter(item => item !== group);
+    this._regroup(options.force, groups => groups.filter(item => item.id !== id));
     if (!removeDrawings || this._removeIds(group.members, false, options.force).length === 0) { this._sync(); this._emitChange(group.members, 'update'); }
     return true;
+  }
+
+  /**
+   * Make a grouping edit. The host's forced one is its own act, so every
+   * recorded step takes it as well, and no undo or redo reverses it.
+   */
+  private _regroup(force: boolean | undefined, edit: (groups: DrawingGroup[]) => DrawingGroup[]): void {
+    this._begin(!force);
+    this._groups = edit(this._groups);
+    if (force) this._rebase(document => { document.groups = edit(document.groups ?? []); });
   }
 
   /** The live group `id`, unless it holds a read-only drawing and the call is not forced. */
@@ -611,7 +621,9 @@ export class DrawingController {
       if (index < 0) this._drawings.push(copy);
       else this._drawings[index] = copy;
       // A policy the other chart's host changed holds here too, history included.
-      if (JSON.stringify(copy.policy) !== was) this._stamp([id]);
+      if (JSON.stringify(copy.policy) !== was) {
+        this._rebase(document => { for (const d of document.drawings) if (d.id === id) d.policy = copy.policy; });
+      }
     }
     this._sync();
     this._chart.emit('drawing:change', { ids: [id], kind: drawing === null ? 'remove' : index < 0 ? 'add' : 'update', linked: true });
@@ -730,12 +742,7 @@ export class DrawingController {
   public update(id: string, patch: DrawingPatch, options: DrawingEditOptions = {}): boolean {
     const d = this.get(id);
     if (d === undefined || (pinned(d) && options.force !== true)) return false;
-    this._begin(!options.force && !patch.policy);
-    this._applyPatch(d, patch);
-    if (patch.policy) this._stamp([id]);
-    this._sync();
-    this._chart.emit('draw:update', { drawing: d });
-    this._emitChange([id], 'update');
+    this.updateMany([{ id, patch }], options);
     return true;
   }
 
@@ -753,7 +760,20 @@ export class DrawingController {
     if (live.length === 0) return;
     this._begin(!options.force && live.some(({ patch }) => !patch.policy));
     for (const { d, patch } of live) this._applyPatch(d, patch);
-    this._stamp(live.filter(({ patch }) => patch.policy).map(({ d }) => d.id));
+    // The host's patches, whole, and the anchors exactly where they landed:
+    // a constraint run again on an older shape could put them elsewhere.
+    const host = live.filter(({ patch }) => options.force || patch.policy);
+    if (host.length) {
+      this._rebase(document => {
+        for (const d of document.drawings) {
+          for (const { d: now, patch: { points, ...rest } } of host) {
+            if (now.id !== d.id) continue;
+            this._applyPatch(d, rest);
+            if (points) d.points = now.points;
+          }
+        }
+      });
+    }
     this._sync();
     for (const { d } of live) this._chart.emit('draw:update', { drawing: d });
     this._emitChange(live.map((p) => p.d.id), 'update');
@@ -801,6 +821,7 @@ export class DrawingController {
     if (pushUndo) this._begin(!force);
     const set = new Set(removed.map((d) => d.id));
     this._drawings = this._drawings.filter((d) => !set.has(d.id));
+    if (force) this._rebase(document => { document.drawings = document.drawings.filter((d) => !set.has(d.id)); });
     this._selection = this._selection.filter((id) => !set.has(id));
     this._sync();
     for (const d of removed) this._chart.emit('draw:remove', { drawing: d });
@@ -1174,11 +1195,29 @@ export class DrawingController {
     const previous = new Map(this._drawings.map(d => [d.id, d]));
     const beforeGroups = new Map((beforeDocument.groups ?? []).map(group => [group.id, group]));
     const afterGroups = new Map((afterDocument.groups ?? []).map(group => [group.id, group]));
-    const changedGroups = new Set([...beforeGroups.keys(), ...afterGroups.keys()].filter(id => JSON.stringify(beforeGroups.get(id)) !== JSON.stringify(afterGroups.get(id))));
-    if (held && ids.length === 0 && changedGroups.size === 0 && !moved) return false;
+    const fixed = (member: string): boolean => pinned(this.get(member));
+    // Where a step leaves group `id`, the policy allowing: a read-only drawing
+    // stays in the group it is in now, and that group keeps its name. The
+    // `order` form is what is applied; the other puts the read-only members
+    // last, so a step that differs only in them compares as doing nothing.
+    const place = (group: DrawingGroup | undefined, id: string, order?: boolean): DrawingGroup | undefined => {
+      const now = this._groups.find(item => item.id === id);
+      const kept = now?.members.filter(fixed) ?? [];
+      if (!kept.length && !group?.members.some(fixed)) return group;
+      const rest = group?.members.filter(member => !fixed(member) || (order && kept.includes(member))) ?? [];
+      const members = [...new Set([...rest, ...kept])];
+      return members.length ? { id, name: (kept.length ? now : group)!.name, members } : undefined;
+    };
+    const changedGroups = new Set([...beforeGroups.keys(), ...afterGroups.keys()]
+      .filter(id => JSON.stringify(place(beforeGroups.get(id), id)) !== JSON.stringify(place(afterGroups.get(id), id))));
+    // A step with nothing left to do is skipped by a press, and dropped by a
+    // rewrite (`kind` absent), which is where a grouping step the policy has
+    // emptied goes; one that never did anything still runs, as it always has.
+    if (!ids.length && !changedGroups.size && !moved && (held || !kind)) return false;
     if (!kind) return true;
+    const regrouped = [...changedGroups].map(id => place(afterGroups.get(id), id, true));
     this._groups = this._groups.filter(group => !changedGroups.has(group.id));
-    for (const id of changedGroups) { const group = afterGroups.get(id); if (group) this._groups.push(group); }
+    for (const group of regrouped) if (group) this._groups.push(group);
     // Property history patches in place. Removing and reinserting every edited
     // shape would also undo a later reorder performed on another chart.
     this._drawings = this._drawings.filter(d => !changed.has(d.id) || right.has(d.id))
@@ -1966,25 +2005,23 @@ export class DrawingController {
   }
 
   /**
-   * A policy is the host's and never history's: every recorded step takes
-   * each of `ids` (live drawings) with its policy as it is now, so no undo or
-   * redo brings an older one back, and a step the policy has left with
-   * nothing to do is dropped, so `canUndo` and `canRedo` match what a press
-   * would do.
+   * What the host does (a policy, a forced call) is its own act and never
+   * history's to reverse: `edit` makes the same change to every recorded
+   * snapshot, as if it had always been so, and a step left with nothing to do
+   * is dropped, so `canUndo` and `canRedo` match what a press would do. The
+   * step still being recorded stays whatever it holds so far. `edit` may
+   * share live objects, since each snapshot is serialised at once.
    */
-  private _stamp(ids: readonly string[]): void {
-    if (!ids.length) return;
-    const stamp = (text: string): string => {
+  private _rebase(edit: (document: DrawingsDocument) => void): void {
+    const rewrite = (text: string): string => {
       const document = JSON.parse(text) as DrawingsDocument;
-      // Serialised at once, so sharing the live object is safe, and one that
-      // is undefined (no policy any more) is simply left out.
-      for (const d of document.drawings) if (ids.includes(d.id)) d.policy = this.get(d.id)?.policy;
+      edit(document);
       return JSON.stringify(document);
     };
     const keep = (entry: DrawingHistoryEntry): boolean => {
-      entry.before = stamp(entry.before);
-      entry.after = stamp(entry.after);
-      return this._applyHistory(entry.before, entry.after);
+      entry.before = rewrite(entry.before);
+      entry.after = rewrite(entry.after);
+      return entry === this._pendingHistory || this._applyHistory(entry.before, entry.after);
     };
     this._undo = this._undo.filter(keep);
     this._redo = this._redo.filter(keep);

@@ -10,7 +10,7 @@ import { ChartObjects } from '../src/model/chart-objects';
 import { fakeDocument } from './helpers/fake-dom';
 import { darkTheme } from '../src/theme';
 import {
-  DrawingController, DrawingLayer, migrateDrawings, encodeClipboardPayload, cloneDrawing,
+  DrawingController, DrawingLayer, migrateDrawings, encodeClipboardPayload, cloneDrawing, registerDrawingTool,
   type ClipboardPort, type Drawing, type DrawingInput, type DrawingPolicy,
 } from '../src/draw/index';
 import type { DrawingChartHost } from '../src/draw/controller';
@@ -303,6 +303,204 @@ describe('the policy and the undo history', () => {
   });
 });
 
+describe('grouping and the undo history', () => {
+  const second = { points: [{ time: 5000, price: 50 }, { time: 6000, price: 60 }] };
+
+  it('never dissolves the group of a drawing made read-only, and still moves the user\'s own drawing', () => {
+    const draw = new DrawingController(busHost());
+    const a = line(draw);
+    const b = line(draw, second);
+    const mine = draw.createGroup('Mine', [a.id, b.id])!;
+    draw.update(a.id, { policy: { editable: false } });
+    expect(draw.removeGroup(mine.id)).toBe(false);
+    expect(draw.renameGroup(mine.id, 'Other')).toBe(false);
+    // The step still takes the user's drawing back out of the group, and
+    // leaves the read-only one in the group the controller will not dissolve.
+    expect(draw.undo()).toBe(true);
+    expect(draw.groups()).toEqual([{ id: mine.id, name: 'Mine', members: [a.id] }]);
+    expect(draw.redo()).toBe(true);
+    expect(draw.groups()).toEqual([{ id: mine.id, name: 'Mine', members: [a.id, b.id] }]);
+  });
+
+  it('puts no read-only drawing back into a group the user removed', () => {
+    const draw = new DrawingController(busHost());
+    const a = line(draw);
+    const b = line(draw, second);
+    const mine = draw.createGroup('Mine', [a.id, b.id])!;
+    expect(draw.removeGroup(mine.id)).toBe(true);
+    draw.update(a.id, { policy: { editable: false } });
+    expect(draw.undo()).toBe(true);
+    expect(draw.groups()).toEqual([{ id: mine.id, name: 'Mine', members: [b.id] }]);
+    // What the undo put back is the user's, so they can take it away again.
+    expect(draw.removeGroup(mine.id)).toBe(true);
+    expect(draw.groups()).toEqual([]);
+  });
+
+  it('has nothing to undo once every grouping step reached only a drawing now read-only', () => {
+    const draw = new DrawingController(busHost());
+    const a = line(draw);
+    const mine = draw.createGroup('Mine', [a.id])!;
+    expect(draw.renameGroup(mine.id, 'Renamed')).toBe(true);
+    draw.update(a.id, { policy: { editable: false } });
+    expect(draw.canUndo()).toBe(false);
+    expect(draw.undo()).toBe(false);
+    expect(draw.groups()).toEqual([{ id: mine.id, name: 'Renamed', members: [a.id] }]);
+  });
+});
+
+describe('the host\'s forced calls and the undo history', () => {
+  const second = { points: [{ time: 5000, price: 50 }, { time: 6000, price: 60 }] };
+
+  it('drops the step that made a drawing the host then removed, so no press brings it back', () => {
+    const draw = new DrawingController(busHost());
+    const a = line(draw);
+    draw.remove(a.id, { force: true });
+    expect(draw.canUndo()).toBe(false);
+    expect(draw.undo()).toBe(false);
+    expect(draw.canRedo()).toBe(false);
+    expect(draw.redo()).toBe(false);
+    expect(draw.get(a.id)).toBeUndefined();
+  });
+
+  it('keeps a forced move through the user\'s own undo and redo of that drawing', () => {
+    const draw = new DrawingController(busHost());
+    const a = line(draw);
+    draw.update(a.id, { style: { color: '#ff0000' } });
+    const moved = [{ time: 3000, price: 30 }, { time: 4000, price: 40 }];
+    draw.update(a.id, { points: moved }, { force: true });
+    // Taking back the colour leaves the host's move, and so does taking the
+    // drawing back and bringing it again.
+    expect(draw.undo()).toBe(true);
+    expect(draw.get(a.id)?.style.color).toBeUndefined();
+    expect(draw.get(a.id)?.points).toEqual(moved);
+    expect(draw.undo()).toBe(true);
+    expect(draw.get(a.id)).toBeUndefined();
+    expect(draw.redo()).toBe(true);
+    expect(draw.get(a.id)?.points).toEqual(moved);
+    expect(draw.redo()).toBe(true);
+    expect(draw.get(a.id)?.style.color).toBe('#ff0000');
+    expect(draw.get(a.id)?.points).toEqual(moved);
+  });
+
+  it('keeps a forced move\'s anchors exactly where the tool\'s constraint put them', () => {
+    // A constraint that reads which anchor moved, the way the position tools
+    // do: one anchor moved stays as placed, a whole-shape move is shifted.
+    registerDrawingTool({
+      id: 'test-handle', name: 'Test handle', points: 2,
+      constrain: (points, handle) => points.map((p) => ({ ...p, price: p.price + (handle === null ? 100 : 0) })),
+      draw: () => {}, distance: () => 0,
+    });
+    const draw = new DrawingController(busHost());
+    const a = line(draw, { tool: 'test-handle' });
+    draw.update(a.id, { points: [{ time: 1100, price: 11 }, { time: 2100, price: 21 }] });
+    // One anchor on from where the drawing is now, so the constraint leaves
+    // it; from the shape the history recorded, both anchors differ.
+    const placed = [{ time: 1100, price: 111 }, { time: 2500, price: 125 }];
+    draw.update(a.id, { points: placed }, { force: true });
+    expect(draw.get(a.id)?.points).toEqual(placed);
+    expect(draw.undo()).toBe(true);
+    expect(draw.get(a.id)).toBeUndefined();
+    expect(draw.redo()).toBe(true);
+    expect(draw.get(a.id)?.points).toEqual(placed);
+  });
+
+  it('never brings back a group the host removed', () => {
+    const draw = new DrawingController(busHost());
+    const fixed = line(draw, { policy: { editable: false } });
+    const free = line(draw, second);
+    const host = draw.createGroup('Host', [fixed.id, free.id], { force: true })!;
+    draw.createGroup('Mine', [free.id]);
+    expect(draw.removeGroup(host.id, false, { force: true })).toBe(true);
+    expect(draw.undo()).toBe(true);
+    expect(draw.groups()).toEqual([]);
+    expect(draw.redo()).toBe(true);
+    expect(draw.groups().map((g) => [g.name, g.members])).toEqual([['Mine', [free.id]]]);
+  });
+
+  it('keeps the name the host gave a group, while the user\'s own step still undoes', () => {
+    const draw = new DrawingController(busHost());
+    const fixed = line(draw, { policy: { editable: false } });
+    const free = line(draw, second);
+    const host = draw.createGroup('Host', [fixed.id, free.id], { force: true })!;
+    draw.createGroup('Mine', [free.id]);
+    expect(draw.renameGroup(host.id, 'Signals', { force: true })).toBe(true);
+    expect(draw.undo()).toBe(true);
+    expect(draw.groups()).toEqual([{ id: host.id, name: 'Signals', members: [fixed.id, free.id] }]);
+  });
+
+  it('keeps a group the host made through the undo and redo of its drawing', () => {
+    const draw = new DrawingController(busHost());
+    const x = line(draw);
+    const host = draw.createGroup('Host', [x.id], { force: true })!;
+    expect(draw.undo()).toBe(true);
+    expect(draw.get(x.id)).toBeUndefined();
+    expect(draw.redo()).toBe(true);
+    expect(draw.groups()).toEqual([{ id: host.id, name: 'Host', members: [x.id] }]);
+  });
+
+  it('drops a grouping step the host has since undone itself, so the first press does something', () => {
+    const draw = new DrawingController(busHost());
+    const free = line(draw);
+    const mine = draw.createGroup('Mine', [free.id])!;
+    expect(draw.removeGroup(mine.id, false, { force: true })).toBe(true);
+    expect(draw.undo()).toBe(true);
+    expect(draw.get(free.id)).toBeUndefined();
+    expect(draw.canUndo()).toBe(false);
+  });
+
+  it('keeps the rest of a host patch that carries a policy through history', () => {
+    const draw = new DrawingController(busHost());
+    const a = line(draw);
+    draw.update(a.id, { style: { color: '#ff0000' } });
+    draw.update(a.id, { policy: { listed: false }, style: { lineWidth: 5 } });
+    // The colour, then the drawing itself, and back again.
+    expect(draw.undo()).toBe(true);
+    expect(draw.undo()).toBe(true);
+    expect(draw.redo()).toBe(true);
+    expect(draw.get(a.id)?.style.lineWidth).toBe(5);
+    expect(draw.get(a.id)?.style.color).toBeUndefined();
+    expect(draw.get(a.id)?.policy).toEqual({ listed: false });
+  });
+});
+
+describe('one call holding both a user edit and a host policy', () => {
+  it('records the user\'s edit as one step, which takes back only that edit', () => {
+    const draw = new DrawingController(busHost());
+    const a = line(draw);
+    const b = line(draw, { points: [{ time: 5000, price: 50 }, { time: 6000, price: 60 }] });
+    draw.updateMany([
+      { id: a.id, patch: { style: { color: '#00ff00' } } },
+      { id: b.id, patch: { policy: { listed: false }, style: { lineWidth: 6 } } },
+    ]);
+    expect(draw.undo()).toBe(true);
+    expect(draw.get(a.id)?.style.color).toBeUndefined();
+    expect(draw.get(b.id)?.style.lineWidth).toBe(6);
+    expect(draw.get(b.id)?.policy).toEqual({ listed: false });
+    expect(draw.redo()).toBe(true);
+    expect(draw.get(a.id)?.style.color).toBe('#00ff00');
+  });
+});
+
+describe('a policy that arrives from a linked chart', () => {
+  it('holds through this chart\'s history, which then offers no press that does nothing', () => {
+    const draw = new DrawingController(busHost());
+    const a = line(draw);
+    const b = line(draw, { points: [{ time: 5000, price: 50 }, { time: 6000, price: 60 }] });
+    draw.applyLinkedDrawing(b.id, { ...draw.get(b.id)!, policy: { listed: false } });
+    // Taking the drawing back and bringing it again keeps the linked policy.
+    expect(draw.undo()).toBe(true);
+    expect(draw.get(b.id)).toBeUndefined();
+    expect(draw.redo()).toBe(true);
+    expect(draw.get(b.id)?.policy).toEqual({ listed: false });
+    // A linked read-only policy leaves the step that placed it with nothing to do.
+    draw.applyLinkedDrawing(a.id, { ...draw.get(a.id)!, policy: { editable: false } });
+    expect(draw.undo()).toBe(true);
+    expect(draw.get(b.id)).toBeUndefined();
+    expect(draw.canUndo()).toBe(false);
+    expect(draw.undo()).toBe(false);
+  });
+});
+
 describe('a drawing that cannot be selected (selectable: false)', () => {
   it('never joins the selection, whoever asks', () => {
     const chart = busHost();
@@ -392,6 +590,16 @@ describe('the policy as data', () => {
     const copy = cloneDrawing(d);
     expect(copy.policy).toEqual({ editable: false });
     expect(copy.policy).not.toBe(d.policy);
+  });
+
+  it('leaves a step that never changed anything taking one press, as it always did', () => {
+    const draw = new DrawingController(busHost());
+    const a = line(draw);
+    draw.update(a.id, {});
+    expect(draw.undo()).toBe(true);
+    expect(draw.get(a.id)).toBeDefined();
+    expect(draw.undo()).toBe(true);
+    expect(draw.get(a.id)).toBeUndefined();
   });
 
   it('changes nothing for a drawing without one, or with every flag on', () => {
