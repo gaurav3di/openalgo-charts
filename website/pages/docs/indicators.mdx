@@ -691,7 +691,7 @@ returned by `markers` can name where it goes with two optional fields, together 
 | Field | Drawing | Marker |
 |---|---|---|
 | `overlay: true` | Drawn on the price pane in the instrument's units, measured on the scale that pane quotes prices on: the candles' own, whichever axis that is. | Anchored to the instrument's candles, so `belowBar` sits under the low. Drawn once the chart has a primary series. |
-| `plot: 'key'` | Drawn on that declared plot's pane and measured on its effective scale. | Anchored to that plot's series: its pane, its scale and its values. |
+| `plot: 'key'` | Drawn on that declared plot's pane and measured on its effective scale. | Anchored to that plot's series: its pane, its scale and its values. Where the plot has no value, the candle stands in when that plot is on the price pane and shares the candles' scale. |
 
 With neither field, an output stays where it always went: drawings in the study's own
 layer on its first local plot's scale, markers on the first plot or, with
@@ -762,8 +762,11 @@ What the runtime does with a target:
 Marks sent to the series the study's own marks already use, `overlay: true` from a study
 on the price pane with `markerAnchor: 'price'` or `plot` naming the first plot, join the
 study's own layer in the order they were returned, so marks at one bar stack one under
-the other. Marks on different series, the candles and a plot, are measured against
-different values and do not stack against each other.
+the other. The exception is a study in its own pane whose first plot is an `overlay`
+plot: marks naming that plot keep a layer of their own, because they take the candle
+where the plot has no value and the study's own marks there do not. Marks on different
+series, the candles and a plot, are measured against different values and do not stack
+against each other.
 
 ## Trading sessions
 

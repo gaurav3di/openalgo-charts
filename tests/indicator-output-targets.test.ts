@@ -697,6 +697,39 @@ describe('marker targets', () => {
     ]);
     expect(allMarkers(chart)).toBe(2);
   });
+
+  it.each([
+    ['declared first', ['guide', 'band', 'osc', 'alt']],
+    ['declared later', ['osc', 'alt', 'guide', 'band']],
+  ])('puts a mark naming a plot with a gap on the candle only when that plot is on the price pane, %s', (_, order) => {
+    // Every plot has a gap at one bar, and one mark there names each plot.
+    const gap = 15;
+    const onPrice = new Set(['guide', 'band']);
+    const holed = (column: number[]): (number | null)[] => column.map((value, i) => (i === gap ? null : value));
+    const id = `targets-named-gap-${seq++}`;
+    registerIndicator({
+      id, name: 'Named gap', placement: 'pane', inputs: [],
+      plots: order.map(key => ({ key, type: 'line' as const, title: key, ...(onPrice.has(key) ? { overlay: true } : {}) })),
+      calc: bars => Object.fromEntries(order.map(key => [key, holed(bars.map(bar => bar.close))])),
+      markers: ({ bars }) => order.map(key => ({ time: bars[gap].time, position: 'belowBar', shape: 'circle', size: 'small',
+        color: '#26a69a', id: key, plot: key })) as never,
+    });
+    const { chart } = mount();
+    const study = chart.addIndicator(id);
+    const drawn = (): string[] => {
+      const under = chart.panes()[0].scaleFor('right').priceToY(BARS[gap].low) + effectiveMarkerPx('small', chart.timeScale.barSpacing);
+      return markerObjects(study).flatMap(layer => {
+        paint(chart, paneOf(chart, layer), layer);
+        return (layer as unknown as { _lastPositions: { id: string; y: number }[] })._lastPositions
+          .map(({ id: mark, y }) => (Math.abs(y - under) < 1e-6 ? mark : `${mark} elsewhere`));
+      }).sort();
+    };
+    expect(drawn()).toEqual(['band', 'guide']);
+    expect(chart.moveIndicator(study.id, 0)).toBe(true);
+    expect(drawn()).toEqual(['alt', 'band', 'guide', 'osc']);
+    expect(chart.moveIndicator(study.id, chart.panes().length)).toBe(true);
+    expect(drawn()).toEqual(['band', 'guide']);
+  });
 });
 
 describe('price-pane drawings on the instrument scale', () => {

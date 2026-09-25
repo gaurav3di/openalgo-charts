@@ -370,8 +370,9 @@ export interface DrawAnchor {
  * hides with the study, is released with it, and is released as soon as a
  * calculation returns nothing for that target. Marks sent to the series the
  * study's own marks already anchor to join that layer instead, so marks at
- * one bar stack rather than overlap. A study's layers stack in a fixed order:
- * its own marks, its marker targets, its own shapes, then its drawing
+ * one bar stack rather than overlap, unless that series is an `overlay` plot
+ * of a study in its own pane (see `plot`). A study's layers stack in a fixed
+ * order: its own marks, its marker targets, its own shapes, then its drawing
  * targets, each kind's targets taking the price pane first and then the plots
  * in declaration order. A targeted layer created after the study was added
  * takes that place too, below the studies added after it.
@@ -380,9 +381,10 @@ export interface IndicatorOutputTarget {
   /**
    * A declared plot key. A shape is drawn on that plot's pane and measured on
    * its effective price scale; a marker is anchored to that plot's series, so
-   * `aboveBar` and `belowBar` read its values. Either follows the plot through
-   * a scale reassignment or a study move. An `overlay` plot takes it to the
-   * price pane.
+   * `aboveBar` and `belowBar` read its values, and where it has none, the
+   * candle's whenever that plot is on the price pane and on the candles' scale,
+   * first plot or not. Either follows the plot through a scale reassignment
+   * or a study move. An `overlay` plot takes it to the price pane.
    */
   plot?: string;
   /**

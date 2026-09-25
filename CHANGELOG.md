@@ -9,14 +9,17 @@ All notable changes to OpenAlgo Charts.
   (the candles' own, on whichever axis they sit), or anchors a marker to the
   candles, even from a study in its own pane; neither holds an axis, so the
   price axis stays free to move. `plot: key` draws a shape on that plot's pane
-  and scale, or anchors a marker to that plot's series. Each target is its own
-  layer that follows scale reassignment and study moves, hides with the study,
-  reports hits where it is drawn, and is released when no longer returned or
-  when the study or its pane goes. Marks sent to the series the study's own
-  marks already use join that layer, so marks at one bar stack. A study's
-  layers stack in a fixed order, and a targeted layer made on a later pass
-  takes its study's place, without recomputing or recolouring any study. An
-  invalid target or style throws before any layer of that kind changes; the
+  and scale, or anchors a marker to that plot's series, which falls back to
+  the candle where the plot has no value exactly when that plot is on the
+  price pane and the candles' scale, whichever plot it is. Each target is its
+  own layer that follows scale reassignment and study moves, hides with the
+  study, reports hits where it is drawn, and is released when no longer
+  returned or when the study or its pane goes. Marks sent to the series the
+  study's own marks already use join that layer, so marks at one bar stack,
+  except marks naming an overlay first plot of a study in its own pane. A
+  study's layers stack in a fixed order, and a targeted layer made on a later
+  pass takes its study's place, without recomputing or recolouring any study.
+  An invalid target or style throws before any layer of that kind changes; the
   rest of that pass is not rolled back, and its bar colours are not published.
   Outputs that name no target render and stack exactly as before.
   `IndicatorOutputTarget` and `IndicatorMarker` are exported, and

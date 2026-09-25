@@ -928,8 +928,11 @@ export class IndicatorInstance implements IndicatorApi {
     const anchor = (key: string | null): SeriesApi | undefined => (key === null ? primary : this._series.get(key));
     // Marks sent to the series the study's own marks already anchor to join
     // that layer, so marks at one bar stack there instead of drawing over each
-    // other from two layers.
-    const [markers, groups] = this._route(all, key => anchor(key) === first);
+    // other from two layers, but only where both fill a gap alike: the study's
+    // own layer takes the candle while the study is on the price pane, a mark
+    // naming a plot while that plot is, so an overlay plot of a study in its
+    // own pane keeps a layer of its own.
+    const [markers, groups] = this._route(all, key => anchor(key) === first && (this.paneIndex === 0 || !this._overlayTarget(key)));
     // Check every mark before any layer changes, as the drawings do.
     if (groups.size > 0) new SeriesMarkers(0).setMarkers(all);
     let created = false;
