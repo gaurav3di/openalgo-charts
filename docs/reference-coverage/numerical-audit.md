@@ -26,8 +26,32 @@ Verification includes 129 focused unit tests, same-time chart updates and prefix
 execution. A built-package browser regression first reproduced the old wrong
 values, then passed exact readings and rendered-line pixels in all three browser
 engines. Screenshots were inspected. Typechecking, scoped lint, build and bundle
-budgets pass. The indicator tier measures 36.00 kB Brotli and all tiers together
-289.25 kB on this development build.
+budgets passed. That development build measured 36.00 kB Brotli for the indicator
+tier and 289.25 kB for all tiers together.
+
+## Hull window lengths
+
+The standalone HMA now shares the integer-window kernel used by Hull Suite's Hma
+mode and both companion engines. The fast window is `max(1,floor(length/2))` and
+the smoothing window is `max(1,round(sqrt(length)))`. Length 1 returns its source.
+The former fractional half window changed the slope response at odd lengths;
+flooring the outer square root could also emit a value before the agreed warmup.
+
+Independent straight-line lag fixtures cover lengths 1, 2, 9, 13, 16 and 25.
+At length 9 a ramp is followed without lag once warm; at length 13 the lag is
+one third of a bar and the first reading is at zero-based index 15. Flat values,
+source holes, recovery and prefix execution are checked separately. These are
+formula comparisons; unchanged summation orders can still differ in last bits
+from the companion engines and remain part of the wider audit.
+
+The Hull batch passes 173 focused unit tests, typechecking and scoped lint.
+Built-package Hull and directional-value regressions pass in all three browser
+engines, with screenshots inspected. Fifteen matching compiled programs produce
+identical bits between the companion engines. The six Hull fixtures now match
+the chart formulas and availability within the stated `1e-12` comparison;
+directional zero-range and absent-data differences remain open. The current
+build measures 35.90 kB Brotli for indicators and 289.15 kB for all tiers, within
+their budgets.
 
 The companion audit has additionally reproduced changing-length, volume-anchor,
 overflow and partial-output disagreements. Its fixes and release gates are tracked

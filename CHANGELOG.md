@@ -7,6 +7,10 @@ All notable changes to OpenAlgo Charts.
 - ADX now seeds directional movement and true range over the same first complete
   change window. This removes an initial bias in both directional readings and
   the strength calculation. The first available bars are unchanged.
+- HMA uses an integer half window and a rounded square-root smoothing window,
+  matching Hull Suite's Hma mode and the companion engines. Odd lengths now
+  produce different values; lengths such as 13 also require one more warmup bar.
+  Length 1 is supported and returns the selected source.
 
 ## 2.5.3
 

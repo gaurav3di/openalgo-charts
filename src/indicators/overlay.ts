@@ -152,38 +152,13 @@ export const DEMA: IndicatorDescriptor = {
   },
 };
 
-/**
- * Weighted average over a period that need not be a whole number, so a Hull
- * average can halve an odd length without losing the remainder. A period of 4.5
- * spans five bars weighted 4.5, 3.5, 2.5, 1.5 and 0.5, and the normaliser is the
- * sum of those weights rather than the usual triangular number.
- *
- * At a whole period this is `wma` term for term, which is why only odd Hull
- * lengths ever disagreed. It lives here rather than in the shared helpers
- * because the Hull average is its only caller.
- */
-function fractionalWma(values: readonly number[], period: number): number[] {
-  const n = values.length;
-  const out = new Array<number>(n).fill(NaN);
-  const span = Math.ceil(period);
-  if (period <= 0 || n < span) return out;
-  let denom = 0;
-  for (let k = 0; k < span; k++) denom += period - k;
-  for (let i = span - 1; i < n; i++) {
-    let acc = 0;
-    for (let k = 0; k < span; k++) acc += values[i - k] * (period - k);
-    out[i] = acc / denom;
-  }
-  return out;
-}
-
 export const HMA: IndicatorDescriptor = {
   id: 'hma',
   name: 'Hull Moving Average',
   category: 'Trend',
   placement: 'onchart',
   inputs: [
-    { key: 'length', type: 'number', label: 'Length', default: 9, min: 2, max: 1000, step: 1 },
+    { key: 'length', type: 'number', label: 'Length', default: 9, min: 1, max: 1000, step: 1 },
     { key: 'source', type: 'source', label: 'Source', default: 'close' },
     { key: 'color', type: 'color', label: 'HMA', default: '#2962ff' },
   ],
@@ -193,20 +168,8 @@ export const HMA: IndicatorDescriptor = {
   }],
   calc: (bars, s) => {
     const values = sourceValues(bars, src(s));
-    const length = int(s, 'length', 9, 2);
-    // The half period is deliberately NOT floored. The reference halves the
-    // length in floating point, so an odd length asks its weighted average for a
-    // 4.5-bar window, and flooring to 4 left the fast leg a fifth of a bar early
-    // and the whole line 0.4 slopes high on a ramp. The outer period does floor
-    // its square root, which is why that one stays whole.
-    const half = Math.max(0.5, length / 2);
-    const root = Math.max(1, Math.floor(Math.sqrt(length)));
-    const fast = fractionalWma(values, half);
-    const slow = wma(values, length);
-    // `wma` carries NaN through its accumulator, so the raw series' warmup
-    // propagates into the smoothing pass without any masking here.
-    const raw = fast.map((v, i) => 2 * v - slow[i]);
-    return { hma: nulls(wma(raw, root)) };
+    const length = int(s, 'length', 9);
+    return { hma: nulls(hullHma(values, length)) };
   },
 };
 
