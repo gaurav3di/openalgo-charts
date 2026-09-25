@@ -14,7 +14,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Chart } from '../src/core/chart';
 import { fakeDocument } from './helpers/fake-dom';
 import type { Bar } from '../src/model/bar';
-import { zonedWallClockToUtcSeconds } from '../src/feed/time';
+import { formatZonedDate, zonedWallClockToUtcSeconds } from '../src/feed/time';
 import { registerInterval } from '../src/feed/intervals';
 import { ReplayController } from '../src/replay/controller';
 import { createLinkGroup } from '../src/link/index';
@@ -197,6 +197,20 @@ describe('date placement across daylight saving changes', () => {
     expect(await navigator.goTo({ from: local(2024, 3, 11) })).toMatchObject({ status: 'placed', from: local(2024, 3, 11) });
     expect(await navigator.goTo({ from: local(2024, 3, 13) })).toMatchObject({ status: 'placed', from: local(2024, 3, 11) });
     expect(await navigator.goTo({ from: local(2024, 3, 10, 23, 30) })).toMatchObject({ status: 'placed', from: local(2024, 3, 4) });
+  });
+
+  it('names the daily bar the axis labels with the date when the feed stamps UTC midnight', async () => {
+    // West of UTC a UTC-midnight stamp is the previous evening on this clock,
+    // and the axis, crosshair and data window all label it with that earlier
+    // date. The date typed is the one read off the axis, so it names that bar.
+    const utc = Array.from({ length: 20 }, (_, i) => bar(Date.UTC(2024, 4, 27 + i) / 1000, 100 + i));
+    const chart = makeChart(utc, '1d', NY);
+    const navigator = new DateNavigator({ chart });
+    const placed = await navigator.goTo({ from: local(2024, 6, 5) });
+    expect(placed).toMatchObject({ status: 'placed', from: Date.UTC(2024, 5, 6) / 1000 });
+    expect(formatZonedDate(placed.from!, NY)).toBe('05 Jun');
+    expect(await navigator.goTo({ from: local(2024, 6, 3), to: local(2024, 6, 5, 23, 59) }))
+      .toMatchObject({ status: 'placed', from: Date.UTC(2024, 5, 4) / 1000, to: Date.UTC(2024, 5, 6) / 1000 });
   });
 
   it('keeps a session-stamped daily bar inside a range that ends on its date', async () => {
