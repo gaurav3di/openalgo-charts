@@ -4,7 +4,7 @@
  * is checked on every path that could reach the drawing, since a policy that
  * one path honours and another ignores is not a policy.
  */
-import { describe, it, expect, beforeAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { Chart } from '../src/core/chart';
 import { ChartObjects } from '../src/model/chart-objects';
 import { fakeDocument } from './helpers/fake-dom';
@@ -482,6 +482,90 @@ describe('the host\'s forced calls and the undo history', () => {
       expect(draw.redo()).toBe(true);
       expect(draw.groups()).toEqual([{ id: host.id, name: 'Host', members: ['c'] }]);
     }
+  });
+});
+
+describe('what the host\'s forced calls cost the undo history', () => {
+  const second = { points: [{ time: 5000, price: 50 }, { time: 6000, price: 60 }] };
+  const trail = (price: number) => [{ time: 1000, price }, { time: 2000, price }];
+  // A rewrite parses both snapshots of every recorded step, and nothing else
+  // on these paths parses, so the count is the rewrite's work.
+  const parses = (run: () => void): number => {
+    const spy = vi.spyOn(JSON, 'parse');
+    try { run(); return spy.mock.calls.length; } finally { spy.mockRestore(); }
+  };
+  /** A read-only level beside the user's drawing and its 21 recorded steps. */
+  const history = () => {
+    const draw = new DrawingController(busHost());
+    const level = line(draw, { policy: { editable: false } });
+    const free = line(draw, second);
+    for (let i = 0; i < 20; i++) draw.nudge([free.id], 8, 0);
+    return { draw, level, free };
+  };
+
+  it('rewrites no recorded step to move or restyle a read-only drawing, however long the history', () => {
+    const { draw, level, free } = history();
+    const nudged = cloneDrawing(draw.get(free.id)!);
+    // A trailing level, once a tick.
+    expect(parses(() => {
+      for (let tick = 1; tick <= 10; tick++) {
+        draw.update(level.id, { points: trail(10 + tick), style: { color: '#ff0000' } }, { force: true });
+      }
+    })).toBe(0);
+    // Every step of the user's is still there, and none of them moves the level.
+    for (let i = 0; i < 21; i++) expect(draw.undo()).toBe(true);
+    expect(draw.canUndo()).toBe(false);
+    expect(draw.get(free.id)).toBeUndefined();
+    for (let i = 0; i < 21; i++) expect(draw.redo()).toBe(true);
+    expect(draw.get(free.id)).toEqual(nudged);
+    expect(draw.get(level.id)?.points).toEqual(trail(20));
+    expect(draw.get(level.id)?.style.color).toBe('#ff0000');
+  });
+
+  it('still rewrites every recorded step for a change of policy, and for the host\'s restack', () => {
+    const { draw, free } = history();
+    expect(parses(() => draw.update(free.id, { policy: { editable: false } }))).toBeGreaterThanOrEqual(42);
+    // Each step moved only the drawing now read-only, so each is gone.
+    expect(draw.canUndo()).toBe(false);
+
+    const again = history();
+    // The user restacks the read-only level, which is theirs to do; the host
+    // then puts it where it wants it, and undoing the restack leaves it there.
+    expect(again.draw.reorder(again.level.id, 1)).toBe(true);
+    expect(parses(() => again.draw.update(again.level.id, { zIndex: 5 }, { force: true }))).toBeGreaterThanOrEqual(44);
+    expect(again.draw.undo()).toBe(true);
+    expect(again.draw.get(again.level.id)?.zIndex).toBe(5);
+  });
+
+  it('puts the moves it skipped into history once the host makes the drawing editable again', () => {
+    const draw = new DrawingController(busHost());
+    const a = line(draw);
+    const b = line(draw, second);
+    draw.removeMany([a.id, b.id]);
+    expect(draw.undo()).toBe(true);
+    draw.update(a.id, { policy: { editable: false } });
+    draw.update(a.id, { points: trail(30), style: { lineWidth: 4 } }, { force: true });
+    draw.update(a.id, { policy: { editable: true } }, { force: true });
+    // The delete, redone and undone, brings the drawing back where and as the host left it.
+    expect(draw.redo()).toBe(true);
+    expect(draw.get(a.id)).toBeUndefined();
+    expect(draw.undo()).toBe(true);
+    expect(draw.get(a.id)?.points).toEqual(trail(30));
+    expect(draw.get(a.id)?.style.lineWidth).toBe(4);
+  });
+
+  it('forgets the moves it held back once a restore replaces the drawings and the history', () => {
+    const draw = new DrawingController(busHost());
+    const level = line(draw, { policy: { editable: false } });
+    draw.update(level.id, { points: trail(30) }, { force: true });
+    // The same id comes back as the user's own, from a layout without its policy.
+    draw.fromJSON({ version: 2, drawings: [{ id: level.id, tool: 'trend-line', paneIndex: 0, zIndex: 0, style: {}, points: trail(10) }] });
+    draw.update(level.id, { points: trail(20) });
+    // Any rewrite of the history, here the host retiring a drawing of its own.
+    const mark = line(draw, { policy: { editable: false } });
+    draw.remove(mark.id, { force: true });
+    expect(draw.undo()).toBe(true);
+    expect(draw.get(level.id)?.points).toEqual(trail(10));
   });
 });
 

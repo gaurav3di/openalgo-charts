@@ -141,6 +141,17 @@ export interface DrawingEditOptions {
    * records no undo step, and every step already recorded takes it too: no
    * later undo or redo reverses it, and a step it leaves with nothing to do
    * is dropped.
+   *
+   * Cost: taking a call into the recorded steps is one pass over the undo
+   * and redo history, parsing and rewriting both snapshots of every step, so
+   * it grows with the history length (`historyLimit` per branch) times the
+   * drawing count. A forced delete, a forced grouping call, a forced patch
+   * to a drawing the user may edit or one that carries `zIndex`, and any
+   * patch that carries `policy` make that pass. A forced patch to a
+   * read-only drawing that carries neither `policy` nor `zIndex` (a level
+   * the host trails on every tick) makes none: history cannot reach that
+   * drawing's content while it stays read-only, so the patch is held and
+   * goes in with the next pass, which a change of its policy always makes.
    */
   force?: boolean;
 }
@@ -330,6 +341,8 @@ export class DrawingController {
   private _undo: DrawingHistoryEntry[] = [];
   private _redo: DrawingHistoryEntry[] = [];
   private _pendingHistory: DrawingHistoryEntry | null = null;
+  /** The host's patches the recorded steps have yet to take, merged per drawing. */
+  private readonly _hostPatches = new Map<string, DrawingPatch>();
   /**
    * One gesture's starting state. `items` are ids rather than objects because
    * an undo mid-drag replaces every drawing object, and a stale reference
@@ -764,20 +777,22 @@ export class DrawingController {
     if (live.length === 0) return;
     this._begin(!options.force && live.some(({ patch }) => !patch.policy));
     for (const { d, patch } of live) this._applyPatch(d, patch);
-    // The host's patches, whole, and the anchors exactly where they landed:
-    // a constraint run again on an older shape could put them elsewhere.
-    const host = live.filter(({ patch }) => options.force || patch.policy);
-    if (host.length) {
-      this._rebase(document => {
-        for (const d of document.drawings) {
-          for (const { d: now, patch: { points, ...rest } } of host) {
-            if (now.id !== d.id) continue;
-            this._applyPatch(d, rest);
-            if (points) d.points = now.points;
-          }
-        }
-      });
+    let rewrite = false;
+    for (const { d, patch: { points, ...rest } } of live) {
+      if (!options.force && !rest.policy) continue;
+      // The host's patch, whole, and the anchors exactly where they landed:
+      // a constraint run again on an older shape could put them elsewhere.
+      const held = this._hostPatches.get(d.id) ?? {};
+      this._applyPatch(held as Drawing, rest);
+      if (points) held.points = d.points;
+      this._hostPatches.set(d.id, held);
+      // History cannot reach a read-only drawing's content until its policy
+      // changes, and that change is a rewrite which takes this patch first,
+      // so moving one (a trailing level, every tick) costs no rewrite. Its
+      // place in the stack is within history's reach.
+      rewrite ||= !pinned(d) || !!rest.policy || rest.zIndex !== undefined;
     }
+    if (rewrite) this._rebase();
     this._sync();
     for (const { d } of live) this._chart.emit('draw:update', { drawing: d });
     this._emitChange(live.map((p) => p.d.id), 'update');
@@ -1294,6 +1309,7 @@ export class DrawingController {
     this._groups = document.groups ?? [];
     this._undo = [];
     this._redo = [];
+    this._hostPatches.clear();
     this._pendingHistory = null;
     this._setSelection([]);
     this._sync();
@@ -2014,12 +2030,20 @@ export class DrawingController {
    * snapshot, as if it had always been so, and a step left with nothing to do
    * is dropped, so `canUndo` and `canRedo` match what a press would do. The
    * step still being recorded stays whatever it holds so far. `edit` may
-   * share live objects, since each snapshot is serialised at once.
+   * share live objects, since each snapshot is serialised at once. The
+   * host's patches still held back go in first, being older. Both snapshots
+   * of every step are parsed and written, which is why a forced move of a
+   * read-only drawing is held back rather than paying for this.
    */
-  private _rebase(edit: (document: DrawingsDocument) => void): void {
+  private _rebase(edit?: (document: DrawingsDocument) => void): void {
     const rewrite = (text: string): string => {
       const document = JSON.parse(text) as DrawingsDocument;
-      edit(document);
+      for (const d of document.drawings) {
+        const { points, ...rest } = this._hostPatches.get(d.id) ?? {};
+        this._applyPatch(d, rest);
+        if (points) d.points = points;
+      }
+      edit?.(document);
       return JSON.stringify(document);
     };
     const keep = (entry: DrawingHistoryEntry): boolean => {
@@ -2038,5 +2062,6 @@ export class DrawingController {
     }
     this._undo = this._undo.filter(keep);
     this._redo = this._redo.filter(keep);
+    this._hostPatches.clear();
   }
 }
