@@ -9,6 +9,11 @@ All notable changes to OpenAlgo Charts.
   into OHLC fields; projected times are identified without exposing future replay
   observations. Optional formatting preserves raw time identity and protects
   spreadsheet text. Both hosts provide guarded CSV selection dialogs.
+- Closing a widget dialog or menu returns focus to the control that opened it
+  on WebKit, which covers Safari and every iOS browser. WebKit does not focus a
+  button when it is tapped, so after Escape focus previously went nowhere,
+  stranding keyboard and screen reader users. A control that really held focus
+  when the overlay opened still receives it back.
 - Series styles can be read as frozen snapshots, including renderer defaults
   and current plot offsets, through `chart.seriesStyle(series)`.
 - User panning and zooming can be enabled independently at runtime. The policy

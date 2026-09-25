@@ -421,7 +421,10 @@ export function createOverlayStack(root: HTMLElement, doc: Document): OverlaySta
     const placement = opts.placement ?? (opts.anchor ? 'below' : 'center');
     const modal = opts.modal ?? placement === 'center';
     const active = doc.activeElement as HTMLElement | null;
-    const restore = active !== null && active !== doc.body && !el.contains(active) ? active : null;
+    // WebKit does not focus a button on click or tap, so an overlay a tap opened
+    // finds nothing focused here. Its anchor is the control that opened it, and
+    // is where focus returns on close rather than nowhere.
+    const restore = active !== null && active !== doc.body && !el.contains(active) ? active : opts.anchor ?? null;
     let scrim: HTMLElement | null = null;
     const entry: OverlayEntry = { el, opts: { ...opts, modal }, scrim: null, restore, closed: false, suspended: 0 };
     if (modal) {
