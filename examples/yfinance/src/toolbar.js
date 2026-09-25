@@ -326,6 +326,7 @@ export function renderToolbar() {
   // Go to a date or range, loading a longer period when the date is older
   // than the one on screen.
   const goTo = tbtn('<span>Go to</span>', 'Go to a date or range', 'loads older history when it is needed');
+  goTo.id = 'goto';
   goTo.setAttribute('aria-haspopup', 'dialog');
   goTo.disabled = !target?.current() || Boolean(pane === 2 ? app.loading2 || app.loadFailed2 : app.loading || app.loadFailed);
   goTo.addEventListener('click', () => openGoTo(goTo));

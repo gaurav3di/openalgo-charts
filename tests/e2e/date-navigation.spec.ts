@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import type { Widget } from '../../src/widget/widget';
 import type * as Charts from '../../src/index';
 import type * as Widgets from '../../src/widget/index';
@@ -10,10 +10,31 @@ import type * as Widgets from '../../src/widget/index';
 // there rather than left on an empty stretch of axis.
 
 const ORIGIN = `http://127.0.0.1:${process.env.OAC_E2E_DEMO_PORT || '8124'}`;
+let referenceUp: boolean | null = null;
+
+/** The reference host runs on a Python fixture server that not every machine has; skip, do not fail, without it. */
+async function openReference(page: Page, request: APIRequestContext) {
+  if (referenceUp === null) referenceUp = await request.get(ORIGIN + '/api/history?symbol=AAPL&interval=1d&period=1mo').then(r => r.ok(), () => false);
+  test.skip(!referenceUp, 'Reference fixture server needs Python 3');
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  await page.setViewportSize({ width: 1360, height: 900 });
+  await page.goto(ORIGIN + '/examples/yfinance/index.html?test=1');
+  await page.waitForFunction(() => (window as any).__oac?.app.chart && !(window as any).__oac.app.loading);
+  return errors;
+}
+
+/** A date `days` back, as the chart's own calendar names it. */
+async function daysBack(page: Page, days: number): Promise<string> {
+  return page.evaluate((back: number) => {
+    const zone = (window as any).__oac.app.chart.timezone();
+    return new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' })
+      .format(new Date(Date.now() - back * 86400_000));
+  }, days);
+}
 
 declare global {
   interface Window {
-    __goto: { widget: Widget; requests: number; at(y: number, m: number, d: number, hh?: number, mm?: number): number };
+    __goto: { widget: Widget; requests: number; release(): void; at(y: number, m: number, d: number, hh?: number, mm?: number): number };
   }
 }
 
@@ -21,13 +42,14 @@ async function paint(page: Page) {
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 }
 
-async function mountWidget(page: Page, width: number) {
+/** `gated` holds every request after the first until `__goto.release()`. */
+async function mountWidget(page: Page, width: number, setup: { interval?: string; theme?: 'dark' | 'light'; gated?: boolean } = {}) {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await page.setViewportSize({ width, height: 760 });
   await page.route('**/date-navigation.html', route => route.fulfill({ contentType: 'text/html', body:
     '<!doctype html><html><head><style>html,body{margin:0;background:#0d0e12}#host{position:absolute;inset:0}</style></head><body><div id="host"></div></body></html>' }));
   await page.goto('/date-navigation.html');
-  await page.evaluate(async () => {
+  await page.evaluate(async ({ interval, theme, gated }) => {
     const lib = await import('/dist/openalgo-charts.mjs' as string) as typeof Charts;
     const widgets = await import('/dist/openalgo-charts.widget.mjs' as string) as typeof Widgets;
     const at = (y: number, m: number, d: number, hh = 0, mm = 0): number => lib.zonedWallClockToUtcSeconds(y, m, d, hh, mm, 0, 'Asia/Kolkata');
@@ -40,18 +62,20 @@ async function mountWidget(page: Page, width: number) {
       const close = 100 + Math.sin(sessions.length / 7) * 8 + sessions.length * 0.05;
       sessions.push({ time, open: close - 0.5, high: close + 1.2, low: close - 1.4, close: close + 0.4, volume: 1000 + sessions.length });
     }
-    const state = { widget: null as unknown as Widget, requests: 0, at };
+    let open!: () => void;
+    const gate = new Promise<void>(resolve => { open = resolve; });
+    const state = { widget: null as unknown as Widget, requests: 0, at, release: () => open() };
     state.widget = widgets.createWidget(document.getElementById('host')!, {
       feed: { getBars: async request => {
-        state.requests++;
+        if (++state.requests > 1 && gated) await gate;
         return sessions.filter(value => value.time >= (request.from ?? -Infinity) && value.time <= (request.to ?? Infinity));
       } },
-      symbol: 'SESSIONS', exchange: 'NSE', interval: '1d', lookbackBars: 60, theme: 'dark', rail: false,
+      symbol: 'SESSIONS', exchange: 'NSE', interval, lookbackBars: 60, theme, rail: false,
       now: () => at(2024, 6, 28, 16, 0) * 1000, animZoom: false, animAutoscale: false,
     });
     window.__goto = state;
     await new Promise<void>(resolve => { state.widget.on('data', () => resolve()); });
-  });
+  }, { interval: setup.interval ?? '1d', theme: setup.theme ?? 'dark', gated: setup.gated ?? false });
   await paint(page);
   return errors;
 }
@@ -95,7 +119,8 @@ for (const width of [1100, 390]) {
     const before = await page.evaluate(() => window.__goto.requests);
     const panel = await openPanel(page, width);
     await panel.locator('input[type=date]').first().fill('2023-10-16');
-    await panel.locator('input[type=time]').first().fill('');
+    // Daily bars: a date names its bar, so the panel offers no time to type.
+    await expect(panel.locator('input[type=time]').first()).toBeHidden();
     await panel.getByRole('button', { name: 'Go', exact: true }).click();
     await expect(panel).toBeHidden();
     await paint(page);
@@ -139,28 +164,60 @@ test('widget go-to explains an empty request in place and fits a range', async (
   expect(errors).toEqual([]);
 });
 
-test('reference host go-to widens its period and places the date', async ({ page }, info) => {
-  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
-  await page.setViewportSize({ width: 1360, height: 900 });
-  await page.goto(ORIGIN + '/examples/yfinance/index.html?test=1');
-  await page.waitForFunction(() => (window as any).__oac?.app.chart && !(window as any).__oac.app.loading);
+test('widget go-to panel closed while loading leaves the view where the user left it', async ({ page }, info) => {
+  const errors = await mountWidget(page, 1100, { gated: true });
+  const centre = () => page.evaluate(() => {
+    const chart = window.__goto.widget.chart;
+    const view = chart.getVisibleLogicalRange();
+    return chart.dataLayer.indexToTime(Math.round((view.from + view.to) / 2));
+  });
+  const panel = await openPanel(page, 1100);
+  await panel.locator('input[type=date]').first().fill('2023-10-16');
+  await panel.getByRole('button', { name: 'Go', exact: true }).click();
+  await expect(panel.locator('.oac-goto__message')).toHaveText('Loading history');
+  const shown = await centre();
+  await panel.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(panel).toBeHidden();
+  await page.evaluate(() => window.__goto.release());
+  await expect.poll(() => page.evaluate(() => window.__goto.widget.series.getData()[0].time))
+    .toBeLessThanOrEqual(await page.evaluate(() => window.__goto.at(2023, 10, 16)));
+  await paint(page);
+  expect(await centre()).toBe(shown);
+  await expect(page.locator('.oac-statusline')).not.toContainText('Showing');
+  await page.screenshot({ path: info.outputPath('dismissed.png') });
+  expect(errors).toEqual([]);
+});
+
+test('widget go-to panel offers a time on an intraday chart in the light theme', async ({ page }, info) => {
+  const errors = await mountWidget(page, 1100, { interval: '1h', theme: 'light' });
+  const panel = await openPanel(page, 1100);
+  const time = panel.locator('input[type=time]').first();
+  await expect(time).toBeVisible();
+  await expect(panel.locator('.oac-goto__hint')).toContainText('Times are in Asia/Kolkata.');
+  const [box, card] = [await time.boundingBox(), await panel.boundingBox()];
+  expect(box!.width).toBeGreaterThan(60);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(card!.x + card!.width);
+  await page.screenshot({ path: info.outputPath('intraday-light.png') });
+  expect(errors).toEqual([]);
+});
+
+test('reference host go-to widens its period and places the date', async ({ page, request }, info) => {
+  const errors = await openReference(page, request);
   // A month on screen, so a date two hundred days back needs a longer period.
   await page.getByRole('button', { name: 'History range' }).click();
   await page.locator('.menu button', { hasText: '1mo' }).click();
   await page.waitForFunction(() => (window as any).__oac.app.req.period === '1mo' && !(window as any).__oac.app.loading);
-  const target = await page.evaluate(() => {
-    const zone = (window as any).__oac.app.chart.timezone();
-    const date = new Date(Date.now() - 200 * 86400_000);
-    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
-    return parts;
-  });
+  const target = await daysBack(page, 200);
   await page.getByRole('button', { name: 'Go to a date or range' }).click();
   const panel = page.locator('.oac-goto');
   await expect(panel).toBeVisible();
+  await expect(panel.locator('input[type=time]')).toHaveCount(2);
+  await expect(panel.locator('input[type=time]').first()).toBeHidden();
   await panel.locator('input[type=date]').first().fill(target);
-  await panel.locator('input[type=time]').first().fill('');
   await panel.getByRole('button', { name: 'Go', exact: true }).click();
-  await expect(panel).toBeHidden({ timeout: 20_000 });
+  // The rebuild takes the first panel with the old chart; the answer is the status line, then no panel at all.
+  await expect(page.locator('#status')).toHaveText(/^Showing /, { timeout: 20_000 });
+  await expect(page.locator('.oac-goto')).toHaveCount(0);
   const outcome = await page.evaluate(async (day: string) => {
     const lib = await import('/dist/openalgo-charts.mjs' as string) as typeof Charts;
     const app = (window as any).__oac.app;
@@ -176,5 +233,29 @@ test('reference host go-to widens its period and places the date', async ({ page
   expect(outcome.first).toBeLessThanOrEqual(outcome.start);
   expect(outcome.centre).toBe(outcome.expected);
   await page.screenshot({ path: info.outputPath('reference-placed.png') });
+  expect(errors).toEqual([]);
+});
+
+test('reference host reports short history in the panel it reopens after the rebuild', async ({ page, request }, info) => {
+  const errors = await openReference(page, request);
+  // An hourly frame goes back a year at most, so three years back cannot be reached.
+  await page.evaluate(async () => {
+    const app = (window as any).__oac.app;
+    (document.getElementById('interval') as HTMLSelectElement).value = '1h';
+    (document.getElementById('period') as HTMLSelectElement).value = '1mo';
+    await app.load();
+  });
+  await page.waitForFunction(() => (window as any).__oac.app.req.interval === '1h' && !(window as any).__oac.app.loading);
+  const target = await daysBack(page, 3 * 366);
+  await page.getByRole('button', { name: 'Go to a date or range' }).click();
+  let panel = page.locator('.oac-goto');
+  await panel.locator('input[type=date]').first().fill(target);
+  await panel.locator('input[type=time]').first().fill('');
+  await panel.getByRole('button', { name: 'Go', exact: true }).click();
+  panel = page.locator('.oac-goto');
+  await expect(panel.locator('.oac-goto__message')).toHaveText(/^History starts at /, { timeout: 20_000 });
+  expect(await page.evaluate(() => (window as any).__oac.app.req.period)).toBe('1y');
+  await expect(panel.locator('input[type=date]').first()).toHaveValue(target);
+  await page.screenshot({ path: info.outputPath('reference-short-history.png') });
   expect(errors).toEqual([]);
 });

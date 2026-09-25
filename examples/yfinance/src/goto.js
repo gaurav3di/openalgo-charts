@@ -7,6 +7,11 @@
 // bars come from the shortest longer period that reaches the requested time,
 // loaded through the pane's ordinary load path. The range menu then shows the
 // period that was actually loaded, which is the honest record of it.
+//
+// That load rebuilds the pane's chart, and the panel goes with the chart's
+// overlays. The request itself carries on, so the panel is opened again on
+// the new chart to show it through: a result short of a placement (history
+// that starts later, no bars, a failed load) is reported where it was asked.
 import { DateNavigator, openDateNavigation } from '/dist/openalgo-charts.widget.mjs';
 import { el } from './ui.js';
 import { PERIOD_DAYS, periodsFor } from './intervals.js';
@@ -15,6 +20,8 @@ import { capturePaneTarget } from './pane-target.js';
 const DAY = 86400;
 let app;
 let panel = null;
+/** The panel's request while it runs: `{ pane, target, result }`. */
+let current = null;
 const navigators = new Map();
 
 export function initGoTo(a) {
@@ -39,12 +46,17 @@ export async function loadPaneHistory(pane, time) {
   const request = pane === 2 ? app.p2 : app.req;
   const next = widerPeriod(request.interval, request.period, Math.floor(Date.now() / 1000) - time);
   if (!next) return 'exhausted';
-  if (pane === 2) {
-    app.p2.period = next;
-    await app.loadSecondary();
-  } else {
-    el('period').value = next;
-    await app.load();
+  try {
+    if (pane === 2) {
+      app.p2.period = next;
+      await app.loadSecondary();
+    } else {
+      el('period').value = next;
+      await app.load();
+    }
+  } finally {
+    // The load rebuilt the chart the panel belonged to; show the request on the new one.
+    if (current?.pane === pane && !panel) openGoTo(el('goto') || undefined, current);
   }
   if (pane === 2 ? app.loadFailed2 : app.loadFailed) throw new Error(`${request.symbol} history could not load`);
   return 'loaded';
@@ -63,15 +75,30 @@ function navigatorFor(pane) {
   return navigator;
 }
 
-/** Open the shared go-to panel for the selected chart. */
-export function openGoTo(anchor) {
-  const target = capturePaneTarget(app);
+/**
+ * Open the shared go-to panel for the selected chart, or, with `pending`,
+ * for the pane whose request it is, showing that request until it settles.
+ */
+export function openGoTo(anchor, pending) {
+  const target = capturePaneTarget(app, pending?.pane);
   const context = target && app['inspection' + target.pane]?.context;
   if (!target?.current() || !context) return false;
+  const pane = target.pane;
+  const navigator = navigatorFor(pane);
   panel?.close();
-  panel = openDateNavigation({ ...context, status: text => { el('status').textContent = text; } }, anchor, {
-    navigate: request => navigatorFor(target.pane).goTo(request),
-    onClose: () => { panel = null; },
+  let handle = null;
+  handle = openDateNavigation({ ...context, status: text => { el('status').textContent = text; } }, anchor, {
+    navigate: request => {
+      const run = { pane, target: request, result: navigator.goTo(request) };
+      current = run;
+      void run.result.finally(() => { if (current === run) current = null; });
+      return run.result;
+    },
+    // Dismissed while loading: the view must not jump after the user has moved on.
+    cancel: () => navigator.cancel(),
+    pending,
+    onClose: () => { if (panel === handle) panel = null; },
   });
+  panel = handle;
   return true;
 }

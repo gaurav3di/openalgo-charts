@@ -353,11 +353,15 @@ selected chart. **Date** centres one date at the current zoom; **Range** fits tw
 dates or date and time pairs. Times are read in the chart timezone. When the date
 is older than the loaded period, the page loads the shortest longer period that
 reaches it (the range menu shows the result), then places the date once that load
-has been accepted. An interval that cannot serve an older period reports where
-history starts. Replay never loads history, a symbol or interval change cancels a
-pending request, and the linked second chart follows the placement by time. The
-navigation rules are the widget tier's `DateNavigator`; only the period loader
-in `src/goto.js` belongs to this page.
+has been accepted. That load rebuilds the chart, and the panel with it, so the page
+opens the panel again on the new chart to carry the request through: an interval
+that cannot serve an older period reports there where history starts. Daily and
+longer frames take a date alone, since a time could not change the bar it names.
+Closing the panel while history loads drops the request, and the view stays where
+it was. Replay never loads history, a symbol or interval change cancels a pending
+request, and the linked second chart follows the placement by time. The navigation
+rules are the widget tier's `DateNavigator`; only the period loader in `src/goto.js`
+belongs to this page.
 
 ## What each module proves
 
