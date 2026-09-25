@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { getIndicator } from '/dist/openalgo-charts.mjs';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { createChart, getIndicator } from '/dist/openalgo-charts.mjs';
+import { fakeDocument, pointer } from '../../../tests/helpers/fake-dom';
 import { initRoutedStudy, routedSignalDescriptor } from '../src/routed-study.js';
 
 const bars = Array.from({ length: 60 }, (_, i) => {
@@ -16,6 +17,45 @@ function outputs(settings) {
   };
 }
 
+const charts = [];
+beforeAll(() => { globalThis.window ??= {}; });
+afterEach(() => { for (const chart of charts.splice(0)) chart.destroy(); });
+
+/** A real chart from the built library, painted synchronously into a fake canvas. */
+function mounted() {
+  const document = fakeDocument();
+  const el = document.createElement('div');
+  const chart = createChart(el, {
+    document, pixelRatio: () => 1, shortcuts: false, timeNavigator: false, animZoom: false, animAutoscale: false,
+    raf: { schedule: callback => { callback(); return 1; }, cancel: () => {} },
+  });
+  charts.push(chart);
+  chart.applySize(900, 600);
+  chart.addSeries('candlestick').setData(bars);
+  const clicks = [];
+  chart.subscribeClick(id => { clicks.push(id); });
+  initRoutedStudy();
+  const study = chart.addIndicator('routed-signal-sample');
+  return { chart, el, clicks, study };
+}
+const click = (el, x, y) => {
+  el.dispatch('pointerdown', pointer('down', x, y));
+  el.dispatch('pointerup', pointer('up', x, y));
+};
+/** Where the chart last drew each Buy or Sell plate on one pane. */
+const plates = (chart, paneIndex) => chart.panes()[paneIndex].primitives()
+  .flatMap(layer => layer._lastPositions ?? []).filter(mark => mark.id.startsWith('signal:'));
+/** The drawing layers on one pane that hold a shape matching `test`. */
+const shapesOn = (chart, paneIndex, test) => chart.panes()[paneIndex].primitives()
+  .filter(layer => Array.isArray(layer._items) && layer._items.some(test));
+const range = shape => shape.id === 'routed-range';
+const now = shape => shape.text === 'Now';
+/** A point inside the range box, at a candle's own price on the price pane. */
+const inRange = chart => {
+  const bar = bars[bars.length - 10];
+  return [chart.timeToCoordinate(bar.time), chart.priceToCoordinate(bar.close, 0)];
+};
+
 describe('routed signal sample', () => {
   it('registers an opt-in pane study under Examples', () => {
     initRoutedStudy();
@@ -24,11 +64,11 @@ describe('routed signal sample', () => {
 
   it('sends its plates and range box to the price pane and keeps the rest with the histogram', () => {
     const { marks, shapes } = outputs({ length: 10, onPrice: true });
-    const plates = marks.filter(mark => mark.shape === 'labelUp' || mark.shape === 'labelDown');
+    const plateMarks = marks.filter(mark => mark.shape === 'labelUp' || mark.shape === 'labelDown');
     const dots = marks.filter(mark => mark.shape === 'circle');
-    expect(plates.length).toBeGreaterThan(1);
-    expect(plates.every(mark => mark.overlay === true && mark.plot === undefined)).toBe(true);
-    expect(dots).toHaveLength(plates.length);
+    expect(plateMarks.length).toBeGreaterThan(1);
+    expect(plateMarks.every(mark => mark.overlay === true && mark.plot === undefined)).toBe(true);
+    expect(dots).toHaveLength(plateMarks.length);
     expect(dots.every(mark => mark.overlay === undefined && mark.plot === undefined)).toBe(true);
     expect(shapes.map(shape => [shape.kind, shape.overlay ?? null, shape.plot ?? null]))
       .toEqual([['box', true, null], ['label', null, 'momentum']]);
@@ -38,5 +78,50 @@ describe('routed signal sample', () => {
     const { marks } = outputs({ length: 10, onPrice: false });
     expect(marks.length).toBeGreaterThan(0);
     expect(marks.every(mark => mark.overlay === undefined && mark.plot === undefined)).toBe(true);
+  });
+});
+
+describe('routed signal sample on a mounted chart', () => {
+  it('draws the plates and the range box on the candles and the Now label with the histogram', () => {
+    const { chart, el, clicks, study } = mounted();
+    expect(study.paneIndex).toBe(1);
+    const drawn = plates(chart, 0);
+    expect(drawn.length).toBeGreaterThan(1);
+    expect(plates(chart, 1)).toEqual([]);
+    expect(shapesOn(chart, 0, range)).toHaveLength(1);
+    expect(shapesOn(chart, 1, range)).toHaveLength(0);
+    expect(shapesOn(chart, 1, now)).toHaveLength(1);
+    // Each reports its id where it is drawn.
+    click(el, drawn[0].x, drawn[0].y);
+    click(el, ...inRange(chart));
+    expect(clicks).toEqual([drawn[0].id, 'routed-range']);
+  });
+
+  it('leaves the price axis free to move, and the routed outputs go with the candles', () => {
+    const { chart, el, clicks } = mounted();
+    expect(chart.movePriceAxis(0, 'right', 'left')).toBe(true);
+    expect(chart.panes()[0].usesScale('right')).toBe(false);
+    click(el, ...inRange(chart));
+    expect(clicks).toEqual(['routed-range']);
+    expect(chart.movePriceAxis(0, 'left', 'right')).toBe(true);
+    click(el, ...inRange(chart));
+    expect(clicks).toEqual(['routed-range', 'routed-range']);
+  });
+
+  it('sends the plates back to the histogram with Signals on price off, and clears every target with the study', () => {
+    const { chart, study } = mounted();
+    study.setSettings({ onPrice: false });
+    expect(plates(chart, 0)).toEqual([]);
+    expect(plates(chart, 1).length).toBeGreaterThan(1);
+    expect(shapesOn(chart, 0, range)).toHaveLength(1);
+    study.setVisible(false);
+    expect(plates(chart, 1)).toEqual([]);
+    study.setVisible(true);
+    study.setSettings({ onPrice: true });
+    expect(plates(chart, 0).length).toBeGreaterThan(1);
+    study.remove();
+    expect(plates(chart, 0)).toEqual([]);
+    expect(shapesOn(chart, 0, range)).toHaveLength(0);
+    expect(chart.panes()).toHaveLength(1);
   });
 });

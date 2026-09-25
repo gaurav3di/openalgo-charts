@@ -124,3 +124,60 @@ test('routed study drawings and markers paint where they are sent and follow the
   await page.screenshot({ path: info.outputPath('output-targets-after-removal.png') });
   expect(errors).toEqual([]);
 });
+
+test('a routed box follows candles on the left axis and leaves the axis free to move', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.setViewportSize({ width: 960, height: 700 });
+  await page.route('**/output-targets.html', route => route.fulfill({
+    contentType: 'text/html', body: '<!doctype html><html><head><style>html,body{margin:0;height:100%;background:#101010}#chart{height:100%}</style></head><body><div id="chart"></div></body></html>',
+  }));
+  await page.goto('/output-targets.html');
+  await page.evaluate(async () => {
+    const bundle = '/dist/openalgo-charts.mjs';
+    const lib = await import(bundle) as typeof Charts;
+    const chart = lib.createChart(document.querySelector<HTMLElement>('#chart')!, { branding: false, theme: lib.darkTheme });
+    // The instrument on the left axis from the start, nothing on the right.
+    chart.addSeries('candlestick', { priceScaleId: 'left' })
+      .setData(Array.from({ length: 60 }, (_, i) => ({ time: 1700000000 + i * 60, open: 99, high: 102, low: 98, close: 100 + Math.sin(i) })));
+    lib.registerIndicator({
+      id: 'native-output-targets-left', name: 'Routed box', placement: 'pane', inputs: [],
+      plots: [{ key: 'osc', type: 'line', title: 'Osc', style: { color: '#ffffff' } }],
+      calc: bars => ({ osc: bars.map((_, i) => 30 + (i % 10)) }),
+      draws: ({ bars }) => [{ kind: 'box', from: { time: bars[20].time, price: 104 }, to: { time: bars[35].time, price: 96 },
+        color: '#cc2244', fillColor: '#cc2244', opacity: 1, id: 'zone', overlay: true }],
+    });
+    const study = chart.addIndicator('native-output-targets-left');
+    chart.setVisibleLogicalRange({ from: -2, to: 62 });
+    const clicks: string[] = [];
+    chart.subscribeClick(id => { clicks.push(id); });
+    window.__outputTargets = { chart, study, clicks };
+  });
+  await painted(page);
+  const onLeft = await inkByPane(page);
+  expect(onLeft[0].box).toBeGreaterThan(1000);
+  expect(await page.evaluate(() => window.__outputTargets.chart.panes()[0].usesScale('right'))).toBe(false);
+  await page.screenshot({ path: info.outputPath('output-targets-left-axis.png') });
+  const clickBox = async () => {
+    const point = await page.evaluate(() => {
+      const { chart } = window.__outputTargets;
+      const box = document.querySelector('#chart')!.getBoundingClientRect();
+      return { x: box.left + chart.timeToCoordinate(1700000000 + 27 * 60), y: box.top + chart.priceToCoordinate(100, 0)! };
+    });
+    await page.mouse.click(point.x, point.y);
+  };
+  await clickBox();
+  await expect.poll(() => page.evaluate(() => window.__outputTargets.clicks)).toEqual(['zone']);
+
+  // The axis can move back and forth; the box goes with the candles each time.
+  expect(await page.evaluate(() => window.__outputTargets.chart.movePriceAxis(0, 'left', 'right'))).toBe(true);
+  await painted(page);
+  expect((await inkByPane(page))[0].box).toBeGreaterThan(1000);
+  await clickBox();
+  await expect.poll(() => page.evaluate(() => window.__outputTargets.clicks)).toEqual(['zone', 'zone']);
+  expect(await page.evaluate(() => window.__outputTargets.chart.movePriceAxis(0, 'right', 'left'))).toBe(true);
+  await painted(page);
+  expect((await inkByPane(page))[0].box).toBeGreaterThan(1000);
+  await page.screenshot({ path: info.outputPath('output-targets-axis-moved-back.png') });
+  expect(errors).toEqual([]);
+});

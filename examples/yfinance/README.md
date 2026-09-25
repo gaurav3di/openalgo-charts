@@ -23,7 +23,8 @@ its own pane whose Buy and Sell plates and 30-bar range box are drawn on the
 candles. Those outputs name the price pane; the dots and the latest reading stay
 with the histogram. Turn off **Signals on price** in its settings to send the
 plates back to the study's pane. Moving the study to another pane leaves the plates
-on the candles; hiding or removing it takes every routed layer with it.
+on the candles, and moving the price axis to the left takes the plates and the box
+with the candles; hiding or removing it takes every routed layer with it.
 
 Choose **Indicators > Examples > Source signal sample** to add the host-owned
 2.4.6 demonstration to the focused chart. It alternates Up and Down labels every
