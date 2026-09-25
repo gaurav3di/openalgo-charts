@@ -66,16 +66,23 @@ splitter or tab keeps its own arrow keys.
 
 The same decision is available to any host through `WidgetOptions.keyboardRoute`:
 return false to silence a widget and its chart's shortcuts, true to send keys to it,
-and undefined to keep the usual pointer or focus rule.
+and undefined to keep the usual rule, which is pointer or focus, or always when the
+`shortcuts` scope is `global`. It routes a `ShortcutManager` instance as well, including
+one instance shared by several widgets, which is what a grid's cells receive when you
+pass one.
 
 ## Linking
 
 `setLinks({ crosshair, viewport, symbol, interval, appearance })` switches channels of
 the engine's link group. Each change is applied once per follower and never echoes
-back. Turning symbol or interval linking on adopts the active chart's choice, and a
-linked symbol carries the leader's exchange. A view that moves only because a chart
-received new bars stays local, so a follower on a different interval is not squeezed
-into a sliver; linked views converge on the next pan or zoom. See
+back. Turning symbol or interval linking on adopts the active chart's choice. A linked
+symbol is the symbol and the exchange together, so moving a chart from one exchange's
+listing to another's, with the same ticker, moves the linked charts too. A view that
+moves only because a chart received new bars stays local, so a follower on a
+different interval is not squeezed into a sliver; linked views converge on the next
+pan or zoom. The linked window is kept as a span of time, and a chart that is measured
+again, because it comes back from behind the compact tabs or is resized, takes that
+window. See
 [Chart linking](/docs/chart-linking) for how time, not bar index, crosses charts.
 
 ## Workspaces
@@ -102,9 +109,17 @@ it destroys the new charts, which cancels their history requests, and returns
 `{ applied: false, reason }` with the old charts exactly as they were. Validate
 untrusted files with `parseWorkspacePayload` first.
 
-With `persist`, the grid saves this payload after every change (debounced, and on
-page hide) and restores it on the next construction. A saved payload that no longer
-applies falls back to `preset`.
+With `persist`, the grid saves this payload after every change and restores it on
+the next construction. A preset, link, theme, active chart, instrument or keyboard
+splitter change is written before the current task ends, so a reload straight after it
+keeps it. Pans, zooms and drags are written once they settle, and any write still
+pending is flushed when the page hides, on `pagehide` and on `destroy()`.
+
+A stored payload that no longer applies, for example because it names a study the page
+registers later, is not overwritten. The grid shows `preset`, puts the reason in a
+toast on the active chart, and keeps the stored payload until the user changes the
+grid; loading data and moving the focus do not count. `grid.restored()` reports what
+happened: `null` when nothing was stored, otherwise the `{ applied, reason? }` report.
 
 ## Loading and teardown
 
@@ -124,7 +139,7 @@ interval. Splitters hide. Widening the grid restores every chart with its weight
 
 | Event | Payload |
 | --- | --- |
-| `active` | `{ id }` |
+| `active` | `{ id }`, from `setActive` and whenever a preset or an applied workspace moves the active chart |
 | `layout` | `{ reason }`: `preset`, `weights`, `workspace` or `compact` |
 | `links` | the resolved link options |
 | `theme` | `{ theme }` after any chart changes theme; every chart follows |
@@ -134,4 +149,6 @@ interval. Splitters hide. Widening the grid restores every chart with its weight
 The yfinance example has a grid view, `examples/yfinance/grid.html`, with preset and
 link controls, import and export of layout files, and persistence. The main page
 hands a layout it cannot draw (more than two charts, or rows) to the grid view from
-its Layouts dialog.
+its Layouts dialog, after checking that the grid view can open it: a layout with
+comparison symbols or an interval the grid view does not load is refused on the main
+page, before it navigates.

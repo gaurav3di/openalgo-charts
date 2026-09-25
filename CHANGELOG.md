@@ -10,10 +10,15 @@ All notable changes to OpenAlgo Charts.
   appearance links without echo, a compact tabbed view on narrow screens, and
   persistence. It writes and applies the portable workspace payload, including
   saved spans and weights; a failed apply destroys the half-built charts, cancels
-  their requests and leaves the old ones untouched. `WidgetOptions.keyboardRoute`
-  lets any multi-widget host decide which widget answers a key. The yfinance
-  reference host gains a grid view, and its main page hands over layouts it
-  cannot draw.
+  their requests and leaves the old ones untouched. A linked symbol includes its
+  exchange, charts shown again after the compact view take the linked window,
+  discrete changes are saved before the task ends, and a stored desk that fails
+  to restore is kept and reported through `restored()` and a toast instead of
+  being overwritten. `WidgetOptions.keyboardRoute` lets any multi-widget host
+  decide which widget answers a key, including through a shared
+  `ShortcutManager`, and keeps a `global` shortcut scope. The yfinance reference
+  host gains a grid view, and its main page hands over layouts it cannot draw
+  after checking the grid view can open them.
 - CSV export supports explicit study instances, inclusive UTC ranges and
   display-aligned plot values with effective runtime offsets. Candle plots expand
   into OHLC fields; projected times are identified without exposing future replay

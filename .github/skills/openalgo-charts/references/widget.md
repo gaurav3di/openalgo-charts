@@ -281,7 +281,7 @@ Color swatches stay compact. Theme overrides should target these tokens.
 | `now` | `() => number` | `Date.now` | Clock for the load window and the capture filename. |
 | `onOrder` | `(order: OrderRequest) => void` | none | Order entry from the right-click menu. Without it the menu draws no trade rows. |
 | `styleNonce` | `string` | none | Response CSP nonce for the shared widget and dialog stylesheet. Style-attribute policy remains the host's responsibility. |
-| `keyboardRoute` | `() => boolean \| undefined` | none | For hosts with several widgets: false silences this widget's chords and chart shortcuts, true sends them here, undefined keeps pointer or focus. The chart grid sets it per cell. |
+| `keyboardRoute` | `() => boolean \| undefined` | none | For hosts with several widgets: false silences this widget's chords and chart shortcuts, true sends them here, undefined keeps the usual rule (pointer or focus, or always for a `shortcuts` scope of `global`). Applies to a `ShortcutManager` instance too, shared or not. The chart grid sets it per cell. |
 
 Confirm defaults against `WidgetOptions` in the typings rather than assuming.
 
@@ -547,15 +547,29 @@ const report = grid.applyWorkspace(parseWorkspacePayload(fileText)); // { applie
   editing; spans from a saved payload are drawn and splitters stop where a span crosses.
 - `ChartGridCell` (`id`, `widget`, `element`, `row`, `column`, `rowSpan`, `columnSpan`);
   `cells()`, `active()`, `setActive(id, { focus })`, `layout()` (`ChartGridLayout`),
-  `linkOptions()`, `setLinks(patch)`, `theme()`, `setTheme()`, `compact()`, `destroy()`.
-- Events (`ChartGridEvents`, `ChartGridEventName`): `active`, `layout` (`preset`,
+  `linkOptions()`, `setLinks(patch)` (switching symbol or interval on adopts the active
+  chart's), `theme()`, `setTheme()`, `compact()`, `restored()`, `destroy()`.
+- Events (`ChartGridEvents`, `ChartGridEventName`): `active` (from `setActive`, and when
+  a preset or an applied workspace moves the active chart), `layout` (`preset`,
   `weights`, `workspace`, `compact`), `links`, `theme`.
+- Persistence (`persist`): preset, link, theme, active chart, instrument, keyboard
+  splitter and drawing add or remove changes are written before the task ends. Pans,
+  zooms and drags are debounced (`SAVE_DEBOUNCE_MS`) and flushed when the page hides
+  (`visibilitychange`), on `pagehide` and on `destroy`. A stored desk that fails to
+  restore (a study or chart type registered later, say) is not overwritten: the grid
+  falls back to `preset`, toasts the reason on the active chart, and `restored()`
+  returns `{ applied: false, reason }` (null when nothing was stored). The stored desk
+  stays until the user changes the grid; data loads and focus do not count.
 - Keyboard: only the active cell answers. Pointer down or focus inside a cell makes it
   active. A key pressed with the focus on the page body, while the pointer is over the
-  grid, goes to the active chart; a focused splitter keeps its arrow keys.
+  grid, goes to the active chart; a focused splitter or tab keeps its arrow keys.
 - `WidgetOptions.keyboardRoute` is the hook behind that: `() => boolean | undefined`.
   False silences the widget's chords and its chart's shortcuts, true routes them there,
-  undefined keeps the pointer-or-focus rule. A host with several plain widgets can use it.
+  undefined keeps the usual rule: pointer or focus, or always when the host's
+  `shortcuts` scope is `global`. A `ShortcutManager` instance is routed too; one
+  instance shared by several widgets (every grid cell gets the same options) is wrapped
+  per widget, so rebinding it still reaches them all. A host with several plain widgets
+  can use it.
 - `getWorkspace()` returns a JSON `WorkspacePayload` that `parseWorkspacePayload` accepts:
   slots, weights, preset, active pane, sync, per-pane chart state, `settings['widget.theme']`,
   rail magnet/stay. `volume` is written false and `comparisons` empty: a widget draws
@@ -565,7 +579,9 @@ const report = grid.applyWorkspace(parseWorkspacePayload(fileText)); // { applie
   aborting their history requests, and returns `{ applied: false, reason }` with the old
   cells untouched. Pass untrusted input through `parseWorkspacePayload` first.
 - Linked viewports ignore moves caused by freshly loaded bars, so a follower on another
-  interval is not squeezed; views converge on the next pan or zoom. Linked symbols carry
-  the leader's exchange.
+  interval is not squeezed; views converge on the next pan or zoom. The linked window is
+  kept as times, and a chart measured again (shown from behind the compact tabs, or
+  resized) takes it. A linked symbol is the symbol and exchange together, so a change of
+  exchange alone (one ticker on NSE and BSE) reaches the followers.
 - Below `compactWidth` only the active cell shows, with a tab strip to switch; splitters
   hide. `CHART_GRID_CSS` is part of `WIDGET_COMPONENT_CSS`.
