@@ -167,6 +167,101 @@ describe('widget go-to flow', () => {
     }
   });
 
+  it('abandons a loading request when the user pans or zooms, and leaves the view where they put it', async () => {
+    for (const move of [
+      (_widget: Widget, root: FakeElement) => {
+        root.querySelector('.oac-chart')!.dispatch('wheel', { clientX: 300, clientY: 220, deltaX: 0, deltaY: -100, deltaMode: 0, preventDefault: () => {} });
+      },
+      (widget: Widget) => {
+        const view = widget.chart.getVisibleLogicalRange();
+        widget.chart.setVisibleLogicalRange({ from: view.from - 7, to: view.to - 7 });
+      },
+    ]) {
+      const requests: BarsRequest[] = [];
+      const { feed, release } = gatedFeed(requests);
+      const { widget, root } = make({ feed });
+      await flush();
+      const loaded = widget.series.getData().length;
+      const settled = vi.fn();
+      void widget.goTo({ from: at(2023, 10, 16) }).then(settled);
+      await flush();
+      expect(requests).toHaveLength(2);
+      const before = widget.chart.getVisibleLogicalRange();
+      move(widget, root);
+      const view = widget.chart.getVisibleLogicalRange();
+      expect(view).not.toEqual(before);
+      const first = widget.series.getData()[0].time;
+      const offset = view.from - widget.chart.dataLayer.timeToIndex(first)!;
+      await flush();
+      expect(settled).toHaveBeenCalledWith({ status: 'cancelled' });
+      release();
+      await flush();
+      // The older bars still arrive, kept off screen where the user was looking.
+      expect(widget.series.getData().length).toBeGreaterThan(loaded);
+      const after = widget.chart.getVisibleLogicalRange();
+      expect(after.from - widget.chart.dataLayer.timeToIndex(first)!).toBeCloseTo(offset, 6);
+      expect(after.to - after.from).toBeCloseTo(view.to - view.from, 6);
+      expect(centreTime(widget)).not.toBe(at(2023, 10, 16, 9, 15));
+    }
+  });
+
+  it('keeps a loading request through the view moves the widget makes for arriving data', async () => {
+    const requests: BarsRequest[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let extra: Bar[] = [];
+    const { widget } = make({ feed: { getBars: async request => {
+      requests.push(request);
+      if (requests.length === 2) await gate;
+      return [...SESSIONS.filter(value => value.time >= (request.from ?? -Infinity) && value.time <= (request.to ?? Infinity)), ...extra];
+    } } });
+    await flush();
+    const settled = vi.fn();
+    void widget.goTo({ from: at(2023, 10, 16) }).then(settled);
+    await flush();
+    expect(requests).toHaveLength(2);
+    // A refresh lands two new sessions while the page loads. The widget holds
+    // the view on the bars in it, which moves the window it would otherwise follow.
+    extra = [bar(at(2024, 7, 1, 9, 15), 300), bar(at(2024, 7, 2, 9, 15), 301)];
+    const view = widget.chart.getVisibleLogicalRange();
+    const moves = vi.fn();
+    const off = widget.chart.on('pan', moves);
+    await widget.reload();
+    off();
+    const bars = widget.series.getData();
+    expect(bars[bars.length - 1].time).toBe(at(2024, 7, 2, 9, 15));
+    expect(moves).toHaveBeenCalled();
+    expect(widget.chart.getVisibleLogicalRange()).toEqual(view);
+    expect(settled).not.toHaveBeenCalled();
+    release();
+    await flush();
+    expect(settled).toHaveBeenCalledWith(expect.objectContaining({ status: 'placed', from: at(2023, 10, 16, 9, 15) }));
+  });
+
+  it('leaves the first load of a new symbol unwatched and no watch behind from an earlier request', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const base = rangeFeed([]);
+    const { widget } = make({ feed: { getBars: async request => {
+      if (request.symbol === 'BANKNIFTY') await gate;
+      return base.getBars(request);
+    } } });
+    await flush();
+    expect(await widget.goTo({ from: at(2023, 10, 16) })).toMatchObject({ status: 'placed' });
+    widget.setSymbol('BANKNIFTY');
+    const settled = vi.fn();
+    void widget.goTo({ from: at(2024, 6, 3) }).then(settled);
+    await flush();
+    // The blank chart moved before its bars arrive: that arrival resets the view anyway.
+    const view = widget.chart.getVisibleLogicalRange();
+    widget.chart.setVisibleLogicalRange({ from: view.from - 7, to: view.to - 7 });
+    await flush();
+    expect(settled).not.toHaveBeenCalled();
+    release();
+    await flush();
+    expect(settled).toHaveBeenCalledWith(expect.objectContaining({ status: 'placed', from: at(2024, 6, 3, 9, 15) }));
+  });
+
   it('settles at once when restoreState moves to another instrument during a history load', async () => {
     const requests: BarsRequest[] = [];
     const { feed, release } = gatedFeed(requests);

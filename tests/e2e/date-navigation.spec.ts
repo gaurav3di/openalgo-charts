@@ -188,6 +188,41 @@ test('widget go-to panel closed while loading leaves the view where the user lef
   expect(errors).toEqual([]);
 });
 
+test('widget go-to request is dropped by a wheel zoom while history loads', async ({ page }, info) => {
+  const errors = await mountWidget(page, 1100, { gated: true });
+  const panel = await openPanel(page, 1100);
+  await panel.locator('input[type=date]').first().fill('2023-10-16');
+  await panel.getByRole('button', { name: 'Go', exact: true }).click();
+  const message = panel.locator('.oac-goto__message');
+  await expect(message).toHaveText('Loading history');
+  // Over the plot, well clear of the panel: a wheel is no outside press, so the panel stays.
+  const plot = await page.locator('.oac-chart').boundingBox();
+  await page.mouse.move(plot!.x + plot!.width * 0.3, plot!.y + plot!.height * 0.6);
+  await page.mouse.wheel(0, -240);
+  await expect(message).toHaveText('');
+  await expect(panel).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Go', exact: true })).toBeEnabled();
+  const zoomed = await page.evaluate(() => {
+    const chart = window.__goto.widget.chart;
+    const view = chart.getVisibleLogicalRange();
+    return { span: view.to - view.from, first: chart.primaryBars()[0].time, from: view.from - chart.dataLayer.timeToIndex(chart.primaryBars()[0].time)! };
+  });
+  await page.evaluate(() => window.__goto.release());
+  await expect.poll(() => page.evaluate(() => window.__goto.widget.series.getData()[0].time))
+    .toBeLessThanOrEqual(await page.evaluate(() => window.__goto.at(2023, 10, 16)));
+  await paint(page);
+  const after = await page.evaluate((first: number) => {
+    const chart = window.__goto.widget.chart;
+    const view = chart.getVisibleLogicalRange();
+    return { span: view.to - view.from, from: view.from - chart.dataLayer.timeToIndex(first)! };
+  }, zoomed.first);
+  expect(after.span).toBeCloseTo(zoomed.span, 6);
+  expect(after.from).toBeCloseTo(zoomed.from, 6);
+  await expect(page.locator('.oac-statusline')).not.toContainText('Showing');
+  await page.screenshot({ path: info.outputPath('zoomed-during-load.png') });
+  expect(errors).toEqual([]);
+});
+
 test('widget go-to panel closes when the interval changes under it', async ({ page }, info) => {
   const errors = await mountWidget(page, 1100, { interval: '1h' });
   let panel = await openPanel(page, 1100);

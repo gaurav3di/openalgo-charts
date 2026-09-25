@@ -189,7 +189,8 @@ export interface Widget {
   /**
    * Show a date, or an explicit UTC range, after loading the older history it
    * needs through the feed. Waits for a load in flight; a newer request, a
-   * symbol or interval change, or destruction settles it `cancelled`.
+   * symbol or interval change, a pan or zoom while history loads, or
+   * destruction settles it `cancelled`.
    */
   goTo(target: DateNavigationTarget): Promise<DateNavigationResult>;
   /** Open the go-to panel. False after destruction or on an interval without time buckets. */
@@ -348,6 +349,8 @@ class WidgetImpl implements Widget {
   /** Bumped by every go-to request and every context change, so a waiting request knows it lost. */
   private _navigation = 0;
   private _loading: Promise<unknown> | null = null;
+  /** Set while the widget itself moves the view for arriving data, which is not the user moving on. */
+  private _anchoring = false;
   private readonly _intervals: string[];
 
   private _symbol: string;
@@ -817,7 +820,13 @@ class WidgetImpl implements Widget {
     if (controller == null || state === undefined || state.paused || state.request === null) return 'unavailable';
     if (state.hasMore === false) return 'exhausted';
     const first = controller.bars()[0]?.time;
-    await controller.loadMore(time);
+    // A pan or zoom the widget did not make while the page loads (a gesture,
+    // a key, a linked chart, the host's own call) means the view is wanted
+    // elsewhere, and a placement landing after it would undo it. A first load
+    // is not watched: the chart is blank until it lands and then resets.
+    const moved = (): void => { if (!this._anchoring) this._cancelNavigation(); };
+    const offs = [this.chart.on('pan', moved), this.chart.on('zoom', moved)];
+    try { await controller.loadMore(time); } finally { for (const off of offs) off(); }
     const next = controller.getState();
     if (next.historyStatus === 'error') throw next.historyError ?? new Error('Older history failed to load');
     if (next.historyStatus === 'limited') return 'limited';
@@ -842,6 +851,7 @@ class WidgetImpl implements Widget {
         (before.length === state.bars.length || before.length + 1 === state.bars.length)) this._series.update(tail);
       else {
         this._series.setData(state.bars);
+        this._anchoring = true;
         if (state.bars.length > 0) {
           if (this._initialView) {
             if (this._pendingView) this.chart.setVisibleLogicalRange(this._pendingView);
@@ -855,6 +865,7 @@ class WidgetImpl implements Widget {
             this.chart.setVisibleLogicalRange({ from: view.from + shift, to: view.to + shift });
           }
         }
+        this._anchoring = false;
       }
       this._displayedBars = state.bars;
       this._statusline?.refresh();
