@@ -4,6 +4,19 @@ All notable changes to OpenAlgo Charts.
 
 ## Unreleased
 
+- Go to a date or an explicit range. `widget.goTo({ from, to? })` loads the older
+  history the request needs through the widget's feed, then places it after that
+  load, so later live bars and refreshes keep the view. Daily and longer bars are
+  matched by calendar day in the chart timezone, weekend and overnight dates move
+  to the next session, and a range with no bars is reported without moving the
+  view. Results distinguish exhausted history, empty pages, retention limits,
+  replay and unsupported intervals; a newer request, a context change or
+  destruction cancels one in flight. The DOM-free `DateNavigator`, the
+  `openDateNavigation` panel and `DATE_NAVIGATION_CSS` are exported for custom
+  hosts. The widget toolbar and mobile More sheet open the panel, and the
+  reference host offers it by loading a longer period.
+- `DataLoadingController.loadMore(until?)` widens the first date window to reach
+  `until` in one request instead of one request per default window.
 - CSV export supports explicit study instances, inclusive UTC ranges and
   display-aligned plot values with effective runtime offsets. Candle plots expand
   into OHLC fields; projected times are identified without exposing future replay

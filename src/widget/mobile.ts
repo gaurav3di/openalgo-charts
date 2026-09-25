@@ -30,6 +30,7 @@ export interface MobileOptions {
   onDataWindow?(anchor: HTMLElement): void | boolean;
   onAlerts?(anchor: HTMLElement): boolean;
   onCapture?(anchor: HTMLElement): void;
+  onGoTo?(anchor: HTMLElement): void | boolean;
   onProperties(anchor: HTMLElement): boolean;
   settingsAvailable(): boolean;
   indicatorsAvailable(): boolean;
@@ -272,6 +273,10 @@ export function mountMobile(ctx: WidgetContext, opts: MobileOptions): MobileHand
         if (opts.onAlerts) body.appendChild(makeAction('alerts', widgetText(ctx, 'Alerts'), () => {
           close();
           opts.onAlerts?.(anchor);
+        }));
+        if (opts.onGoTo) body.appendChild(makeAction('go-to', widgetText(ctx, 'Go to'), () => {
+          close();
+          opts.onGoTo?.(anchor);
         }));
         const theme = makeAction('theme', opts.state().theme === 'dark' ? widgetText(ctx, 'Light theme') : widgetText(ctx, 'Dark theme'), () => {
           opts.onTheme();

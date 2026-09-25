@@ -207,6 +207,8 @@ export interface TopbarOptions {
   /** Open the docked data window, omitted without a handler. */
   onDataWindow?(anchor: HTMLElement): void | boolean;
   onAlerts?(anchor: HTMLElement): boolean;
+  /** Open the date and range navigation panel, omitted without a handler. */
+  onGoTo?(anchor: HTMLElement): void | boolean;
   settingsAvailable(): boolean;
   indicatorsAvailable(): boolean;
   /** Refuse CSV export while the host is replacing or recovering its data. */
@@ -370,6 +372,13 @@ export function mountTopbar(ctx: WidgetContext, host: HTMLElement, opts: TopbarO
   let brandingAnchor: HTMLAnchorElement | null = null;
   host.appendChild(brandingSlot);
 
+  if (opts.onGoTo) {
+    const goTo = btn(widgetText(ctx, 'Go to'), 'oac-topbar__goto');
+    goTo.textContent = widgetText(ctx, 'Go to');
+    goTo.setAttribute('aria-haspopup', 'dialog');
+    goTo.addEventListener('click', () => { opts.onGoTo?.(goTo); });
+    host.appendChild(goTo);
+  }
   if (opts.onObjects) {
     const objects = btn(widgetText(ctx, 'Objects'), 'oac-topbar__objects');
     objects.textContent = widgetText(ctx, 'Objects');

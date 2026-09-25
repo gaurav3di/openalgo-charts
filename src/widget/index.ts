@@ -40,6 +40,10 @@ export { mountQuickEntry, QUICK_ENTRY_CSS } from './quick-entry';
 export type { QuickEntryOptions, QuickEntryHandle } from './quick-entry';
 export { createColorPicker, COLOR_PICKER_CSS } from './color-picker';
 export type { ColorPickerOptions, ColorPickerHandle } from './color-picker';
+export { DateNavigator } from './date-navigator';
+export type { DateNavigatorOptions, DateNavigationTarget, DateNavigationResult, DateNavigationStatus, HistoryReach } from './date-navigator';
+export { openDateNavigation, DATE_NAVIGATION_CSS } from './date-navigation-dialog';
+export type { DateNavigationDialogOptions } from './date-navigation-dialog';
 
 export {
   WidgetBus, WidgetStorage, STORAGE_PREFIX, defaultStorage,

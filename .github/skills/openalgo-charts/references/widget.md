@@ -149,7 +149,7 @@ The sprite is injected once per document on the body (`id="oac-rail-sprite"`), s
 
 | Export | Kind | Purpose |
 |---|---|---|
-| `mountTopbar(ctx, host, opts)` | function | Symbol box with search, interval pills, chart type menu, Indicators, Objects, capture, settings, theme. Returns a `TopbarHandle` (`refresh`, `destroy`). |
+| `mountTopbar(ctx, host, opts)` | function | Symbol box with search, interval pills, chart type menu, Indicators, Go to (with `onGoTo`), Objects, capture, settings, theme. Returns a `TopbarHandle` (`refresh`, `destroy`). |
 | `openMenu(ctx, anchor, rows, opts?)` | function | A popover menu under `anchor`, with an optional filter box; the chart type menu and the symbol results share it. Returns the closer. |
 | `chartTypeChoices()` | function | The registered chart types a user can pick for the instrument (the registry minus histogram-family internals). |
 | `chartTypeLabel(id)` | function | A label from `CHART_TYPE_LABELS`, else the id. |
@@ -325,6 +325,8 @@ widget.openSettings();               // false when no dialog is registered under
 widget.openIndicatorPicker();
 widget.openObjects();                // false after destruction; focuses the existing panel when open
 widget.openAlerts();                 // desktop Alerts and mobile More use the same live list
+widget.openDateNavigation();         // the Go to panel; false after destruction
+await widget.goTo({ from, to? });    // DateNavigationResult; loads older history first
 widget.getState();                   // WidgetState; rejects nonportable alert payloads
 widget.restoreState(state);          // WidgetRestoreReport
 await widget.reload();               // fetch again for the current symbol and interval
@@ -517,3 +519,68 @@ view and width; old records stay valid. No saved-state version bump is needed.
 all component styles, including dialogs and indicator-picker additions. Include it
 beside `WIDGET_CSS` when managing styles yourself; apply widget tokens to the root.
 createWidget/createAlertUi inject the complete component styles automatically.
+
+## Date and range navigation (unreleased)
+
+`widget.goTo({ from, to? })` shows a date, or an explicit range, in UTC seconds.
+It waits for a load in flight, loads older history through
+`dataController.loadMore(until)` until the request is covered, then places it
+with `chart.setVisibleLogicalRange`. A date is centred at the current zoom, and
+kept left of the newest bar's normal margin; a range fills the plot, centred at
+the widest bar spacing when short. Placement runs after the accepted load, so
+later live bars and refreshes keep its anchor. A newer request, a symbol or
+interval change, `restoreState` onto another context, or `destroy` settles the
+promise `{ status: 'cancelled' }` without moving the view. The top bar's **Go to**
+button and the mobile **More** sheet open the panel (`openDateNavigation()`).
+
+`DateNavigator` is the DOM-free coordinator behind it, for custom hosts:
+
+```ts
+import { zonedStringToUtcSeconds } from 'openalgo-charts';
+import { DateNavigator, openDateNavigation } from 'openalgo-charts/widget';
+
+const navigator = new DateNavigator({
+  chart: () => currentChart,                  // or a Chart; re-read after each load
+  loadHistory: async (time, signal) => {      // prepend bars reaching `time`
+    await controller.loadMore(time);
+    return 'loaded';                          // or 'empty' | 'exhausted' | 'limited' | 'unavailable'
+  },
+});
+// A date typed on the chart's own clock (IST unless the host set another zone).
+const from = zonedStringToUtcSeconds('2024-01-15', currentChart.timezone());
+const result = await navigator.goTo({ from });
+openDateNavigation(ctx, anchor, { navigate: target => navigator.goTo(target) });
+```
+
+| Export | Kind | Purpose |
+|---|---|---|
+| `DateNavigator` | class | `goTo(target)`, `cancel()`, `destroy()`. One request at a time; a new one cancels the previous. |
+| `DateNavigatorOptions` | type | `chart` (a `Chart` or a getter), optional `loadHistory(time, signal)`, optional `interval()` (default: the data context). |
+| `DateNavigationTarget` | type | `{ from, to? }`; `to` is inclusive (bars opening at or before it). |
+| `DateNavigationResult` | type | `{ status, from?, to?, history?, clipped?, error? }`; `from`/`to` are the placed bars' open times. |
+| `DateNavigationStatus` | type | `placed`, `partial`, `no-data`, `unsupported`, `invalid`, `cancelled`, `error`. |
+| `HistoryReach` | type | What one loader call achieved: `loaded`, `empty`, `exhausted`, `limited`, `unavailable`. |
+| `openDateNavigation(ctx, anchor, options)` | function | The compact panel (Date or Range, date and optional time in the chart timezone). Returns `PanelHandle`; closes once placed and keeps any other outcome's reason in place. |
+| `DateNavigationDialogOptions` | type | `navigate(target)` and `onClose()`. |
+| `DATE_NAVIGATION_CSS` | const | The panel's styles; part of `WIDGET_COMPONENT_CSS`. |
+
+Rules the coordinator applies:
+
+- Bars of a day or longer count from the local midnight of their first day, so a
+  date lands on its own daily bar whether the feed stamps midnight or the session
+  open. Shorter bars keep their stamp; an instant in an overnight or weekend gap
+  moves to the next session; a range with no bar inside it is `no-data`.
+- Only time-bucketed intervals navigate (fixed and calendar); tick, volume and
+  unknown codes are `unsupported`. The view never moves for `no-data`,
+  `unsupported`, `invalid`, `cancelled` or `error`.
+- `partial` with `history` means the source stopped before the requested start:
+  `exhausted` (nothing older), `empty` (inspected windows held nothing; older
+  history may exist), `limited` (retention) or `unavailable` (no loader, replay,
+  a paused controller). `partial` with `clipped` means the range is wider than the
+  plot at its narrowest spacing; its start is in view.
+- History is never loaded during replay (`isReplaying(chart)`), and a date beyond
+  the replay cursor is `no-data`. A chart linked through `createLinkGroup` follows
+  the placement by time, like any other viewport change.
+- A loader that reports `loaded` without adding older bars stops the loop as
+  `empty`, so a misbehaving host cannot keep it spinning.
+

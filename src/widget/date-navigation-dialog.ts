@@ -1,0 +1,190 @@
+/**
+ * The go-to panel: a date, or a range of two, typed on the chart's own clock
+ * and handed to a `DateNavigator` (through `navigate`) as UTC seconds.
+ *
+ * The fields read the chart's timezone rather than the browser's, for the
+ * reason the alert expiry does: the axis the user reads is labelled in that
+ * zone, so a date typed in any other would land hours away from the candle
+ * they meant. A result that is not a clean placement keeps the panel open
+ * with the reason, since the next thing the user does is change the date.
+ */
+import { tryResolveInterval, utcSecondsToZonedParts, zonedWallClockToUtcSeconds } from 'openalgo-charts';
+import type { WidgetContext } from './context';
+import type { DateNavigationResult, DateNavigationTarget } from './date-navigator';
+import { button, dialogFrame, el, openPanel, type PanelHandle } from './form';
+import { widgetText } from './localization';
+
+export interface DateNavigationDialogOptions {
+  /** Run one request. The panel reports the result and closes once it is placed. */
+  navigate(target: DateNavigationTarget): Promise<DateNavigationResult>;
+  onClose?(): void;
+}
+
+const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const TIME = /^(\d{2}):(\d{2})$/;
+const pad = (n: number): string => String(n).padStart(2, '0');
+
+let sequence = 0;
+
+/** Open the go-to panel below `anchor`, prefilled with the visible window. */
+export function openDateNavigation(ctx: WidgetContext, anchor: HTMLElement | undefined, options: DateNavigationDialogOptions): PanelHandle {
+  const doc = ctx.document;
+  const chart = ctx.chart;
+  const zone = chart.timezone();
+  const found = tryResolveInterval(ctx.interval());
+  const intraday = found?.bucketing.mode === 'interval' && found.bucketing.seconds < 86400;
+  const format = new Intl.DateTimeFormat(ctx.locale, { timeZone: zone, dateStyle: 'medium', ...(intraday ? { timeStyle: 'short' } : {}) });
+  const when = (time: number): string => format.format(new Date(time * 1000));
+  let range = false;
+  let closed = false;
+  let request = 0;
+  let panel: PanelHandle | null = null;
+  const id = `oac-goto-${++sequence}`;
+
+  const frame = dialogFrame(doc, { translate: ctx.translate, title: widgetText(ctx, 'Go to'), className: 'oac-goto', onClose: close });
+  const modes = el(doc, 'div', 'oac-goto__modes');
+  modes.setAttribute('role', 'group');
+  modes.setAttribute('aria-label', widgetText(ctx, 'Go to'));
+  const mode = (name: 'date' | 'range', label: string): HTMLButtonElement => {
+    const b = button(doc, { label, onClick: () => setRange(name === 'range') });
+    b.dataset.mode = name;
+    modes.appendChild(b);
+    return b;
+  };
+  const dateMode = mode('date', widgetText(ctx, 'Date'));
+  const rangeMode = mode('range', widgetText(ctx, 'Range'));
+
+  const row = (key: string): { row: HTMLElement; label: HTMLLabelElement; date: HTMLInputElement; time: HTMLInputElement } => {
+    const line = el(doc, 'div', 'oac-goto__row');
+    const label = el(doc, 'label', 'oac-goto__label');
+    label.htmlFor = `${id}-${key}`;
+    const date = el(doc, 'input');
+    date.type = 'date';
+    date.id = `${id}-${key}`;
+    const time = el(doc, 'input');
+    time.type = 'time';
+    line.append(label, date, time);
+    return { row: line, label, date, time };
+  };
+  const start = row('from');
+  const end = row('to');
+  const hint = el(doc, 'p', 'oac-goto__hint', widgetText(ctx, 'Times are in {zone}. A blank time is the start of the day, or its end for To.', { zone }));
+  const message = el(doc, 'p', 'oac-goto__message');
+  message.setAttribute('role', 'status');
+  message.setAttribute('aria-live', 'polite');
+  frame.body.append(modes, start.row, end.row, hint, message);
+  const go = button(doc, { label: widgetText(ctx, 'Go'), variant: 'primary', onClick: () => { void commit(); } });
+  go.dataset.action = 'go-to';
+  frame.actions.appendChild(go);
+  for (const input of [start.date, start.time, end.date, end.time]) {
+    input.addEventListener('keydown', event => {
+      if ((event as KeyboardEvent).key !== 'Enter') return;
+      event.preventDefault();
+      void commit();
+    });
+    input.addEventListener('input', () => { message.textContent = ''; });
+  }
+
+  // Prefill with the window in view, so a small correction is a small edit.
+  const view = chart.getVisibleLogicalRange();
+  const shown = [chart.dataLayer.indexToTime(Math.max(0, Math.ceil(view.from))),
+    chart.dataLayer.indexToTime(Math.min(chart.dataLayer.length - 1, Math.floor(view.to)))];
+  const fill = (fields: { date: HTMLInputElement; time: HTMLInputElement }, time: number | undefined): void => {
+    if (time === undefined) return;
+    const p = utcSecondsToZonedParts(time, zone);
+    fields.date.value = `${p.year}-${pad(p.month)}-${pad(p.day)}`;
+    fields.time.value = intraday ? `${pad(p.hour)}:${pad(p.minute)}` : '';
+  };
+  fill(start, shown[0]);
+  fill(end, shown[1]);
+
+  function setRange(on: boolean): void {
+    range = on;
+    end.row.hidden = !on;
+    start.label.textContent = on ? widgetText(ctx, 'From') : widgetText(ctx, 'Date');
+    end.label.textContent = widgetText(ctx, 'To');
+    start.time.setAttribute('aria-label', on ? widgetText(ctx, 'From time') : widgetText(ctx, 'Time'));
+    end.time.setAttribute('aria-label', widgetText(ctx, 'To time'));
+    dateMode.setAttribute('aria-pressed', String(!on));
+    rangeMode.setAttribute('aria-pressed', String(on));
+    message.textContent = '';
+  }
+  setRange(false);
+
+  /** UTC seconds for a typed date and time, or null. A blank end time means the last second of that day. */
+  function read(fields: { date: HTMLInputElement; time: HTMLInputElement }, closing: boolean): number | null {
+    const d = DATE.exec(fields.date.value.trim());
+    const text = fields.time.value.trim();
+    const t = text === '' ? null : TIME.exec(text);
+    if (d === null || (text !== '' && t === null)) return null;
+    const [year, month, day] = [Number(d[1]), Number(d[2]), Number(d[3])];
+    if (t === null) return closing ? zonedWallClockToUtcSeconds(year, month, day + 1, 0, 0, 0, zone) - 1 : zonedWallClockToUtcSeconds(year, month, day, 0, 0, 0, zone);
+    return zonedWallClockToUtcSeconds(year, month, day, Number(t[1]), Number(t[2]), closing ? 59 : 0, zone);
+  }
+
+  function describe(result: DateNavigationResult, target: DateNavigationTarget): string {
+    const span = { from: when(result.from ?? target.from), to: when(result.to ?? target.to ?? target.from) };
+    switch (result.status) {
+      case 'placed': return range ? widgetText(ctx, 'Showing {from} to {to}', span) : widgetText(ctx, 'Showing {date}', { date: span.from });
+      case 'partial':
+        if (result.clipped) return widgetText(ctx, 'The range is wider than the chart. Showing {from} to {to}', span);
+        if (result.history === 'exhausted') return widgetText(ctx, 'History starts at {date}', { date: span.from });
+        if (result.history === 'limited') return widgetText(ctx, 'The history limit stops at {date}', { date: span.from });
+        if (result.history === 'empty') return widgetText(ctx, 'No older bars were found before {date}', { date: span.from });
+        return widgetText(ctx, 'Older history cannot load now. Showing from {date}', { date: span.from });
+      case 'no-data': return target.to === undefined
+        ? widgetText(ctx, 'No bars at or after {date}', { date: when(target.from) })
+        : widgetText(ctx, 'No bars between {from} and {to}', { from: when(target.from), to: when(target.to) });
+      case 'unsupported': return widgetText(ctx, 'Go to needs a time-based interval');
+      case 'invalid': return widgetText(ctx, 'Enter a valid date');
+      case 'error': return widgetText(ctx, 'Could not load history: {error}', { error: result.error?.message ?? '' });
+      default: return '';
+    }
+  }
+
+  async function commit(): Promise<void> {
+    if (closed) return;
+    const from = read(start, false);
+    const to = range ? read(end, true) : undefined;
+    if (from === null || to === null) { message.textContent = widgetText(ctx, 'Enter a valid date'); return; }
+    if (to !== undefined && to < from) { message.textContent = widgetText(ctx, 'The end must not be before the start'); return; }
+    const target: DateNavigationTarget = to === undefined ? { from } : { from, to };
+    const mine = ++request;
+    message.textContent = widgetText(ctx, 'Loading history');
+    go.disabled = true;
+    let result: DateNavigationResult;
+    try { result = await options.navigate(target); } finally { if (mine === request) go.disabled = false; }
+    if (mine !== request || result.status === 'cancelled') return;
+    const text = describe(result, target);
+    const failed = result.status === 'error' || result.status === 'unsupported';
+    ctx.status(text, failed ? 'error' : 'info');
+    if (result.status === 'placed') close();
+    else message.textContent = text;
+  }
+
+  function close(): void {
+    if (closed) return;
+    closed = true;
+    offDestroy();
+    panel?.close();
+    options.onClose?.();
+  }
+  const offDestroy = chart.on('destroy', close);
+  panel = openPanel(ctx, frame.el, { anchor, placement: 'below', initialFocus: start.date }, close);
+  if (closed) panel.close();
+  return { el: frame.el, close, isOpen: () => !closed && panel!.isOpen() };
+}
+
+const v = (name: string): string => `var(--oac-${name})`;
+
+/** Styles for the go-to panel; part of the widget component sheet. */
+export const DATE_NAVIGATION_CSS = `
+.oac-widget .oac-goto { width: 340px; }
+.oac-widget .oac-goto__modes { display: flex; gap: 4px; margin-bottom: 10px; }
+.oac-widget .oac-goto__row { display: grid; grid-template-columns: 44px minmax(0, 1fr) 96px; align-items: center; gap: 6px; margin: 0 0 6px; }
+.oac-widget .oac-goto__label { color: ${v('mut')}; font-size: 12px; }
+.oac-widget .oac-goto input[type=date], .oac-widget .oac-goto input[type=time] { min-width: 0; height: ${v('ctl-h')}; padding: 0 6px;
+  border: 1px solid ${v('bd')}; border-radius: ${v('radius')}; background: ${v('elev')}; color: ${v('tx')}; color-scheme: inherit; }
+.oac-widget .oac-goto__hint { margin: 4px 0 0; color: ${v('faint')}; font-size: 11px; line-height: 1.4; }
+.oac-widget .oac-goto__message { min-height: 16px; margin: 6px 0 0; color: ${v('mut')}; font-size: 12px; overflow-wrap: anywhere; }
+`;
