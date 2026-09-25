@@ -2,6 +2,12 @@
 
 All notable changes to OpenAlgo Charts.
 
+## Unreleased
+
+- ADX now seeds directional movement and true range over the same first complete
+  change window. This removes an initial bias in both directional readings and
+  the strength calculation. The first available bars are unchanged.
+
 ## 2.5.3
 
 2026-09-23

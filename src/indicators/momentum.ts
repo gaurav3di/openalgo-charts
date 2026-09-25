@@ -270,16 +270,23 @@ export const ADX: IndicatorDescriptor = {
       plusDm[i] = up > down && up > 0 ? up : 0;
       minusDm[i] = down > up && down > 0 ? down : 0;
     }
-    // Smooth from the first real true range, the same way the ADX leg below
-    // smooths only the finite tail of DX.
+    // Directional movement and true range describe the same bar-to-bar changes.
+    // Seed all three on the same window: including bar 0's placeholder movement
+    // only in the numerators biases both ratios after their warmup.
     const trStart = tr.findIndex((v) => Number.isFinite(v));
     const trR = new Array<number>(n).fill(NaN);
+    const plusR = new Array<number>(n).fill(NaN);
+    const minusR = new Array<number>(n).fill(NaN);
     if (trStart >= 0) {
       const trSmoothed = rma(tr.slice(trStart), period);
-      for (let i = 0; i < trSmoothed.length && trStart + i < n; i++) trR[trStart + i] = trSmoothed[i];
+      const plusSmoothed = rma(plusDm.slice(trStart), period);
+      const minusSmoothed = rma(minusDm.slice(trStart), period);
+      for (let i = 0; i < trSmoothed.length && trStart + i < n; i++) {
+        trR[trStart + i] = trSmoothed[i];
+        plusR[trStart + i] = plusSmoothed[i];
+        minusR[trStart + i] = minusSmoothed[i];
+      }
     }
-    const plusR = rma(plusDm, period);
-    const minusR = rma(minusDm, period);
     const plusDi = new Array<number>(n).fill(NaN);
     const minusDi = new Array<number>(n).fill(NaN);
     const dx = new Array<number>(n).fill(NaN);

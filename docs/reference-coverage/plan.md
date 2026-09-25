@@ -50,4 +50,8 @@ proof that either follows the calculation specification.
 
 ## Authorized release sequence
 
+[Numerical audit](numerical-audit.md) records independently derived chart
+corrections and their compiled and browser evidence. It does not certify complete
+agreement while remaining contract differences are still under investigation.
+
 The reported right-axis autoscale issue is fixed and verified on the example host in three browser engines. Retain that regression check for the final candidate. After completing the native capability work, validate the package, bump it to 2.5.4, update the example host, website, API documentation and changelog, commit and push, publish the package and website, and create the matching release. Verify the published artifacts against the tested build. Publication is authorized by the user; incomplete capability work is not a release candidate.
