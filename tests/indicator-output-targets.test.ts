@@ -15,8 +15,10 @@
  */
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { Chart } from '../src/core/chart';
+import { InvalidationLevel } from '../src/core/invalidate-mask';
 import type { Pane, PaneRenderContext } from '../src/core/pane';
 import { registerIndicator, type IndicatorDescriptor } from '../src/model/indicator-registry';
+import { SMA } from '../src/indicators/trend';
 import type { IndicatorApi } from '../src/model/indicator-instance';
 import type { Bar } from '../src/model/bar';
 import type { IPrimitive, PrimitiveRenderContext } from '../src/primitives/primitive';
@@ -36,7 +38,7 @@ const charts: Chart[] = [];
 beforeAll(() => { (globalThis as { window?: unknown }).window ??= {}; });
 afterEach(() => { for (const chart of charts.splice(0)) chart.destroy(); });
 
-function mount(): { chart: Chart; el: FakeElement } {
+function mount(candles: { priceScaleId?: 'left' | 'right' } = {}): { chart: Chart; el: FakeElement } {
   const document = fakeDocument();
   const el = document.createElement('div') as unknown as FakeElement;
   const chart = new Chart(el, {
@@ -45,7 +47,7 @@ function mount(): { chart: Chart; el: FakeElement } {
   });
   charts.push(chart);
   chart.applySize(800, 600);
-  chart.addSeries('candlestick').setData(BARS);
+  chart.addSeries('candlestick', candles).setData(BARS);
   return { chart, el };
 }
 
@@ -205,12 +207,12 @@ const click = (el: FakeElement, x: number, y: number): void => {
 const paneTop = (chart: Chart, paneIndex: number): number => (chart as unknown as ChartInternals)._paneLayout()[paneIndex].top;
 
 describe('drawing targets', () => {
-  it('sends a price-pane drawing to pane zero on its right scale and keeps the rest in the study pane', () => {
+  it('sends a price-pane drawing to pane zero, bound to no axis, and keeps the rest in the study pane', () => {
     const { chart } = mount();
     const study = chart.addIndicator(routedDraws());
     expect(drawLayers(chart, study)).toEqual([
       { pane: 1, scale: 'right', overlay: false, ids: ['ray'] },
-      { pane: 0, scale: 'right', overlay: true, ids: ['zone'] },
+      { pane: 0, scale: null, overlay: true, ids: ['zone'] },
     ]);
   });
 
@@ -244,9 +246,9 @@ describe('drawing targets', () => {
     expect(guide.setPriceScale('left')).toBe(true);
     expect(bound(guide)).toEqual([`${guide.paneIndex}:left`, '0:right']);
     study.setSettings({ zone: 'price' });
-    expect(bound(study)).toEqual([`${study.paneIndex}:left`, '0:right']);
+    expect(bound(study)).toEqual([`${study.paneIndex}:left`, '0:null']);
     expect(study.setPriceScale(null)).toBe(true);
-    expect(bound(study)).toEqual([`${study.paneIndex}:right`, '0:right']);
+    expect(bound(study)).toEqual([`${study.paneIndex}:right`, '0:null']);
   });
 
   it('moves a shape between targets when settings change and releases the layer it left', () => {
@@ -320,7 +322,7 @@ describe('drawing targets', () => {
     const [price, alt] = chart.indicators();
     expect(drawLayers(chart, price)).toEqual([
       { pane: price.paneIndex, scale: 'right', overlay: false, ids: ['ray'] },
-      { pane: 0, scale: 'right', overlay: true, ids: ['zone'] },
+      { pane: 0, scale: null, overlay: true, ids: ['zone'] },
     ]);
     expect(drawLayers(chart, alt)).toEqual([
       { pane: alt.paneIndex, scale: 'right', overlay: false, ids: ['ray'] },
@@ -605,5 +607,209 @@ describe('marker targets', () => {
     study.setSettings({ bad: true });
     expect(study.dataStatus()?.state).toBe('error');
     expect(markerLayers(chart, study)).toEqual(before);
+  });
+});
+
+describe('price-pane drawings on the instrument scale', () => {
+  /** Only local plots, so nothing but the routed box can occupy an axis on the price pane. */
+  const localOnly = (): string => {
+    const id = `targets-local-only-${seq++}`;
+    registerIndicator({
+      id, name: 'Local plots only', placement: 'pane', plots: PLOTS.slice(0, 2), calc: CALC, inputs: [],
+      draws: ({ bars }) => [{ kind: 'box', from: { time: bars[10].time, price: 124 }, to: { time: bars[20].time, price: 112 },
+        fillColor: '#26a69a', id: 'zone', overlay: true } as never],
+    });
+    return id;
+  };
+  const clicks = (chart: Chart): string[] => {
+    const seen: string[] = [];
+    chart.subscribeClick(id => { seen.push(id); });
+    return seen;
+  };
+  const onCandles = (chart: Chart, el: FakeElement): void =>
+    click(el, chart.timeToCoordinate(BARS[15].time), chart.priceToCoordinate(118, 0)!);
+
+  it.each([
+    ['moved to the left axis', () => { const mounted = mount(); expect(mounted.chart.movePriceAxis(0, 'right', 'left')).toBe(true); return mounted; }],
+    ['added on the left scale', () => mount({ priceScaleId: 'left' })],
+  ])('draws on the candles when they are %s, without reserving the right axis', (_, setup) => {
+    const { chart, el } = setup();
+    const seen = clicks(chart);
+    const study = chart.addIndicator(localOnly());
+    expect(drawLayers(chart, study)).toEqual([{ pane: 0, scale: null, overlay: true, ids: ['zone'] }]);
+    expect(chart.panes()[0].usesScale('right')).toBe(false);
+    onCandles(chart, el);
+    expect(seen).toEqual(['zone']);
+    // The candles can go back, and the shape goes with them.
+    expect(chart.movePriceAxis(0, 'left', 'right')).toBe(true);
+    onCandles(chart, el);
+    expect(seen).toEqual(['zone', 'zone']);
+  });
+
+  it('leaves the price axis free to move and travels with the candles', () => {
+    const { chart, el } = mount();
+    const seen = clicks(chart);
+    chart.addIndicator(localOnly());
+    expect(chart.movePriceAxis(0, 'right', 'left')).toBe(true);
+    expect(chart.panes()[0].usesScale('right')).toBe(false);
+    onCandles(chart, el);
+    expect(seen).toEqual(['zone']);
+  });
+
+  it('follows the candles onto another scale set on the series itself', () => {
+    const { chart, el } = mount();
+    const seen = clicks(chart);
+    chart.addIndicator(localOnly());
+    expect(chart.setSeriesPriceScale(chart.primarySeries()!, 'overlay:candles')).toBe(true);
+    // Squeezed into the lower half, so the scale it left no longer agrees with it.
+    chart.primarySeries()!.priceScale().setOptions({ marginTop: 0.85 });
+    chart.invalidate(mask => mask.invalidateGlobal(InvalidationLevel.Full));
+    expect(Math.abs(chart.priceToCoordinate(118, 0)! - chart.panes()[0].scaleFor('right').priceToY(118))).toBeGreaterThan(50);
+    onCandles(chart, el);
+    expect(seen).toEqual(['zone']);
+  });
+});
+
+/** Which of the named studies owns each primitive, in the order the pane draws them. */
+function owners(studies: Record<string, IndicatorApi>, primitives: IPrimitive[]): (string | undefined)[] {
+  return primitives.map(primitive => Object.entries(studies).find(([, study]) => owned(study).some(item => item.primitive === primitive))?.[0]);
+}
+
+describe('routed layer lifecycle', () => {
+  it('keeps study order on the price pane when a live pass routes to a target again or for the first time', () => {
+    const make = (name: string, routes: (count: number) => boolean): string => {
+      const id = `targets-order-${name}-${seq++}`;
+      registerIndicator({
+        id, name, placement: 'pane', plots: PLOTS, calc: CALC, inputs: [],
+        draws: ({ bars }) => routes(bars.length) ? [{ kind: 'box', from: { time: bars[10].time, price: 124 },
+          to: { time: bars[20].time, price: 112 }, overlay: true } as never] : [],
+        markers: ({ bars }) => routes(bars.length) ? [{ time: bars[15].time, position: 'belowBar', shape: 'circle',
+          size: 'small', color: '#26a69a', overlay: true } as never] : [],
+      });
+      return id;
+    };
+    const { chart } = mount();
+    const studies = {
+      A: chart.addIndicator(make('A', count => count !== 41)),
+      B: chart.addIndicator(make('B', () => true)),
+      C: chart.addIndicator(make('C', count => count >= 42)),
+    };
+    const order = () => [owners(studies, drawingsOn(chart, 0)), owners(studies, markersOn(chart, 0))];
+    expect(order()).toEqual([['A', 'B'], ['A', 'B']]);
+    const live = (i: number) => {
+      chart.primarySeries()!.update({ time: T0 + i * 60, open: 120, high: 123, low: 117, close: 121 });
+      studies.A.values();
+    };
+    live(40);
+    expect(order()).toEqual([['B'], ['B']]);
+    live(41);
+    expect(order()).toEqual([['A', 'B', 'C'], ['A', 'B', 'C']]);
+    expect(chart.indicators().map(study => study.id)).toEqual([studies.A.id, studies.B.id, studies.C.id]);
+  });
+
+  it('moves a price-pane group to replacement candles and releases the one on the old series', () => {
+    const id = `targets-replaced-${seq++}`;
+    registerIndicator({
+      id, name: 'Replaced candles', placement: 'pane', plots: PLOTS, calc: CALC, inputs: [],
+      // A fixed time, so the group is still returned while the chart has no candles.
+      markers: () => [{ time: BARS[15].time, position: 'belowBar', shape: 'circle', size: 'small', color: '#26a69a',
+        id: 'sig', overlay: true } as never],
+    });
+    const { chart } = mount();
+    const study = chart.addIndicator(id);
+    const [old] = markerObjects(study);
+    chart.primarySeries()!.remove();
+    study.values();
+    chart.addSeries('candlestick').setData(BARS);
+    study.values();
+    expect(markerLayers(chart, study)).toEqual([{ pane: 0, overlay: true, series: 'primary', ids: ['sig'] }]);
+    expect(markerObjects(study)).not.toContain(old);
+    expect(markersOn(chart, 0)).toHaveLength(1);
+  });
+
+  it('checks the style of every routed drawing before the study layer changes', () => {
+    const id = `targets-style-draws-${seq++}`;
+    registerIndicator({
+      id, name: 'Styled drawings', placement: 'pane', plots: PLOTS, calc: CALC,
+      inputs: [{ key: 'bad', type: 'boolean', label: 'Bad', default: false }],
+      draws: ({ bars, settings }) => [
+        { kind: 'line', from: { time: bars[2].time, price: 32 }, to: { time: bars[30].time, price: 60 }, id: settings.bad ? 'next' : 'ray' },
+        { kind: 'box', from: { time: bars[10].time, price: 124 }, to: { time: bars[20].time, price: 112 }, text: 'Zone', id: 'zone',
+          overlay: true, ...(settings.bad === true ? { verticalAlign: 'sideways' } : {}) },
+      ] as never,
+    });
+    const { chart } = mount();
+    const study = chart.addIndicator(id);
+    const before = drawLayers(chart, study);
+    expect(before.map(layer => layer.ids)).toEqual([['ray'], ['zone']]);
+    study.setSettings({ bad: true });
+    expect(study.dataStatus()?.state).toBe('error');
+    expect(drawLayers(chart, study)).toEqual(before);
+  });
+
+  it('checks the style of every routed mark before the study layer changes', () => {
+    const id = `targets-style-marks-${seq++}`;
+    registerIndicator({
+      id, name: 'Styled marks', placement: 'pane', plots: PLOTS, calc: CALC,
+      inputs: [{ key: 'bad', type: 'boolean', label: 'Bad', default: false }],
+      markers: ({ bars, settings }) => [
+        { time: bars[5].time, position: 'atPrice', price: 35, shape: 'circle', size: 'small', color: '#888888', id: settings.bad ? 'next' : 'plain' },
+        { time: bars[15].time, position: 'belowBar', shape: 'labelUp', size: 'small', color: '#26a69a', text: 'Up', id: 'sig',
+          overlay: true, ...(settings.bad === true ? { textColor: '' } : {}) },
+      ] as never,
+    });
+    const { chart } = mount();
+    const study = chart.addIndicator(id);
+    const before = markerLayers(chart, study);
+    expect(before.map(layer => layer.ids)).toEqual([['plain'], ['sig']]);
+    study.setSettings({ bad: true });
+    expect(study.dataStatus()?.state).toBe('error');
+    expect(markerLayers(chart, study)).toEqual(before);
+  });
+
+  it('clears routed layers while a study it reads is unavailable', () => {
+    registerIndicator(SMA);
+    const id = `targets-consumer-${seq++}`;
+    registerIndicator({
+      ...SMA, id, name: 'Routed consumer', placement: 'pane',
+      draws: ({ bars }) => [
+        { kind: 'box', from: { time: bars[10].time, price: 124 }, to: { time: bars[20].time, price: 112 }, id: 'zone', overlay: true },
+        { kind: 'label', at: { time: bars[25].time, price: 120 }, text: 'MA', id: 'tag', plot: 'ma' },
+      ] as never,
+      markers: ({ bars }) => [{ time: bars[15].time, position: 'belowBar', shape: 'circle', size: 'small', color: '#26a69a',
+        id: 'sig', overlay: true } as never],
+    });
+    const { chart } = mount();
+    const producer = chart.addIndicator('sma', { length: 2 });
+    const consumer = chart.addIndicator(id, { length: 2, source: { kind: 'indicator', instanceId: producer.id, plotKey: 'ma' } });
+    expect(drawLayers(chart, consumer).map(layer => layer.ids)).toEqual([['zone'], ['tag']]);
+    expect(markerLayers(chart, consumer).map(layer => layer.ids)).toEqual([['sig']]);
+    producer.remove();
+    consumer.values();
+    expect(consumer.dataStatus()?.state).toBe('error');
+    expect(drawLayers(chart, consumer).map(layer => layer.ids)).toEqual([[], []]);
+    expect(markerLayers(chart, consumer).map(layer => layer.ids)).toEqual([[]]);
+    expect(ownedLayers(chart, consumer).every(layer => layer.ops.length === 0)).toBe(true);
+  });
+
+  it('keeps the outputs synced before a rejected drawing target and leaves every drawing layer as it was', () => {
+    const id = `targets-partial-${seq++}`;
+    registerIndicator({
+      id, name: 'Partial pass', placement: 'pane', plots: PLOTS, inputs: [{ key: 'bad', type: 'boolean', label: 'Bad', default: false }],
+      calc: (bars, settings) => ({ ...CALC(bars, settings, {}), osc: bars.map(() => (settings.bad === true ? 2 : 1)) }),
+      markers: ({ bars, settings }) => [{ time: bars[5].time, position: 'atPrice', price: 35, shape: 'circle', size: 'small',
+        color: '#888888', id: settings.bad === true ? 'next' : 'plain' }],
+      draws: ({ bars, settings }) => [{ kind: 'box', from: { time: bars[10].time, price: 124 }, to: { time: bars[20].time, price: 112 },
+        id: 'zone', ...(settings.bad === true ? { plot: 'missing' } : { overlay: true }) } as never],
+    });
+    const { chart } = mount();
+    const study = chart.addIndicator(id);
+    const before = drawLayers(chart, study);
+    study.setSettings({ bad: true });
+    expect(study.dataStatus()?.state).toBe('error');
+    expect(drawLayers(chart, study)).toEqual(before);
+    // Earlier outputs of the same pass are not rolled back.
+    expect(study.values().osc[0]).toBe(2);
+    expect(markerLayers(chart, study).map(layer => layer.ids)).toEqual([['next']]);
   });
 });
