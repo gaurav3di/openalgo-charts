@@ -3,10 +3,14 @@
  * its managed controller, places the date only after the accepted load, and
  * leaves that placement alone when later data arrives.
  */
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Bar, BarsRequest, DataFeed } from '../src/index';
 import { zonedWallClockToUtcSeconds } from '../src/feed/time';
+import { ReplayController } from '../src/replay/controller';
+import { registerInterval } from '../src/feed/intervals';
 import { createWidget, type Widget, type WidgetOptions } from '../src/widget/widget';
+import { openDateNavigation } from '../src/widget/date-navigation-dialog';
+import type { DateNavigationResult } from '../src/widget/date-navigator';
 import { ensureWindowGlobal, fakeContainer, fakeWidgetDocument, fireKey, type FakeElement } from './helpers/fake-dom-widget';
 
 beforeAll(ensureWindowGlobal);
@@ -54,6 +58,17 @@ const centreTime = (widget: Widget): number | undefined => {
   const view = widget.chart.getVisibleLogicalRange();
   return widget.chart.dataLayer.indexToTime(Math.round((view.from + view.to) / 2));
 };
+
+/** A range feed whose requests after the first wait for `release`. */
+function gatedFeed(requests: BarsRequest[]): { feed: DataFeed; release(): void } {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  return { release, feed: { getBars: async request => {
+    requests.push(request);
+    if (requests.length > 1) await gate;
+    return SESSIONS.filter(value => value.time >= (request.from ?? -Infinity) && value.time <= (request.to ?? Infinity));
+  } } };
+}
 
 describe('widget go-to flow', () => {
   it('loads the missing history in one reach and keeps the placement through later data', async () => {
@@ -119,6 +134,69 @@ describe('widget go-to flow', () => {
     expect(await destroyed).toEqual({ status: 'cancelled' });
   });
 
+  it('settles at once when the interval changes during a history load', async () => {
+    const requests: BarsRequest[] = [];
+    const { feed, release } = gatedFeed(requests);
+    const { widget } = make({ feed });
+    await flush();
+    const settled = vi.fn();
+    void widget.goTo({ from: at(2023, 10, 16) }).then(settled);
+    await flush();
+    expect(requests).toHaveLength(2);
+    widget.setInterval('1h');
+    await flush();
+    expect(settled).toHaveBeenCalledWith({ status: 'cancelled' });
+    release();
+  });
+
+  it('settles at once when the context changes while it waits for a load that never finishes', async () => {
+    // A feed that ignores cancellation: the first load never resolves.
+    for (const change of [
+      (widget: Widget) => { widget.setSymbol('BANKNIFTY'); },
+      (widget: Widget) => { widget.restoreState({ symbol: 'BANKNIFTY', exchange: 'NSE', interval: '1d' }); },
+      (widget: Widget) => { widget.setInterval('1h'); },
+    ]) {
+      const { widget } = make({ feed: { getBars: () => new Promise<Bar[]>(() => {}) } });
+      const settled = vi.fn();
+      void widget.goTo({ from: at(2024, 2, 15) }).then(settled);
+      await flush();
+      expect(settled).not.toHaveBeenCalled();
+      change(widget);
+      await flush();
+      expect(settled).toHaveBeenCalledWith({ status: 'cancelled' });
+    }
+  });
+
+  it('settles at once when restoreState moves to another instrument during a history load', async () => {
+    const requests: BarsRequest[] = [];
+    const { feed, release } = gatedFeed(requests);
+    const { widget } = make({ feed });
+    await flush();
+    const settled = vi.fn();
+    void widget.goTo({ from: at(2023, 10, 16) }).then(settled);
+    await flush();
+    widget.restoreState({ symbol: 'BANKNIFTY', exchange: 'NSE', interval: '1d' });
+    await flush();
+    expect(settled).toHaveBeenCalledWith({ status: 'cancelled' });
+    release();
+  });
+
+  it('loads nothing during replay and places nothing beyond the replay cursor', async () => {
+    const requests: BarsRequest[] = [];
+    const { widget } = make({ feed: rangeFeed(requests) });
+    await flush();
+    const bars = widget.series.getData();
+    const replay = new ReplayController(widget.chart, { startIndex: 20 });
+    try {
+      const count = requests.length;
+      expect(await widget.goTo({ from: at(2023, 1, 10) }))
+        .toEqual({ status: 'partial', history: 'unavailable', from: bars[0].time, to: bars[0].time });
+      expect(await widget.goTo({ from: bars[bars.length - 2].time })).toEqual({ status: 'no-data' });
+      expect(await widget.goTo({ from: bars[10].time })).toMatchObject({ status: 'placed', from: bars[10].time });
+      expect(requests).toHaveLength(count);
+    } finally { replay.stop(); }
+  });
+
   it('lets the latest of several quick requests win', async () => {
     const requests: BarsRequest[] = [];
     const { widget } = make({ feed: rangeFeed(requests) });
@@ -132,7 +210,7 @@ describe('widget go-to flow', () => {
     expect(centreTime(widget)).toBe(at(2023, 10, 16, 9, 15));
   });
 
-  it('keeps empty older windows apart from exhaustion, and loads nothing while replay holds the display', async () => {
+  it('keeps empty older windows apart from exhaustion, and loads nothing while the controller is paused', async () => {
     const requests: BarsRequest[] = [];
     const listed = at(2024, 3, 1);
     const { widget } = make({ feed: { getBars: async request => {
@@ -210,7 +288,8 @@ describe('widget go-to panel', () => {
 
     panel.querySelector('[data-mode="range"]')!.click();
     const fields = panel.querySelectorAll('input');
-    expect(fields.filter(field => !field.closest('[hidden]'))).toHaveLength(4);
+    // Daily bars: two dates and no times.
+    expect(fields.filter(field => !field.closest('[hidden]')).map(field => field.type)).toEqual(['date', 'date']);
     fields[0].value = '2024-06-10';
     fields[2].value = '2024-06-05';
     panel.querySelector('[data-action="go-to"]')!.click();
@@ -232,6 +311,114 @@ describe('widget go-to panel', () => {
     const placed = widget.chart.getVisibleLogicalRange();
     expect(widget.chart.dataLayer.indexToTime(Math.ceil(placed.from))).toBe(at(2024, 6, 3, 9, 15));
     expect(widget.chart.dataLayer.indexToTime(Math.floor(placed.to))).toBe(at(2024, 6, 14, 9, 15));
+  });
+
+  it('cancels its loading request when dismissed, so the view stays where the user left it', async () => {
+    for (const dismiss of [
+      (panel: FakeElement) => { panel.querySelector('.oac-dialog__head button')!.click(); },
+      (panel: FakeElement) => { fireKey(panel, 'Escape'); },
+    ]) {
+      const requests: BarsRequest[] = [];
+      const { feed, release } = gatedFeed(requests);
+      const { widget, root } = make({ feed });
+      await flush();
+      const loaded = widget.series.getData().length;
+      widget.openDateNavigation();
+      const panel = root.querySelector('.oac-goto')!;
+      const [date, time] = panel.querySelectorAll('input');
+      date.value = '2023-10-16';
+      time.value = '';
+      panel.querySelector('[data-action="go-to"]')!.click();
+      await flush();
+      expect(panel.querySelector('.oac-goto__message')!.textContent).toBe('Loading history');
+      const shown = centreTime(widget);
+      dismiss(panel);
+      await flush();
+      expect(root.querySelector('.oac-goto')).toBeNull();
+      release();
+      await flush();
+      // The older bars still arrive; only the jump to them is abandoned.
+      expect(widget.series.getData().length).toBeGreaterThan(loaded);
+      expect(centreTime(widget)).toBe(shown);
+      expect(root.querySelector('.oac-statusline')?.textContent).not.toContain('Showing');
+    }
+  });
+
+  it('leaves a newer request alone when a panel whose request was replaced is dismissed', async () => {
+    const requests: BarsRequest[] = [];
+    const { feed, release } = gatedFeed(requests);
+    const { widget, root } = make({ feed });
+    await flush();
+    widget.openDateNavigation();
+    const panel = root.querySelector('.oac-goto')!;
+    panel.querySelectorAll('input')[0].value = '2023-10-16';
+    panel.querySelector('[data-action="go-to"]')!.click();
+    await flush();
+    const newer = widget.goTo({ from: at(2023, 11, 15) });
+    panel.querySelector('.oac-dialog__head button')!.click();
+    await flush();
+    release();
+    expect(await newer).toMatchObject({ status: 'placed', from: at(2023, 11, 15, 9, 15) });
+  });
+
+  it('offers time fields only where a time can change which bar is shown', async () => {
+    const daily = make({ feed: rangeFeed([]) });
+    await flush();
+    daily.widget.openDateNavigation();
+    let panel = daily.root.querySelector('.oac-goto')!;
+    const shown = (): string[] => panel.querySelectorAll('input').filter(field => !field.closest('[hidden]')).map(field => field.type);
+    expect(shown()).toEqual(['date']);
+    expect(panel.querySelector('.oac-goto__hint')!.textContent).toBe('Dates are in Asia/Kolkata.');
+
+    const hourly = make({ interval: '1h', feed: rangeFeed([]) });
+    await flush();
+    hourly.widget.openDateNavigation();
+    panel = hourly.root.querySelector('.oac-goto')!;
+    expect(shown()).toEqual(['date', 'time']);
+    expect(panel.querySelector('.oac-goto__hint')!.textContent).toContain('Times are in Asia/Kolkata.');
+  });
+
+  it('greys Go to with its reason on an interval without time buckets', async () => {
+    const off = registerInterval({ code: 'T50', bucketing: { mode: 'ticks', count: 50 } });
+    try {
+      const { widget, root } = make({ interval: 'T50' });
+      const open = root.querySelector('.oac-topbar__goto')!;
+      expect(open.getAttribute('aria-disabled')).toBe('true');
+      open.click();
+      expect(root.querySelector('.oac-goto')).toBeNull();
+      expect(widget.openDateNavigation()).toBe(false);
+      widget.setInterval('1d');
+      expect(open.getAttribute('aria-disabled')).toBe('false');
+      open.click();
+      expect(root.querySelector('.oac-goto')).not.toBeNull();
+
+      const compact = make({ interval: 'T50', mobile: 'always' });
+      compact.root.querySelector('[data-mobile-action="more"]')!.click();
+      const entry = compact.root.querySelector('[data-mobile-action="go-to"]')!;
+      expect(entry.getAttribute('aria-disabled')).toBe('true');
+      entry.click();
+      expect(compact.root.querySelector('.oac-goto')).toBeNull();
+    } finally { off(); }
+  });
+
+  it('shows a pending request it did not start and reports its outcome in place', async () => {
+    const { widget, root } = make({ feed: rangeFeed([]) });
+    await flush();
+    let settle!: (result: DateNavigationResult) => void;
+    const result = new Promise<DateNavigationResult>(resolve => { settle = resolve; });
+    const target = { from: at(2023, 1, 10), to: at(2023, 2, 10, 23, 59) };
+    const navigate = vi.fn();
+    openDateNavigation(widget.context, undefined, { navigate, pending: { target, result } });
+    const panel = root.querySelector('.oac-goto')!;
+    const fields = panel.querySelectorAll('input');
+    expect([fields[0].value, fields[2].value]).toEqual(['2023-01-10', '2023-02-10']);
+    expect(panel.querySelector('[data-mode="range"]')!.getAttribute('aria-pressed')).toBe('true');
+    expect(panel.querySelector('.oac-goto__message')!.textContent).toBe('Loading history');
+    settle({ status: 'partial', history: 'exhausted', from: at(2023, 1, 2, 9, 15), to: at(2023, 1, 2, 9, 15) });
+    await flush();
+    expect(panel.querySelector('.oac-goto__message')!.textContent).toMatch(/^History starts at /);
+    expect(root.querySelector('.oac-goto')).toBe(panel);
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it('offers the panel from the compact controls', async () => {

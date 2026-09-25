@@ -594,13 +594,17 @@ See [data loading](/docs/data-loading) for the interactive failure/retry example
 compact panel. **Date** shows one date at the current zoom; **Range** fits two
 dates, or two date and time pairs, to the plot. Dates and times are read in the
 chart timezone, IST unless the host sets another. A blank time is the start of
-the day, or its end for the To field.
+the day, or its end for the To field. Daily and longer intervals show the date
+fields alone, since a time cannot change which bar a date names. On a tick or
+volume interval the button is greyed with the reason, and
+`widget.openDateNavigation()` returns false.
 
 When the date is older than the loaded history, the widget pages back through
 its feed first: a date-window feed receives one request that reaches the date,
 a paged feed one page at a time. The view moves only after that load is
 accepted, so later live bars and refreshes keep the placement instead of
-returning to the newest bars.
+returning to the newest bars. Closing the panel while it is loading cancels the
+request: the older bars still arrive, but the view stays where the user left it.
 
 ```ts
 const result = await widget.goTo({
@@ -621,13 +625,15 @@ const result = await widget.goTo({
 | `error` | The feed failed; `error` carries the reason. |
 
 A date lands on its own daily bar whether the feed stamps bars at midnight or at
-the session open. A date on a weekend or in an overnight gap moves to the next
+the session open, and on a day of 23 or 25 hours around a daylight saving change. A date on a weekend or in an overnight gap moves to the next
 session. History is never loaded during replay, and a date beyond the replay
 cursor is `no-data`. A chart linked through a link group follows the placement
 by time. The panel closes once a request is placed and otherwise keeps the reason
 in view. `widget.openDateNavigation()` opens it programmatically. A custom host
-uses the same rules through `DateNavigator` and `openDateNavigation`; see
-[data loading](/docs/data-loading).
+uses the same rules through `DateNavigator` and `openDateNavigation`, whose
+`cancel` option runs when the panel is dismissed mid-load and whose `pending`
+option lets a host that rebuilds its chart reopen the panel on a request already
+under way; see [data loading](/docs/data-loading).
 
 ## Timeline event details
 

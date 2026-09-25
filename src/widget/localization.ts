@@ -37,6 +37,7 @@ export type WidgetBuiltinMessage =
   | "The end must not be before the start"
   | "Loading history"
   | "Times are in {zone}. A blank time is the start of the day, or its end for To."
+  | "Dates are in {zone}."
   | "Search"
   | "Enter a finite number"
   | "Minimum: {value}"

@@ -530,8 +530,12 @@ kept left of the newest bar's normal margin; a range fills the plot, centred at
 the widest bar spacing when short. Placement runs after the accepted load, so
 later live bars and refreshes keep its anchor. A newer request, a symbol or
 interval change, `restoreState` onto another context, or `destroy` settles the
-promise `{ status: 'cancelled' }` without moving the view. The top bar's **Go to**
-button and the mobile **More** sheet open the panel (`openDateNavigation()`).
+promise `{ status: 'cancelled' }` without moving the view, and so does closing the
+panel while its request loads. The top bar's **Go to** button and the mobile
+**More** sheet open the panel (`openDateNavigation()`); on a tick or volume
+interval both are greyed with the reason and `openDateNavigation()` returns false.
+Daily and longer intervals show date fields only, since a time cannot change which
+bar a date names.
 
 `DateNavigator` is the DOM-free coordinator behind it, for custom hosts:
 
@@ -541,35 +545,47 @@ import { DateNavigator, openDateNavigation } from 'openalgo-charts/widget';
 
 const navigator = new DateNavigator({
   chart: () => currentChart,                  // or a Chart; re-read after each load
-  loadHistory: async (time, signal) => {      // prepend bars reaching `time`
+  // Prepend bars reaching `time` and say what happened. loadMore never rejects:
+  // it records a failure in the state, so read the state rather than assume progress.
+  loadHistory: async time => {
+    const first = controller.bars()[0]?.time;
     await controller.loadMore(time);
-    return 'loaded';                          // or 'empty' | 'exhausted' | 'limited' | 'unavailable'
+    const state = controller.getState();
+    if (state.historyStatus === 'error') throw state.historyError;
+    if (state.historyStatus === 'limited') return 'limited';
+    if ((controller.bars()[0]?.time ?? Infinity) < (first ?? Infinity)) return 'loaded';
+    return state.hasMore === false ? 'exhausted' : 'empty';
   },
 });
 // A date typed on the chart's own clock (IST unless the host set another zone).
 const from = zonedStringToUtcSeconds('2024-01-15', currentChart.timezone());
 const result = await navigator.goTo({ from });
-openDateNavigation(ctx, anchor, { navigate: target => navigator.goTo(target) });
+openDateNavigation(ctx, anchor, {
+  navigate: target => navigator.goTo(target),
+  cancel: () => navigator.cancel(),           // the panel was closed while loading
+});
 ```
 
 | Export | Kind | Purpose |
 |---|---|---|
 | `DateNavigator` | class | `goTo(target)`, `cancel()`, `destroy()`. One request at a time; a new one cancels the previous. |
 | `DateNavigatorOptions` | type | `chart` (a `Chart` or a getter), optional `loadHistory(time, signal)`, optional `interval()` (default: the data context). |
-| `DateNavigationTarget` | type | `{ from, to? }`; `to` is inclusive (bars opening at or before it). |
+| `DateNavigationTarget` | type | `{ from, to? }`; `to` is inclusive (bars opening at or before it, a bar a day or longer counted from its local midnight). |
 | `DateNavigationResult` | type | `{ status, from?, to?, history?, clipped?, error? }`; `from`/`to` are the placed bars' open times. |
 | `DateNavigationStatus` | type | `placed`, `partial`, `no-data`, `unsupported`, `invalid`, `cancelled`, `error`. |
 | `HistoryReach` | type | What one loader call achieved: `loaded`, `empty`, `exhausted`, `limited`, `unavailable`. |
 | `openDateNavigation(ctx, anchor, options)` | function | The compact panel (Date or Range, date and optional time in the chart timezone). Returns `PanelHandle`; closes once placed and keeps any other outcome's reason in place. |
-| `DateNavigationDialogOptions` | type | `navigate(target)` and `onClose()`. |
+| `DateNavigationDialogOptions` | type | `navigate(target)`, optional `cancel()` (the panel was dismissed while its request loaded; not called when its chart was destroyed), optional `pending: { target, result }` (show and report a request already under way, for a host whose load rebuilt the chart and closed the panel that started it), and `onClose()`. A closed panel reports nothing. |
 | `DATE_NAVIGATION_CSS` | const | The panel's styles; part of `WIDGET_COMPONENT_CSS`. |
 
 Rules the coordinator applies:
 
 - Bars of a day or longer count from the local midnight of their first day, so a
   date lands on its own daily bar whether the feed stamps midnight or the session
-  open. Shorter bars keep their stamp; an instant in an overnight or weekend gap
-  moves to the next session; a range with no bar inside it is `no-data`.
+  open. They end at the local midnight after their last day, so a day of 23 or 25
+  hours around a clock change keeps its own bar. Shorter bars keep their stamp; an
+  instant in an overnight or weekend gap moves to the next session; a range with
+  no bar inside it is `no-data`.
 - Only time-bucketed intervals navigate (fixed and calendar); tick, volume and
   unknown codes are `unsupported`. The view never moves for `no-data`,
   `unsupported`, `invalid`, `cancelled` or `error`.

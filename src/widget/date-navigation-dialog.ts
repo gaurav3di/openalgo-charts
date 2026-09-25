@@ -7,16 +7,30 @@
  * zone, so a date typed in any other would land hours away from the candle
  * they meant. A result that is not a clean placement keeps the panel open
  * with the reason, since the next thing the user does is change the date.
+ * Bars a day or longer are named by their date alone, so their panel has no
+ * time fields: a time could not change which bar a date names.
  */
-import { tryResolveInterval, utcSecondsToZonedParts, zonedWallClockToUtcSeconds } from 'openalgo-charts';
+import { utcSecondsToZonedParts, zonedWallClockToUtcSeconds } from 'openalgo-charts';
 import type { WidgetContext } from './context';
-import type { DateNavigationResult, DateNavigationTarget } from './date-navigator';
+import { timeBuckets, type DateNavigationResult, type DateNavigationTarget } from './date-navigator';
 import { button, dialogFrame, el, openPanel, type PanelHandle } from './form';
 import { widgetText } from './localization';
 
 export interface DateNavigationDialogOptions {
   /** Run one request. The panel reports the result and closes once it is placed. */
   navigate(target: DateNavigationTarget): Promise<DateNavigationResult>;
+  /**
+   * Abandon the panel's request. Called when the panel is dismissed while that
+   * request is still loading, so the view cannot jump after the user has moved
+   * on; not called when the panel closed because its chart was destroyed.
+   */
+  cancel?(): void;
+  /**
+   * A request already under way that this panel shows and reports as its own,
+   * for a host whose history load rebuilds the chart and so closes the panel
+   * that started it. A closed panel reports nothing.
+   */
+  pending?: { target: DateNavigationTarget; result: Promise<DateNavigationResult> };
   onClose?(): void;
 }
 
@@ -26,17 +40,18 @@ const pad = (n: number): string => String(n).padStart(2, '0');
 
 let sequence = 0;
 
-/** Open the go-to panel below `anchor`, prefilled with the visible window. */
+/** Open the go-to panel below `anchor`, prefilled with the visible window or the pending request. */
 export function openDateNavigation(ctx: WidgetContext, anchor: HTMLElement | undefined, options: DateNavigationDialogOptions): PanelHandle {
   const doc = ctx.document;
   const chart = ctx.chart;
   const zone = chart.timezone();
-  const found = tryResolveInterval(ctx.interval());
-  const intraday = found?.bucketing.mode === 'interval' && found.bucketing.seconds < 86400;
+  const buckets = timeBuckets(ctx.interval());
+  const intraday = buckets?.mode === 'interval' && buckets.seconds < 86400;
   const format = new Intl.DateTimeFormat(ctx.locale, { timeZone: zone, dateStyle: 'medium', ...(intraday ? { timeStyle: 'short' } : {}) });
   const when = (time: number): string => format.format(new Date(time * 1000));
   let range = false;
   let closed = false;
+  let busy = false;
   let request = 0;
   let panel: PanelHandle | null = null;
   const id = `oac-goto-${++sequence}`;
@@ -63,12 +78,16 @@ export function openDateNavigation(ctx: WidgetContext, anchor: HTMLElement | und
     date.id = `${id}-${key}`;
     const time = el(doc, 'input');
     time.type = 'time';
+    time.hidden = !intraday;
     line.append(label, date, time);
     return { row: line, label, date, time };
   };
   const start = row('from');
   const end = row('to');
-  const hint = el(doc, 'p', 'oac-goto__hint', widgetText(ctx, 'Times are in {zone}. A blank time is the start of the day, or its end for To.', { zone }));
+  if (!intraday) frame.el.classList.add('oac-goto--days');
+  const hint = el(doc, 'p', 'oac-goto__hint', intraday
+    ? widgetText(ctx, 'Times are in {zone}. A blank time is the start of the day, or its end for To.', { zone })
+    : widgetText(ctx, 'Dates are in {zone}.', { zone }));
   const message = el(doc, 'p', 'oac-goto__message');
   message.setAttribute('role', 'status');
   message.setAttribute('aria-live', 'polite');
@@ -95,8 +114,9 @@ export function openDateNavigation(ctx: WidgetContext, anchor: HTMLElement | und
     fields.date.value = `${p.year}-${pad(p.month)}-${pad(p.day)}`;
     fields.time.value = intraday ? `${pad(p.hour)}:${pad(p.minute)}` : '';
   };
-  fill(start, shown[0]);
-  fill(end, shown[1]);
+  const pending = options.pending;
+  fill(start, pending?.target.from ?? shown[0]);
+  fill(end, pending === undefined ? shown[1] : pending.target.to ?? pending.target.from);
 
   function setRange(on: boolean): void {
     range = on;
@@ -109,7 +129,7 @@ export function openDateNavigation(ctx: WidgetContext, anchor: HTMLElement | und
     rangeMode.setAttribute('aria-pressed', String(on));
     message.textContent = '';
   }
-  setRange(false);
+  setRange(pending?.target.to !== undefined);
 
   /** UTC seconds for a typed date and time, or null. A blank end time means the last second of that day. */
   function read(fields: { date: HTMLInputElement; time: HTMLInputElement }, closing: boolean): number | null {
@@ -149,12 +169,16 @@ export function openDateNavigation(ctx: WidgetContext, anchor: HTMLElement | und
     if (from === null || to === null) { message.textContent = widgetText(ctx, 'Enter a valid date'); return; }
     if (to !== undefined && to < from) { message.textContent = widgetText(ctx, 'The end must not be before the start'); return; }
     const target: DateNavigationTarget = to === undefined ? { from } : { from, to };
+    await follow(target, options.navigate(target));
+  }
+
+  async function follow(target: DateNavigationTarget, work: Promise<DateNavigationResult>): Promise<void> {
     const mine = ++request;
     message.textContent = widgetText(ctx, 'Loading history');
-    go.disabled = true;
+    go.disabled = busy = true;
     let result: DateNavigationResult;
-    try { result = await options.navigate(target); } finally { if (mine === request) go.disabled = false; }
-    if (mine !== request || result.status === 'cancelled') return;
+    try { result = await work; } finally { if (mine === request) go.disabled = busy = false; }
+    if (closed || mine !== request || result.status === 'cancelled') return;
     const text = describe(result, target);
     const failed = result.status === 'error' || result.status === 'unsupported';
     ctx.status(text, failed ? 'error' : 'info');
@@ -168,10 +192,15 @@ export function openDateNavigation(ctx: WidgetContext, anchor: HTMLElement | und
     offDestroy();
     panel?.close();
     options.onClose?.();
+    // Decided once the closing task has run: a host rebuilding its chart
+    // closes the panel just before destroying that chart, and the request is
+    // then the host's to finish rather than one the user walked away from.
+    if (busy) void Promise.resolve().then(() => { if (!chart.isDestroyed) options.cancel?.(); });
   }
   const offDestroy = chart.on('destroy', close);
   panel = openPanel(ctx, frame.el, { anchor, placement: 'below', initialFocus: start.date }, close);
   if (closed) panel.close();
+  else if (pending !== undefined) void follow(pending.target, pending.result);
   return { el: frame.el, close, isOpen: () => !closed && panel!.isOpen() };
 }
 
@@ -182,6 +211,7 @@ export const DATE_NAVIGATION_CSS = `
 .oac-widget .oac-goto { width: 340px; }
 .oac-widget .oac-goto__modes { display: flex; gap: 4px; margin-bottom: 10px; }
 .oac-widget .oac-goto__row { display: grid; grid-template-columns: 44px minmax(0, 1fr) 96px; align-items: center; gap: 6px; margin: 0 0 6px; }
+.oac-widget .oac-goto--days .oac-goto__row { grid-template-columns: 44px minmax(0, 1fr); }
 .oac-widget .oac-goto__label { color: ${v('mut')}; font-size: 12px; }
 .oac-widget .oac-goto input[type=date], .oac-widget .oac-goto input[type=time] { min-width: 0; height: ${v('ctl-h')}; padding: 0 6px;
   border: 1px solid ${v('bd')}; border-radius: ${v('radius')}; background: ${v('elev')}; color: ${v('tx')}; color-scheme: inherit; }

@@ -13,8 +13,12 @@ All notable changes to OpenAlgo Charts.
   replay and unsupported intervals; a newer request, a context change or
   destruction cancels one in flight. The DOM-free `DateNavigator`, the
   `openDateNavigation` panel and `DATE_NAVIGATION_CSS` are exported for custom
-  hosts. The widget toolbar and mobile More sheet open the panel, and the
-  reference host offers it by loading a longer period.
+  hosts. The widget toolbar and mobile More sheet open the panel (greyed with the
+  reason on tick and volume intervals, and with date fields alone on daily and
+  longer ones); closing it while it loads cancels the request. Daily and weekly
+  bars end on the calendar, so a day of 23 or 25 hours keeps its own bar. The
+  reference host offers the panel by loading a longer period, and reopens it on
+  the rebuilt chart to report the outcome there.
 - `DataLoadingController.loadMore(until?)` widens a date feed's window to reach
   `until` in one request instead of one request per default window. The window
   stops at `maxBars` bars of a fixed interval, and a `getBarsPage` feed keeps its

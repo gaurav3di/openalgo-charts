@@ -51,7 +51,7 @@ import { mountDataWindow } from './data-window';
 import { mountPanelDock, sanitizePanelDockState, type PanelDockHandle, type PanelDockState } from './panel-dock';
 import { mountQuickEntry, type QuickEntryHandle } from './quick-entry';
 import { WIDGET_COMPONENT_CSS } from './component-styles';
-import { DateNavigator, type DateNavigationResult, type DateNavigationTarget, type HistoryReach } from './date-navigator';
+import { DateNavigator, timeBuckets, type DateNavigationResult, type DateNavigationTarget, type HistoryReach } from './date-navigator';
 import { openDateNavigation } from './date-navigation-dialog';
 
 /** The intervals offered when the host names none: the registry's codes are appended. */
@@ -192,7 +192,7 @@ export interface Widget {
    * symbol or interval change, or destruction settles it `cancelled`.
    */
   goTo(target: DateNavigationTarget): Promise<DateNavigationResult>;
-  /** Open the go-to panel. False after destruction. */
+  /** Open the go-to panel. False after destruction or on an interval without time buckets. */
   openDateNavigation(): boolean;
   on<K extends WidgetEventName>(event: K, cb: (payload: WidgetBusEvents[K]) => void): () => void;
   off<K extends WidgetEventName>(event: K, cb?: (payload: WidgetBusEvents[K]) => void): void;
@@ -727,10 +727,17 @@ class WidgetImpl implements Widget {
   public openDateNavigation(): boolean { return this._openGoTo(); }
 
   private _openGoTo(anchor?: HTMLElement): boolean {
-    if (this._destroyed) return false;
+    if (this._destroyed || timeBuckets(this._interval) === null) return false;
     if (this._goToPanel?.isOpen()) { this._goToPanel.el.focus(); return true; }
+    let mine = 0;
     this._goToPanel = openDateNavigation(this.context, anchor, {
-      navigate: target => this.goTo(target),
+      navigate: target => {
+        const work = this.goTo(target);
+        mine = this._navigation;
+        return work;
+      },
+      // Only the panel's own request: a newer goTo or a context change already replaced it.
+      cancel: () => { if (mine === this._navigation) this._cancelNavigation(); },
       onClose: () => { this._goToPanel = null; },
     });
     return true;

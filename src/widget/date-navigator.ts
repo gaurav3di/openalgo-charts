@@ -102,6 +102,12 @@ function frameOf(b: Bucketing, zone: string): Frame {
   return { open: t => bucketStartOf(b, t, zone), close: t => nextBucketStart(b, t, zone) ?? t };
 }
 
+/** The clock or calendar buckets of `code`, or null when it has none a date can name. */
+export function timeBuckets(code: string | undefined): Bucketing | null {
+  const found = code === undefined ? null : tryResolveInterval(code);
+  return found !== null && isTimeBucketed(found.bucketing) ? found.bucketing : null;
+}
+
 const cancelled = (): DateNavigationResult => ({ status: 'cancelled' });
 
 function identity(chart: Chart): string {
@@ -223,10 +229,9 @@ export class DateNavigator {
     let chart = this._chart();
     if (chart === null) return cancelled();
     const context = identity(chart);
-    const code = this._options.interval?.() ?? chart.getDataContext()?.interval;
-    const found = code === undefined ? null : tryResolveInterval(code);
-    if (found === null || !isTimeBucketed(found.bucketing)) return { status: 'unsupported' };
-    const frame = frameOf(found.bucketing, chart.timezone());
+    const buckets = timeBuckets(this._options.interval?.() ?? chart.getDataContext()?.interval);
+    if (buckets === null) return { status: 'unsupported' };
+    const frame = frameOf(buckets, chart.timezone());
     const bars = chart.primaryBars();
     if (bars.length === 0 || frame.close(bars[bars.length - 1].time) <= from) return { status: 'no-data' };
     // A date is centred, so aim far enough back that the left half of the view has bars too.
