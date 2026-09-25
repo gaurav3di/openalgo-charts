@@ -67,10 +67,17 @@ the same serialized program is executed by both companion engines. Parameters,
 output ordering and units are matched explicitly. Secondary smoothing, bands,
 displaced plots and the remaining 60 descriptors are not certified by this run.
 
-At the recorded development revisions, the two engines differ in 960 output
-cells, all from Gaussian weights or the choppiness logarithm. Portable elementary
-arithmetic is being implemented to resolve them. Agreement elsewhere in this
-finite corpus is differential evidence, not an independent formula proof.
+After the companion exponential/logarithmic corrections, these 270 compiled
+cases have zero differing output bits between the two engines. The former 960
+differences in Gaussian weights and choppiness are resolved. This finite corpus
+remains differential evidence, not an independent formula proof for every chart
+descriptor.
+
+The companion constant-parameter and changing-parameter audits now also pass
+exactly across all 81 stateful calculation signatures: 2,064 and 1,042 cases,
+respectively, covering 585,811 accepted calls. Independent oracles, baseline
+vectors and restored-state comparisons are included. Scalar power and
+trigonometric arithmetic remain under separate review before publication.
 
 The chart comparison separates numerical bits, absence and differences beyond
 the exploratory `1e-12` relative/absolute threshold. That threshold helps locate
