@@ -28,6 +28,35 @@ function mount(options: Partial<ChartOptions> = {}, load = true) {
 }
 
 describe('mouse panning preferences', () => {
+  it('keeps autofit during a horizontal mouse drag with minor vertical jitter', () => {
+    const { chart, series, el } = mount({ navigation: { defaultBarSpacing: 8 }, animAutoscale: false });
+    series.setData(bars.map((bar, i) => i === 70 ? { ...bar, high: 200 } : bar));
+    chart.resetScale();
+    const scale = chart.panes()[0].priceScale;
+    expect(scale.priceRange().max).toBeLessThan(110);
+    el.dispatch('pointerdown', pointer('down', 200, 220));
+    el.dispatch('pointermove', pointer('move', 350, 221));
+    el.dispatch('pointermove', pointer('move', 600, 222));
+    el.dispatch('pointerup', pointer('up', 600, 222));
+    expect(scale.autoScale).toBe(true);
+    expect(scale.priceRange().max).toBeGreaterThan(200);
+    expect(readChartSettings(chart)['scales.autoScale']).toBe(true);
+  });
+
+  it('still allows deliberate vertical movement after a small mouse adjustment', () => {
+    const { chart, el } = mount({ animAutoscale: false });
+    const scale = chart.panes()[0].priceScale;
+    const before = { ...scale.priceRange() };
+    el.dispatch('pointerdown', pointer('down', 200, 220));
+    el.dispatch('pointermove', pointer('move', 210, 221));
+    expect(scale.autoScale).toBe(true);
+    el.dispatch('pointermove', pointer('move', 240, 240));
+    el.dispatch('pointerup', pointer('up', 240, 240));
+    expect(scale.autoScale).toBe(false);
+    expect(scale.priceRange().min).toBeGreaterThan(before.min);
+    expect(scale.priceRange().max - scale.priceRange().min).toBeCloseTo(before.max - before.min);
+  });
+
   it.each(['mouse', 'pen'])('shows a grabbing hand only while a %s holds the plot', (pointerType) => {
     const { chart, el } = mount();
     el.dispatch('pointerdown', pointer('down', 400, 220, { pointerType }));
@@ -238,10 +267,80 @@ describe('preferred visible bar count', () => {
     expect(chart.getVisibleLogicalRange()).toEqual({ from: -1, to: 203 });
     chart.setNavigationOptions({ defaultVisibleBars: 50 });
     chart.restoreState({ version: 1, navigation: { defaultVisibleBars: 'wrong', mousePan: 'wrong' } });
-    expect(chart.navigationOptions()).toEqual({ defaultVisibleBars: 50, mousePan: 'both' });
+    expect(chart.navigationOptions()).toEqual({ defaultVisibleBars: 50, mousePan: 'both', panEnabled: true, zoomEnabled: true });
     chart.setNavigationOptions({ defaultVisibleBars: Number.NaN });
     expect(chart.getVisibleLogicalRange()).toEqual({ from: 149, to: 203 });
     applyChartSettings(chart, { 'navigation.defaultVisibleBars': 0 });
     expect(chart.getVisibleLogicalRange()).toEqual({ from: -1, to: 203 });
+  });
+});
+
+describe('preferred bar spacing', () => {
+  it('uses the same candle density across desktop and mobile widths', () => {
+    for (const width of [390, 1200]) {
+      const { chart, series } = mount({ navigation: { defaultBarSpacing: 8 } }, false);
+      chart.applySize(width, 600);
+      series.setData(bars);
+      expect(chart.timeScale.barSpacing).toBe(8);
+      expect(chart.getVisibleLogicalRange().to).toBe(203);
+      expect(series.getData()).toHaveLength(200);
+    }
+  });
+
+  it('retains zoom on resize and restores density on reset after a data change', () => {
+    const { chart, series } = mount({ navigation: { defaultBarSpacing: 8 } });
+    chart.timeScale.setBarSpacing(12);
+    chart.applySize(390, 600);
+    expect(chart.timeScale.barSpacing).toBe(12);
+    series.setData(bars.slice(0, 100));
+    chart.resetScale();
+    expect(chart.timeScale.barSpacing).toBe(8);
+    expect(chart.getVisibleLogicalRange().to).toBe(103);
+    chart.fitContent();
+    expect(chart.getVisibleLogicalRange()).toEqual({ from: -1, to: 103 });
+    chart.resetScale();
+    expect(chart.timeScale.barSpacing).toBe(8);
+  });
+
+  it('waits for measurement and saves density independently of the current zoom', () => {
+    const { chart, series } = mount({ navigation: { defaultBarSpacing: 9 } }, false);
+    chart.applySize(0, 0);
+    series.setData(bars);
+    chart.applySize(390, 600);
+    expect(chart.timeScale.barSpacing).toBe(9);
+    chart.setVisibleLogicalRange({ from: 100, to: 130 });
+    const saved = JSON.parse(JSON.stringify(chart.getState()));
+    const next = mount({}, false);
+    next.chart.restoreState(saved);
+    next.series.setData(bars);
+    next.chart.resetScale();
+    expect(next.chart.timeScale.barSpacing).toBe(9);
+    expect(next.chart.getVisibleLogicalRange().to).toBe(203);
+  });
+
+  it('switches between density, bar count and fitting all history through settings', () => {
+    const { chart } = mount();
+    applyChartSettings(chart, { 'navigation.defaultBarSpacing': 8 });
+    expect(chart.timeScale.barSpacing).toBe(8);
+    expect(readChartSettings(chart)['navigation.defaultBarSpacing']).toBe(8);
+    const saved = readChartSettings(chart);
+    applyChartSettings(chart, { 'navigation.defaultVisibleBars': 50 });
+    expect(chart.getVisibleLogicalRange()).toEqual({ from: 149, to: 203 });
+    expect(readChartSettings(chart)['navigation.defaultBarSpacing']).toBe(0);
+    applyChartSettings(chart, saved);
+    expect(chart.timeScale.barSpacing).toBe(8);
+    applyChartSettings(chart, { 'navigation.defaultBarSpacing': 0 });
+    expect(chart.getVisibleLogicalRange()).toEqual({ from: -1, to: 203 });
+  });
+
+  it('ignores invalid persisted density and applies the configured zoom limits', () => {
+    const { chart } = mount({ navigation: { defaultBarSpacing: 8 }, timeScale: { maxBarSpacing: 20 } });
+    for (const value of [-1, NaN, Infinity, 'wrong']) {
+      chart.restoreState({ version: 1, navigation: { defaultBarSpacing: value } });
+      chart.resetScale();
+      expect(chart.timeScale.barSpacing).toBe(8);
+    }
+    chart.setNavigationOptions({ defaultBarSpacing: 25 });
+    expect(chart.timeScale.barSpacing).toBe(20);
   });
 });

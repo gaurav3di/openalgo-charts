@@ -177,15 +177,17 @@ describe('contextmenu axis targets', () => {
     expect(menuAt(m, 780, 300).target.side).toBe('right');
   });
 
-  it('points a pane whose values are all on the overlay scale at that scale', () => {
+  it('targets an overlay scale only after the host exposes its column', () => {
     vi.stubGlobal('window', {});
     const m = mount();
     const vol = m.chart.addSeries('histogram', { paneIndex: 1, priceScaleId: '' });
     vol.setData(BARS.map((b) => ({ time: b.time, value: b.volume ?? 0 })));
+    expect(menuAt(m, 780, 500).target).toEqual({ kind: 'empty', id: null });
+    m.chart.setPriceAxisPlacement(1, '', 'right');
     const target = menuAt(m, 780, 500).target;
     expect(target.kind).toBe('price-scale');
     expect(target.side).toBe('right');
-    expect(target.scaleId).toBe(''); // the hidden scale is the one a menu can act on
+    expect(target.scaleId).toBe('');
   });
 
   it('reads the bottom-left corner as the time axis, which runs the full width', () => {

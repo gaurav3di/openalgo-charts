@@ -225,6 +225,42 @@ and the font size actually drawn. Empty columns retain a 28 px minimum.
 With `fontSize: 'auto'`, width measurement uses an 11 px baseline unless the cell
 overrides its font. Text always clips to its own cell.
 
+Cells support `bold`, `italic`, `fontFamily` (a CSS font-family list), `fontSize`,
+horizontal `align`, and `verticalAlign: 'top' | 'middle' | 'bottom'`. Middle is
+the default. A newline in `text` creates another line; automatic widths measure
+the widest line, and automatic font sizing fits the whole text block. Fixed
+fonts also shrink to fit the available row height. The default font remains
+`system-ui, sans-serif`.
+
+Set `colSpan` or `rowSpan` on the top-left cell to merge a rectangle. Both default
+to one and must be positive safe integers. The rectangle must fit within the
+row count and the longest row's column count. Covered ordinary cells are ignored;
+overlapping explicit spans are rejected. `setRows` validates the entire grid before
+replacing it, so invalid spans leave the previous rows intact. A merged cell uses
+its anchor's text and appearance, with one clip over the combined area. Automatic
+widths distribute any extra width needed by merged text across its columns.
+
+`frameColor` adds a separate outer frame, with optional `frameWidth` in media pixels
+(default one). Cell borders continue to use `borderColor` and `borderWidth`.
+
+Add `tooltip` to a cell for plain-text hover details. Explicit newlines are kept,
+long lines wrap, and the tooltip stays inside the plot. A merged cell uses its
+anchor's tooltip; covered cells are ignored. Empty or omitted tooltips leave
+ordinary table rendering unchanged. Malformed nonstring tooltip values reject
+before `setRows` replaces the current table.
+
+The table's optional `id` remains its click ID across all cells. When it is absent,
+only tooltip cells have hit targets, with an opaque generated ID. Supply an `id`
+when handling table clicks. Tooltip state clears after content, layout or ownership
+changes and is omitted from SVG exports.
+
+```js
+table.setRows([
+  [{ text: 'Session', colSpan: 2, tooltip: 'Regular hours\nValues update with the newest bar' }, { text: '' }],
+  [{ text: 'Range' }, { text: '4.75', tooltip: 'Session high minus session low' }],
+]);
+```
+
 Fixed sizing uses `cellWidth` (a number, or an array for per-column widths)
 and `cellHeight`, in media px. Proportional: `widthPercent` and `heightPercent` stretch
 the grid to a share of the plot, preserving the column proportions declared in
@@ -262,10 +298,11 @@ an index:
 chart.addPrimitive(mark, { anchor: 'chart-bottom' })   // or 'chart-top'
 ```
 
-The engine re-homes it whenever a pane is added, removed, moved or maximized. Maximize is
-the case worth knowing about: it **hides** the other panes, so a mark pinned to pane 0 does
-not merely sit in the wrong place, it disappears with the pane. An anchored primitive
-follows the visible edge.
+The engine re-homes it whenever a pane is added, removed, moved, maximized or collapsed.
+`'chart-bottom'` means the lowest open pane, since a collapsed pane draws only its legend
+row. Maximize is the case worth knowing about: it **hides** the other panes, so a mark
+pinned to pane 0 does not merely sit in the wrong place, it disappears with the pane. An
+anchored primitive follows the visible edge.
 
 Before this existed a host had to do it by hand, removing and re-adding the primitive on
 `chart.panes().length - 1` after anything that might have created a pane, and listening to
@@ -493,6 +530,12 @@ function bestHit(hits: readonly (PrimitiveHit | null)[]): PrimitiveHit | null
 ```
 
 `null` entries in the input array are skipped. Returns `null` if every entry is `null`.
+
+Composite primitives may return an optional `hoverKey` to distinguish regions
+that share an `externalId`. The chart forwards the key in `PrimitiveRenderContext`
+and repaints when it changes; click IDs and public `hover` event IDs remain the
+external ID. Existing primitives can omit it. SVG exports clear transient hover
+IDs and keys.
 
 ## `InvalidationLevel`
 

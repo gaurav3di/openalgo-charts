@@ -261,6 +261,9 @@
         <p id="tp-summary" class="ws-hint"></p>
         <div class="ws-actions"><button id="tp-new" class="btn" type="button">Save new template</button><button id="tp-update" class="btn" type="button">Update selected</button><button id="tp-rename" class="btn" type="button">Rename</button><button id="tp-duplicate" class="btn" type="button">Duplicate</button></div>
         <p class="ws-hint">Replace changes this chart's studies. Append keeps existing studies and adds separate copies.</p>
+        <div class="set-row"><label for="tp-scale-policy">Scale ownership</label><div class="set-ctl"><select id="tp-scale-policy"><option value="copy">Independent copies</option><option value="share">Share existing scales</option></select></div></div>
+        <div class="set-row"><label for="tp-range-policy">Saved view</label><div class="set-ctl"><select id="tp-range-policy"><option value="auto">Reset manual view</option><option value="preserve">Keep saved view</option></select></div></div>
+        <p class="ws-hint">The current price scale keeps its settings. Sharing also keeps existing destination scales. Older templates without layout settings use their original behavior.</p>
         <div class="ws-actions"><button id="tp-import" class="btn btn--ghost" type="button">Import file</button><button id="tp-export" class="btn btn--ghost" type="button">Export selected</button><button id="tp-delete" class="btn btn--ghost" type="button">Delete selected</button></div>
         <input id="tp-file" type="file" accept="application/json,.json" hidden />
         <div id="tp-confirm" class="ws-confirm" hidden><p id="tp-delete-name"></p><div class="ws-actions"><button id="tp-keep" class="btn" type="button">Keep template</button><button id="tp-confirm-delete" class="btn" type="button">Confirm delete</button></div></div>
@@ -281,7 +284,7 @@
         <div id="ws-recent-row"><p class="set-group">Recent layouts</p><div id="ws-recent" class="ws-actions"></div></div>
         <label class="ws-autosave"><input id="ws-autosave" type="checkbox" /> Autosave current layout</label>
         <p class="ws-hint">With autosave off, reload restores the last saved version. Session recovery is kept separately.</p>
-        <div class="ws-actions"><button id="ws-import" class="btn btn--ghost" type="button">Import file</button><button id="ws-export" class="btn btn--ghost" type="button">Export selected</button><button id="ws-delete" class="btn btn--ghost" type="button">Delete selected</button></div>
+        <div class="ws-actions"><button id="ws-import" class="btn btn--ghost" type="button">Import file</button><button id="ws-grid" class="btn btn--primary" type="button" hidden>Open in grid view</button><button id="ws-export" class="btn btn--ghost" type="button">Export selected</button><button id="ws-delete" class="btn btn--ghost" type="button">Delete selected</button></div>
         <input id="ws-file" type="file" accept="application/json,.json" hidden />
         <div class="ws-actions"><button id="ws-data" class="btn btn--ghost" type="button" aria-describedby="ws-data-source">Download chart data (CSV)</button></div>
         <p id="ws-data-source" class="ws-hint"></p>
@@ -289,6 +292,26 @@
         <p id="ws-error" role="alert" hidden></p><p id="ws-notice" role="status" aria-live="polite"></p>
       </div>
       <div class="set-foot"><button id="ws-refresh" class="btn btn--ghost set-lead" type="button">Reload saved layouts</button><button id="ws-open" class="btn btn--primary" type="button">Open selected</button></div>
+    </div>
+  </div>
+
+  <div id="chartdatamodal" hidden>
+    <div class="set-card ws-card csv-card" role="dialog" aria-modal="true" aria-labelledby="csv-title">
+      <div class="set-head"><span id="csv-title">Download chart data</span><button id="csv-close" type="button">Close</button></div>
+      <div class="set-body ws-body">
+        <p id="csv-source" class="ws-hint"></p>
+        <div class="ws-actions"><button id="csv-all-rows" class="btn btn--ghost" type="button">All loaded rows</button><button id="csv-visible" class="btn btn--ghost" type="button">Use visible bounds</button></div>
+        <div class="set-row"><label for="csv-from">From (UTC seconds)</label><div class="set-ctl"><input id="csv-from" type="text" inputmode="decimal" autocomplete="off" placeholder="No lower bound" /></div></div>
+        <div class="set-row"><label for="csv-to">To (UTC seconds)</label><div class="set-ctl"><input id="csv-to" type="text" inputmode="decimal" autocomplete="off" placeholder="No upper bound" /></div></div>
+        <p class="ws-hint">Bounds are inclusive. Studies keep their full loaded-history warmup.</p>
+        <div class="set-row"><label for="csv-alignment">Alignment</label><div class="set-ctl"><select id="csv-alignment"><option value="source">Source rows</option><option value="display">Displayed plot positions</option></select></div></div>
+        <p class="ws-hint">Display alignment follows study plot offsets. Projected times are spacing estimates, not future observations.</p>
+        <div class="ws-actions"><button id="csv-all-studies" class="btn btn--ghost" type="button">All studies</button><button id="csv-no-studies" class="btn btn--ghost" type="button">No studies</button></div>
+        <div id="csv-studies" role="group" aria-label="Studies to export"></div>
+        <label class="csv-study"><input id="csv-comparisons" type="checkbox" checked /><span>Include comparison closes</span></label>
+        <p id="csv-error" class="ws-error" role="alert" hidden></p>
+      </div>
+      <div class="set-foot"><button id="csv-cancel" class="btn btn--ghost" type="button">Cancel</button><button id="csv-download" class="btn btn--primary" type="button">Download CSV</button></div>
     </div>
   </div>
 
@@ -367,6 +390,11 @@
     <hr>
     <button role="menuitem" data-act="delsel">Delete Drawing</button>
     <button role="menuitem" data-act="delall">Remove All Drawings</button>
+    <!-- Session marks (src/session-marks.js): host-owned lines the user can
+         select and copy but not move or delete, left out of saved layouts
+         and the Objects dock. -->
+    <button role="menuitem" data-act="mark">Mark Price for This Session</button>
+    <button role="menuitem" data-act="unmark">Clear Session Marks</button>
     <!-- Clipboard. The chord is shown beside the label because the engine binds
          no keys: nothing else on screen would say what Ctrl+C does here. -->
     <hr data-sec="clip">
@@ -376,6 +404,10 @@
     <!-- Only drawn when the chart says the pointer was over an indicator. -->
     <hr data-sec="ind">
     <button role="menuitem" data-act="indset">Indicator settings...</button>
+    <!-- Only drawn over a lower pane: it folds to its header strip and opens
+         again. The price pane always stays open, so it never offers this. -->
+    <hr data-sec="pane">
+    <button role="menuitem" data-act="panecollapse">Collapse pane</button>
     <!-- The volume histogram's second control. The eye on its legend row is the
          one that sits over the bars; this is the one a reader finds by
          right-clicking the chart and reading down the list. -->

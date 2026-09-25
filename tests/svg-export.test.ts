@@ -11,6 +11,8 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { Chart } from '../src/core/chart';
 import type { PaneRenderContext } from '../src/core/pane';
 import { SvgContext, SvgLinearGradient } from '../src/render/svg-export';
+import { IndicatorDrawings } from '../src/primitives/indicator-draws';
+import type { PrimitiveRenderContext } from '../src/primitives/primitive';
 import { fakeDocument } from './helpers/fake-dom';
 import type { RecordingContext } from './helpers/fake-ctx';
 import { DrawingController } from '../src/draw/index';
@@ -246,6 +248,54 @@ describe('SvgContext', () => {
     return s.slice(start, -'</svg>'.length).replace(/<defs>.*<\/defs>/, '');
   };
   const defs = (c: SvgContext): string => /<defs>(.*)<\/defs>/.exec(c.toString())?.[1] ?? '';
+
+  it.each([
+    [1e307, '1e+307'],
+    [-1e307, '-1e+307'],
+    [Number.MAX_VALUE, '1.7976931348623157e+308'],
+    [-Number.MAX_VALUE, '-1.7976931348623157e+308'],
+  ])('preserves the finite coordinate %s when decimal scaling would overflow', (value, serialized) => {
+    const c = new SvgContext(240, 180, { strict: true });
+    c.moveTo(value, 60);
+    c.lineTo(120, 60);
+    c.stroke();
+    expect(body(c)).toContain(`d="M${serialized} 60L120 60"`);
+    expect(c.toString()).not.toMatch(/Infinity|NaN/);
+  });
+
+  it('retains ordinary rounding, zero normalization and the nonfinite fallback', () => {
+    const c = new SvgContext(240, 180);
+    c.moveTo(1.234, -1.236);
+    c.lineTo(NaN, Infinity);
+    c.lineTo(-Infinity, -0.001);
+    c.lineTo(Number.MIN_VALUE, -0);
+    c.stroke();
+    expect(body(c)).toContain('d="M1.23 -1.24L0 0L0 0L0 0"');
+  });
+
+  it('exports a clipped smooth path with huge finite anchors and controls', () => {
+    const primitive = new IndicatorDrawings();
+    primitive.setItems([{
+      kind: 'polyline', curve: 'smooth',
+      points: [{ time: 0, price: -1e307 }, { time: 60, price: 60 }, { time: 120, price: 1e307 }],
+    }]);
+    const rc = {
+      dpr: 1, plotWidth: 240, plotHeight: 180, theme: { axisText: '#fff' },
+      timeScale: { indexToX: (n: number) => n },
+      dataLayer: { timeToIndexFloat: (n: number) => n },
+      priceScale: { priceToY: (n: number) => n },
+    } as unknown as PrimitiveRenderContext;
+    const c = new SvgContext(240, 180, { strict: true });
+    primitive.draw(c.asCanvasContext(), rc);
+    const svg = c.toString();
+    expect(svg).toContain('clip-path="url(#c1)"');
+    expect(svg).toContain('d="M0 -1e+307C');
+    expect(svg).toContain('120 1e+307"');
+    expect(svg.match(/C/g)).toHaveLength(2);
+    expect(svg).not.toMatch(/Infinity|NaN/);
+    expect(c.unsupported).toEqual([]);
+    assertWellFormed(svg);
+  });
 
   it('writes a rect path and a filled path', () => {
     const c = new SvgContext(10, 10);

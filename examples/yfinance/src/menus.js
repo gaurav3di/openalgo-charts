@@ -9,6 +9,7 @@ import { removeBracket } from './bracket.js';
 import { clipboardAction } from './clipboard.js';
 import { autosave } from './persist.js';
 import { alertContextEntries } from './alerts.js';
+import { addSessionMark, sessionMarks, clearSessionMarks } from './session-marks.js';
 import { capturePaneTarget } from './pane-target.js';
 
 // Price-level family (previous close, session extremes, extended hours,
@@ -29,10 +30,42 @@ let axSub = null;
 // target, which is the part a canvas cannot tell a host by itself: it is how
 // the indicator row below knows which instance was under the pointer.
 let ctxPrice = 0;
+let ctxTime = null;        // the bar time a session mark anchors to
 let ctxIndicator = null;   // instance id when the pointer was over an indicator
 let ctxAlerts = [];
 let ctxOwner = null;
+let ctxPane = null;        // the pane row's action, when the pointer was over a lower pane
 export const hideCtx = () => { ctxMenu.hidden = true; };
+
+/**
+ * The pane row: fold a lower pane to its header strip, or open it again. The
+ * strip keeps the pane's studies, drawings and height, so this is a view
+ * choice, not an edit. Null over the price pane, which always stays open, and
+ * on an engine that predates pane collapse.
+ */
+export function paneCollapseRow(chart, paneIndex) {
+  if (!(paneIndex > 0) || typeof chart?.paneCollapsed !== 'function') return null;
+  const folded = chart.paneCollapsed(paneIndex);
+  return { label: folded ? 'Expand pane' : 'Collapse pane',
+    onSelect: () => { chart.setPaneCollapsed(paneIndex, !folded); } };
+}
+
+/**
+ * What the menu's drawing rows reach. `removable` counts what Remove All
+ * would take, `deletable` is the selection Delete and Cut act on (null when
+ * it is read-only), `copyable` is the selection Copy takes, and `marks`
+ * counts the session marks the host would clear.
+ */
+export function drawingMenuState(draw) {
+  const selected = draw ? draw.selected() : null;
+  const primary = selected ? draw.get(selected) : undefined;
+  return {
+    removable: draw ? draw.drawings().filter((d) => d.policy?.editable !== false).length : 0,
+    deletable: primary && primary.policy?.editable !== false ? selected : null,
+    copyable: selected,
+    marks: sessionMarks(draw).length,
+  };
+}
 
 export function openContextMenu(e, pane = 1) {
   const owner = capturePaneTarget(app, pane);
@@ -46,6 +79,8 @@ export function openContextMenu(e, pane = 1) {
       onSelect: () => { if (owner.current()) setVolumeShown(!volumeShown(2), 2); } });
     if (e.target?.kind === 'indicator') rows.push({ label: 'Study settings...',
       onSelect: () => openSettings(e.target.instanceId, owner) });
+    const paneRow = e.target?.kind === 'time-scale' ? null : paneCollapseRow(owner.chart, e.paneIndex);
+    if (paneRow) rows.push({ label: paneRow.label, onSelect: () => { if (owner.current()) paneRow.onSelect(); } });
     if (rows.length) popupMenu({ getBoundingClientRect: () => ({ left: rect.left + e.point.x, bottom: rect.top + e.point.y }) }, rows, { role: 'menu' });
     return;
   }
@@ -83,24 +118,31 @@ export function openContextMenu(e, pane = 1) {
   ctxMenu.querySelector('hr[data-sec="alerts"]').hidden = ctxAlerts.length === 0;
 
   // Hide the drawing rows when there is nothing to act on, so the menu
-  // never offers a dead option.
-  const nDraw = app.draw ? app.draw.drawings().length : 0;
-  const selId = app.draw ? app.draw.selected() : null;
+  // never offers a dead option. A read-only drawing (a session mark) is
+  // neither counted for removal nor offered for delete or cut.
+  const drawState = drawingMenuState(app.draw);
   const rowAll = ctxMenu.querySelector('[data-act="delall"]');
   const rowSel = ctxMenu.querySelector('[data-act="delsel"]');
-  rowAll.hidden = nDraw === 0;
-  rowSel.hidden = !selId;
-  rowSel.previousElementSibling.hidden = nDraw === 0;   // the separator above the pair
-  if (nDraw > 0) rowAll.textContent = `Remove All Drawings (${nDraw})`;
+  const rowMark = ctxMenu.querySelector('[data-act="mark"]');
+  const rowUnmark = ctxMenu.querySelector('[data-act="unmark"]');
+  ctxTime = e.time ?? app.currentBars.at(-1)?.time ?? null;
+  rowAll.hidden = drawState.removable === 0;
+  rowSel.hidden = !drawState.deletable;
+  rowMark.hidden = !app.draw || !tradable || ctxTime === null;
+  rowUnmark.hidden = drawState.marks === 0;
+  // The separator above the group.
+  rowSel.previousElementSibling.hidden = rowAll.hidden && rowSel.hidden && rowMark.hidden && rowUnmark.hidden;
+  if (drawState.removable > 0) rowAll.textContent = `Remove All Drawings (${drawState.removable})`;
+  if (!rowMark.hidden) rowMark.textContent = `Mark ${fmt(ctxPrice)} for This Session`;
+  if (drawState.marks > 0) rowUnmark.textContent = `Clear Session Marks (${drawState.marks})`;
 
   // Clipboard rows. Copy and cut need a selection; paste does not, because
   // whether there is anything of ours to paste can only be known by asking
   // the clipboard, which is asynchronous. A dist/ whose controller has no
   // copy() hides the three rather than offering three dead options.
   const clipOk = app.draw && typeof app.draw.copy === 'function';
-  for (const act of ['copy', 'cut']) {
-    ctxMenu.querySelector(`[data-act="${act}"]`).hidden = !clipOk || !selId;
-  }
+  ctxMenu.querySelector('[data-act="copy"]').hidden = !clipOk || !drawState.copyable;
+  ctxMenu.querySelector('[data-act="cut"]').hidden = !clipOk || !drawState.deletable;
   ctxMenu.querySelector('[data-act="paste"]').hidden = !clipOk;
   ctxMenu.querySelector('hr[data-sec="clip"]').hidden = !clipOk;
 
@@ -113,6 +155,12 @@ export function openContextMenu(e, pane = 1) {
     const inst = app.chart.indicators().find((i) => i.id === ctxIndicator);
     rowInd.textContent = (inst ? inst.name : 'Indicator') + ' settings...';
   }
+
+  ctxPane = target.kind === 'time-scale' ? null : paneCollapseRow(app.chart, e.paneIndex);
+  const rowPane = ctxMenu.querySelector('[data-act="panecollapse"]');
+  rowPane.hidden = !ctxPane;
+  ctxMenu.querySelector('hr[data-sec="pane"]').hidden = !ctxPane;
+  if (ctxPane) rowPane.textContent = ctxPane.label;
 
   // Volume is a fixture of a time-indexed chart only: a Renko brick or a
   // P&F column has no source bar to hang it off, so `render()` leaves the
@@ -172,6 +220,10 @@ const levelKinds = () => PRICE_LEVEL_KINDS || Object.keys(LEVEL_LABEL);
 export const axisState = () => (app.chart && typeof app.chart.priceAxisState === 'function')
   ? app.chart.priceAxisState(axTarget.paneIndex, axTarget.scaleId)
   : null;
+
+const axisPlacement = () => app.chart?.priceAxisPlacement?.(axTarget.paneIndex, axTarget.scaleId) ?? null;
+const axisColumns = side => (app.chart?.priceAxisLayout?.(axTarget.paneIndex) ?? [])
+  .filter(column => column.side === side).sort((a, b) => a.order - b.order);
 
 /**
  * One menu row. `mark` picks the marker column: a tick for a switch, a dot
@@ -249,6 +301,16 @@ function paintAxisMenu() {
     label: 'Auto-fit to the data', on: s.autoFit, chord: AX_AUTOFIT_CHORD,
     onSelect: () => runAxis(() => setAxisAutoFit(!s.autoFit)),
   });
+  const primaryScale = () => {
+    const primary = app.chart?.primarySeries?.();
+    return primary != null && primary.priceScale() === app.chart.panes()[axTarget.paneIndex]?.scaleFor(axTarget.scaleId);
+  };
+  if (primaryScale() && typeof app.chart.setPriceOnlyAutoScale === 'function') add({
+    label: 'Fit primary prices only', on: app.chart.priceOnlyAutoScale(),
+    onSelect: () => runAxis(() => {
+      if (primaryScale()) app.chart.setPriceOnlyAutoScale(!app.chart.priceOnlyAutoScale());
+    }),
+  });
   add({
     label: 'Invert', on: s.inverted, chord: AX_INVERT_CHORD,
     onSelect: () => runAxis(() => setAxisInvert(!s.inverted)),
@@ -271,13 +333,22 @@ function paintAxisMenu() {
     });
   }
 
-  axMenu.appendChild(axSeparator());
-  add({
-    label: s.side === 'right' ? 'Move the scale to the left' : 'Move the scale to the right',
-    disabled: !s.movable,
-    note: s.movable ? '' : (s.active ? 'other side taken' : 'nothing on this side'),
-    onSelect: () => runAxis(moveAxisToOtherSide),
-  });
+  const placement = axisPlacement();
+  if (placement && placement.side !== 'hidden') {
+    axMenu.appendChild(axSeparator());
+    add({
+      label: placement.side === 'right' ? 'Move the scale to the left' : 'Move the scale to the right',
+      disabled: !s.active, note: s.active ? '' : 'nothing on this side',
+      onSelect: () => runAxis(moveAxisToOtherSide),
+    });
+    const peers = axisColumns(placement.side), index = peers.findIndex(column => column.scaleId === s.scaleId);
+    if (index >= 0 && peers.length > 1) for (const delta of [-1, 1]) {
+      add({ label: delta < 0 ? 'Move the scale closer to the plot' : 'Move the scale further from the plot',
+        disabled: peers[index + delta] === undefined,
+        onSelect: () => runAxis(() => moveAxisBy(delta)),
+      });
+    }
+  }
 
   axMenu.appendChild(axSeparator());
   axMenu.appendChild(axHead('Price levels'));
@@ -342,15 +413,27 @@ export function setAxisLockRatio(on) {
 }
 
 export function moveAxisToOtherSide() {
-  const s = axisState();
-  if (!s) return;
-  const to = s.side === 'right' ? 'left' : 'right';
-  if (!app.chart.movePriceAxis(s.paneIndex, s.side, to)) {
-    el('status').textContent = 'that side is already in use';
+  const s = axisState(), placement = axisPlacement();
+  if (!s?.active || !placement || placement.side === 'hidden') return;
+  const to = placement.side === 'right' ? 'left' : 'right';
+  if (!app.chart.setPriceAxisPlacement(s.paneIndex, s.scaleId, to)) {
+    el('status').textContent = 'the scale could not be moved';
     return;
   }
-  axTarget = { paneIndex: s.paneIndex, scaleId: to };  // the menu follows the axis
+  // Placement changes leave the ID intact, including for subsequent shortcuts.
   el('status').textContent = 'price scale moved to the ' + to;
+}
+
+function moveAxisBy(delta) {
+  const s = axisState(), placement = axisPlacement();
+  if (!s?.active || !placement || placement.side === 'hidden') return;
+  const peers = axisColumns(placement.side), index = peers.findIndex(column => column.scaleId === s.scaleId);
+  const neighbor = index < 0 ? undefined : peers[index + delta];
+  if (!neighbor) return;
+  const moved = app.chart.setPriceAxisPlacement(s.paneIndex, s.scaleId, placement.side, neighbor.order);
+  el('status').textContent = moved
+    ? (delta < 0 ? 'price scale moved closer to the plot' : 'price scale moved further from the plot')
+    : 'the scale could not be moved';
 }
 
 // ── price levels ───────────────────────────────────────────────────────
@@ -594,8 +677,8 @@ export function initMenus(a) {
     }
     if (act === 'delall') {
       if (!app.draw) return;
-      const n = app.draw.drawings().length;
-      app.draw.clear();                 // one undo step, so it is recoverable
+      const n = drawingMenuState(app.draw).removable;
+      app.draw.clear();                 // one undo step, so it is recoverable; read-only drawings stay
       autosave();
       el('status').textContent = n ? `removed ${n} drawing${n === 1 ? '' : 's'}` : 'no drawings to remove';
       return;
@@ -603,7 +686,20 @@ export function initMenus(a) {
     if (act === 'delsel') {
       if (!app.draw) return;
       const id = app.draw.selected();
-      if (id) { app.draw.remove(id); autosave(); el('status').textContent = 'drawing deleted'; }
+      if (id && app.draw.remove(id)) { autosave(); el('status').textContent = 'drawing deleted'; }
+      return;
+    }
+    // Session marks are the host's own: it places them, and it alone clears
+    // them, which is why this is the one row that passes `force`.
+    if (act === 'mark') {
+      if (!app.draw || ctxTime === null) return;
+      addSessionMark(app.draw, { time: ctxTime, price: ctxPrice }, app.req.symbol);
+      el('status').textContent = `marked ${fmt(ctxPrice)} for this session`;
+      return;
+    }
+    if (act === 'unmark') {
+      const n = clearSessionMarks(app.draw, app.req.symbol);
+      el('status').textContent = `cleared ${n} session mark${n === 1 ? '' : 's'}`;
       return;
     }
     if (act === 'copy' || act === 'cut' || act === 'paste') {
@@ -617,6 +713,7 @@ export function initMenus(a) {
     if (act === 'volshow') { if (ctxOwner?.current()) setVolumeShown(!volumeShown(1), 1); return; }
     if (act === 'chartset') { openChartSettings(undefined, ctxOwner); return; }
     if (act === 'indset') { if (ctxIndicator) openSettings(ctxIndicator, ctxOwner); return; }
+    if (act === 'panecollapse') { if (ctxOwner?.current()) ctxPane?.onSelect(); return; }
     placeOrder(btn.getAttribute('data-side'), btn.getAttribute('data-type'), ctxPrice);
   });
 

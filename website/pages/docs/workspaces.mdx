@@ -8,7 +8,8 @@ description: Persist portable chart layouts and study templates with revision-ch
 The optional `openalgo-charts/workspace` entry provides validated configuration
 documents, a catalog repository and an IndexedDB adapter. It creates no chart,
 grid interface or market-data subscription. Your host prepares data, activates
-layouts and applies templates to the intended chart.
+layouts and applies templates to the intended chart. For a ready-made host, the
+widget tier's [chart grid](/docs/chart-grid) writes and applies these payloads.
 
 ## Save a chart as a workspace
 
@@ -76,7 +77,8 @@ host preferences and comparison definitions. Primary and comparison history
 are loaded separately. Credentials, account balances, orders, positions and
 armed execution state do not belong in portable workspaces.
 
-`parseWorkspacePayload`, `parseWorkspaceDocument`, `parseIndicatorTemplate` and
+`parseWorkspacePayload`, `parseWorkspaceDocument`, `parseIndicatorTemplate`,
+`parseIndicatorTemplatePayload` and
 `parseIndicatorStates` validate and detach input. Unsupported versions and
 malformed documents reject before application. Document parsers accept JSON
 text. Unknown custom study IDs are preserved so an import does not silently
@@ -111,39 +113,67 @@ and check its restore report. See [chart state](/docs/state),
 
 ## Reusable indicator templates
 
-`createTemplate(name, indicators)` and `saveTemplate(id, indicators)` save an
-`IndicatorState[]`, commonly captured from `chart.getState().indicators`.
-Templates discard instance identities; repeated descriptors remain separate
+Capture the whole template to retain pane weights, scale settings and effective
+plot assignments. `createTemplate(name, input)` and `saveTemplate(id, input)` accept
+this payload or a legacy `IndicatorState[]`. Repeated descriptors remain separate
 studies, and an empty template is valid.
 
-`planIndicatorTemplate` validates an append or replace operation before the host
-changes a chart. This function returns the plan without applying it:
+The native planner checks descriptors and layout relationships before returning
+a detached chart-state patch. It neither applies the patch nor reloads data:
 
 ```ts
-import { registeredIndicators, type Chart, type IndicatorState } from 'openalgo-charts';
-import { planIndicatorTemplate, type IndicatorTemplateMode } from 'openalgo-charts/workspace';
+import type { Chart } from 'openalgo-charts';
+import {
+  captureIndicatorTemplate, planIndicatorTemplateState,
+  type IndicatorTemplateInput, type IndicatorTemplateMode,
+} from 'openalgo-charts/workspace';
 
-export function studyPlan(chart: Chart, incoming: IndicatorState[], mode: IndicatorTemplateMode) {
-  return planIndicatorTemplate(
-    chart.getState().indicators ?? [],
-    incoming,
-    mode,
-    new Set(registeredIndicators().map(item => item.id)),
-    chart.panes().length,
-  );
+export const captureStudies = (chart: Chart) => captureIndicatorTemplate(chart);
+
+export function studyPlan(chart: Chart, incoming: IndicatorTemplateInput, mode: IndicatorTemplateMode) {
+  return planIndicatorTemplateState(chart, incoming, mode, {
+    scalePolicy: 'copy',
+    rangePolicy: 'auto',
+  });
 }
 ```
 
-Append retains current identities and places incoming study-pane groups after
-the existing panes; incoming overlays stay on pane zero. Replace uses only the
-incoming grouping. Missing descriptors reject the plan. Incoming identities are
-always discarded, so a template cannot retarget existing study alerts.
+Pass the plan's `restoreOptions` to `chart.restoreState(state, plan.restoreOptions)`
+when applying its `indicators` and `panes`. This retains the runtime number
+formatter on existing destination scales; copied scales use their incoming
+study formats. Formatter functions never enter the saved template.
+
+Default `scalePolicy: 'copy'` gives copied non-primary main-pane scales independent
+IDs. Plots sharing one source scale stay together, while repeated copies remain
+independent. Choose `'share'` to reuse main-pane IDs deliberately; existing
+destination settings win. A plot attached to the source's primary scale follows
+the destination's actual primary scale, including one moved to the left.
+
+Default `rangePolicy: 'auto'` clears copied manual views and ratio locks and
+recomputes indicator-owned default bands against the destination data. Explicit
+host fixed bands remain. Choose `'preserve'` to retain saved manual views and ratio
+references. These options do not overwrite the destination's primary or existing
+shared scale view.
+
+Append retains current identities and creates new positive pane groups. Replace
+reuses study-only slots while reserving panes containing host series. Pane weights
+retain their ratio to the main pane. Fresh incoming identities are assigned, and
+declared study dependencies and range owners are remapped together. Existing alerts
+remain tied to their original studies.
+
+`IndicatorTemplatePayload` contains `indicators` and optional `layout` metadata;
+each `IndicatorTemplatePlotBinding` records an instance, exact plot key, pane and
+scale. `parseIndicatorTemplatePayload` validates and detaches either input form.
+The existing `planIndicatorTemplate` array API and documents without layout retain
+legacy behavior. Saving an array over a layout-bearing template removes its layout.
 
 Apply to the chart captured when the template controls opened, and check ownership
 again after asynchronous work. If using `restoreState`, include the current
 drawings and alert document because omitting them clears those slots. Check the
 restore report and study count, and restore the previous configuration if
-application fails. Template application does not require reloading market data.
+application fails while the operation still owns the chart. A nested newer restore
+invalidates that recovery, even on the same chart object. Template application does
+not require reloading market data. See the [interactive template example](/examples#copy-study-layouts-with-templates).
 
 ## Storage and replay boundaries
 

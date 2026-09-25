@@ -57,6 +57,34 @@ function make(opts: WidgetOptions = {}, doc: FakeDocument = fakeWidgetDocument()
 
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
+describe('default candle density', () => {
+  it('keeps spacing across screen widths, reloads and symbol changes', async () => {
+    const feed: DataFeed = { getBars: async () => bars(200) };
+    for (const width of [390, 1200]) {
+      const { w } = make({ feed, symbol: 'SAMPLE', persist: false });
+      w.chart.applySize(width, 600);
+      await flush();
+      expect(w.chart.timeScale.barSpacing).toBe(8);
+      w.chart.setVisibleLogicalRange({ from: 0, to: 30 });
+      w.setSymbol('NEXT');
+      await flush();
+      expect(w.chart.timeScale.barSpacing).toBe(8);
+      w.setInterval('5m');
+      await flush();
+      expect(w.chart.timeScale.barSpacing).toBe(8);
+    }
+  });
+
+  it('respects explicitly requested count and spacing preferences', async () => {
+    const feed: DataFeed = { getBars: async () => bars(200) };
+    const counted = make({ feed, symbol: 'SAMPLE', persist: false, navigation: { defaultVisibleBars: 50 } }).w;
+    const spaced = make({ feed, symbol: 'SAMPLE', persist: false, navigation: { defaultBarSpacing: 12 } }).w;
+    await flush();
+    expect(counted.chart.getVisibleLogicalRange()).toEqual({ from: 149, to: 203 });
+    expect(spaced.chart.timeScale.barSpacing).toBe(12);
+  });
+});
+
 describe('the frame', () => {
   it('owns a live objects panel and routes edits to existing settings dialogs', () => {
     const { w, root, doc } = make();
@@ -376,6 +404,26 @@ describe('state and persistence', () => {
     expect(pane.priceScale.autoScale).toBe(true);
     expect(pane.priceScale.range).toBeUndefined();
     expect((state as unknown as Record<string, unknown>).viewport).toBeDefined();
+  });
+
+  it('stripView clears every axis viewport without mutating saved preferences', () => {
+    const { w } = make();
+    const state = w.getState().chart;
+    const pinned = {
+      marginTop: 0.1, marginBottom: 0.2, minMove: 0.01, minPrecision: 3,
+      mode: 'linear' as const, inverted: true, autoScale: false,
+      range: { min: 10, max: 90 }, fixedRange: { min: 0, max: 100 },
+      ratioLock: { barSpacing: 8, height: 400 },
+    };
+    state.panes = [{ weight: 1, priceScale: { ...pinned }, scales: { left: { ...pinned }, 'overlay:score': { ...pinned } } }];
+    const stripped = stripView(state);
+    for (const scale of [stripped.panes![0].priceScale, ...Object.values(stripped.panes![0].scales!)]) {
+      expect(scale).toMatchObject({ autoScale: true, inverted: true, minPrecision: 3, fixedRange: { min: 0, max: 100 } });
+      expect(scale?.range).toBeUndefined();
+      expect(scale?.ratioLock).toBeUndefined();
+    }
+    expect(state.panes[0].scales!['overlay:score']).toEqual(pinned);
+    expect(state.panes[0].priceScale).toEqual(pinned);
   });
 
   it('persists the layout under a namespaced key after a debounce, and a new widget picks it up', async () => {

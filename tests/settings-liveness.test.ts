@@ -18,6 +18,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Chart } from '../src/core/chart';
 import { InvalidationLevel } from '../src/core/invalidate-mask';
 import { PaneLegend } from '../src/primitives/pane-legend';
+import { registerIndicator } from '../src/model/indicator-registry';
 import { fakeDocument, type FakeElement } from './helpers/fake-dom';
 import type { RecordingContext } from './helpers/fake-ctx';
 import {
@@ -29,6 +30,11 @@ import type { SeriesType } from '../src/model/chart-type-registry';
 
 const T0 = 1700000000;
 const MIN = 60;
+
+registerIndicator({ id: 'settings-liveness-overlay', name: 'Distant reading', placement: 'onchart', inputs: [],
+  plots: [{ key: 'reading', type: 'line', title: 'Reading' }],
+  calc: data => ({ reading: data.map(bar => bar.close * 10) }),
+});
 
 /**
  * Bars whose open-vs-close verdict and close-vs-previous-close verdict
@@ -207,6 +213,8 @@ function flipsFor(input: ChartSettingsInput, current: ChartSettingsValues): { ke
  */
 const OFF_FRAME: ReadonlyMap<string, string> = new Map([
   ['navigation.mousePan', 'pointer behavior is exercised by navigation-settings.test.ts'],
+  ['navigation.panEnabled', 'user horizontal wheel behavior is asserted below with the navigator disabled'],
+  ['navigation.zoomEnabled', 'user vertical wheel behavior is asserted below with the navigator disabled'],
   // The trade layer draws nothing until a position, order or execution exists,
   // and instantiating it is not what this file is measuring. chart-settings
   // covers the round-trip; trade-ui covers the colours reaching the marks.
@@ -226,6 +234,7 @@ const OFF_FRAME: ReadonlyMap<string, string> = new Map([
   // there is nothing to snap to. The control is chart-wide and live on every
   // chart that plots a price, which the other eleven types here prove.
   ['canvas.crosshairMode', 'nothing to snap to without a price series'],
+  ['scales.priceOnly', 'no primary series exists on a standalone volume-only chart; price-only-autoscale.test.ts covers that case'],
   // A hollow candle's up bar IS its outline, so with Borders on (the default)
   // the up body colour is the border colour and `upColor` is not read. It is
   // read the moment Borders is switched off, asserted below.
@@ -240,7 +249,7 @@ const OFF_FRAME: ReadonlyMap<string, string> = new Map([
  */
 function exempt(type: SeriesType, key: string): boolean {
   if (key === 'symbol.upColor') return type === 'hollow-candle';
-  if (key === 'canvas.crosshairMode') return type === 'histogram' || type === 'column';
+  if (key === 'canvas.crosshairMode' || key === 'scales.priceOnly') return type === 'histogram' || type === 'column';
   return true;
 }
 
@@ -266,6 +275,10 @@ describe('no settings control is dead', () => {
           for (const flip of flipsFor(input, current)) {
             if (OFF_FRAME.has(flip.key) && exempt(type, flip.key)) continue;
             const h = mount(type);
+            // These preferences need a study row and a distinct overlay extent.
+            if (flip.key === 'scales.priceOnly' || flip.key === 'statusLine.indicatorsCollapsed') {
+              h.chart.addIndicator('settings-liveness-overlay');
+            }
             const before = h.frame();
             applyChartSettings(h.chart, { [flip.key]: flip.value });
             if (h.frame() === before) dead.push(`${tab.id}/${flip.key} = ${String(flip.value)}`);
@@ -296,17 +309,33 @@ describe('no settings control is dead', () => {
     expect(drift).toEqual([]);
   });
 
-  it('the two off-frame exemptions are the only ones, and each is justified', () => {
+  it('off-frame exemptions are bounded and each is justified', () => {
     // Guards the escape hatch: a key may only sit in OFF_FRAME with a reason,
     // and the list may not quietly grow to hide a genuinely dead control.
     for (const [, why] of OFF_FRAME) expect(why.length).toBeGreaterThan(10);
-    expect(OFF_FRAME.size).toBe(11);
+    expect(OFF_FRAME.size).toBe(14);
   });
 });
 
 describe('the off-frame controls, asserted where they do act', () => {
   beforeEach(() => vi.stubGlobal('window', {}));
   afterEach(() => vi.unstubAllGlobals());
+
+  it.each(TYPES)('navigation controls gate gestures independently on a %s chart', type => {
+    const h = mount(type);
+    const wheel = (pan: boolean) => {
+      const prevented = vi.fn(), before = h.chart.getVisibleLogicalRange();
+      h.el.dispatch('wheel', { clientX: 400, clientY: 300, deltaX: pan ? 60 : 0,
+        deltaY: pan ? 0 : -100, deltaMode: 0, preventDefault: prevented });
+      return { changed: JSON.stringify(before) !== JSON.stringify(h.chart.getVisibleLogicalRange()), prevented: prevented.mock.calls.length };
+    };
+    for (const pan of [false, true]) for (const zoom of [false, true]) {
+      applyChartSettings(h.chart, { 'navigation.panEnabled': pan, 'navigation.zoomEnabled': zoom });
+      expect(wheel(true)).toEqual({ changed: pan, prevented: Number(pan) });
+      expect(wheel(false)).toEqual({ changed: zoom, prevented: Number(zoom) });
+    }
+    h.chart.destroy();
+  });
 
   it('keeps watermark styling dormant by default and applies it when enabled', () => {
     const h = mount('candlestick', false);

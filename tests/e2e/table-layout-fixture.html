@@ -20,6 +20,8 @@
     <canvas id="weighted"></canvas>
     <h2>Long text clipped inside fixed columns</h2>
     <canvas id="clipped"></canvas>
+    <h2>Merged heading and multiline row label</h2>
+    <canvas id="formatted"></canvas>
   </main>
   <script type="module">
     import { ChartTable, darkTheme } from '/dist/openalgo-charts.mjs';
@@ -27,7 +29,7 @@
     const dpr = devicePixelRatio;
     const width = 640, height = 160, margin = 16;
     const entries = {};
-    function render(id, options, rows) {
+    function render(id, options, rows, following = true) {
       const canvas = document.getElementById(id);
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
@@ -47,7 +49,7 @@
         font: ctx.font, fillStyle: ctx.fillStyle,
         textAlign: ctx.textAlign, textBaseline: ctx.textBaseline,
       };
-      ctx.fillText('Following primitive', 16 * dpr, 112 * dpr);
+      if (following) ctx.fillText('Following primitive', 16 * dpr, 112 * dpr);
       entries[id] = { table, canvas, ctx, rows, incomingFont, afterTable };
     }
 
@@ -63,6 +65,17 @@
       { text: 'MMMMMMMMMMMMMMMM', textColor: '#ff3344', align: 'left' },
       { text: 'Next', textColor: '#22cc88', align: 'left' },
     ]]);
+    render('formatted', {
+      cellWidth: [100, 100, 100], cellHeight: 40, fontSize: 16,
+      frameColor: '#ffcc00', frameWidth: 2, borderColor: '#778899',
+    }, [
+      [{ text: 'Session readings', colSpan: 3, bold: true, bgColor: '#334455' },
+       { text: 'hidden', bgColor: '#ff00ff' }, { text: 'hidden', bgColor: '#ff00ff' }],
+      [{ text: 'A\nB', rowSpan: 2, italic: true, verticalAlign: 'top', align: 'left',
+         fontFamily: 'monospace', bgColor: '#123456', textColor: '#00ffcc' },
+       { text: 'Open' }, { text: '102.50', fontFamily: 'monospace', align: 'right' }],
+      [{ text: 'hidden', bgColor: '#ff00ff' }, { text: 'Range' }, { text: '4.75', verticalAlign: 'bottom' }],
+    ], false);
 
     window.__tableLayout = { entries, dpr, width, height, margin };
     window.__ready = true;

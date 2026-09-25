@@ -109,6 +109,7 @@ export {
   DrawingController,
   type DrawingControllerOptions,
   type DrawingChangeKind,
+  type DrawingEditOptions,
 } from './controller';
 
 // Keyboard editing. Pure: the host owns the listener and asks what a key means.
@@ -150,6 +151,7 @@ export type {
   Drawing,
   DrawingInput,
   DrawingPatch,
+  DrawingPolicy,
   DrawingPoint,
   DrawingGroup,
   DrawingStyle,

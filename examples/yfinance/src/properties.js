@@ -48,6 +48,7 @@ export const PROPERTIES_CSS = `
 .propbar .grip:active { cursor: grabbing; }
 .propbar .pb-name { color: var(--mut); font-size: 11px; padding: 0 6px 0 2px; max-width: 110px;
   overflow: hidden; text-overflow: ellipsis; }
+.propbar .pb-note { color: var(--faint); font-size: 11px; text-transform: uppercase; padding: 0 6px; }
 .propbar button { height: 28px; min-width: 28px; display: inline-flex; align-items: center; justify-content: center;
   gap: 4px; padding: 0 4px; background: transparent; border: 1px solid transparent; border-radius: 6px;
   color: var(--mut); cursor: pointer; font: inherit; font-size: 12px; flex: none; }
@@ -128,6 +129,9 @@ const linePreview = (width, style, long = false) => {
     + ` stroke-linecap="round" aria-hidden="true"><path d="M2 8h${w - 4}" stroke-width="${width}"`
     + (DASH[style] ? ` stroke-dasharray="${DASH[style]}"` : '') + '/></svg>';
 };
+
+/** A drawing whose policy keeps the user from editing it. */
+const isReadOnly = (d) => d.policy?.editable === false;
 
 /**
  * The fields every one of `toolIds` declares, with the same kind, in the
@@ -212,6 +216,7 @@ export function mountPropertiesBar(app, anchorEl) {
   host.appendChild(bar);
 
   let ids = [];        // the selection the bar edits, primary first
+  let shownReadOnly = false;   // whether the bar was built in its read-only form
   let schema = null;   // the fields shared by every selected tool
   let pinned = loadPos();
   let pop = null;      // { el, for } while a popover is open
@@ -741,6 +746,17 @@ export function mountPropertiesBar(app, anchorEl) {
     name.textContent = live.length === 1 ? toolName(d0) : `${live.length} drawings`;
     bar.appendChild(name);
 
+    // A selection the user may not edit (the host's session marks, say) gets
+    // no control the controller would refuse: it says what it is and offers
+    // a copy, which is the user's own drawing and edits normally.
+    shownReadOnly = live.every(isReadOnly);
+    if (shownReadOnly) {
+      span('pb-note', bar).textContent = 'Read-only';
+      const copy = button(chrome('duplicate'), { title: 'Duplicate as your own drawing', chord: 'Ctrl+D', side: 'top' }, () => { app.draw.duplicate(ids.slice()); });
+      copy.dataset.act = 'duplicate';
+      return;
+    }
+
     // Line: colour, width, dash.
     const colours = colorControls(schema);
     const ctlFor = (path) => colours.find((c) => c.field.path === path);
@@ -920,7 +936,8 @@ export function mountPropertiesBar(app, anchorEl) {
   }
 
   // ── inline text ────────────────────────────────────────────────────────
-  const isTextContent = (d) => !!d && drawingSettingsSchema(d.tool).textIsContent === true;
+  // A read-only text drawing is not text the editor could commit.
+  const isTextContent = (d) => !!d && !isReadOnly(d) && drawingSettingsSchema(d.tool).textIsContent === true;
   function editText(id) {
     const d = app.draw ? app.draw.get(id) : undefined;
     if (!d || !isTextContent(d)) return null;
@@ -1025,7 +1042,11 @@ export function mountPropertiesBar(app, anchorEl) {
   /** Refresh every control from the model, then park the bar. */
   function sync() {
     if (bar.hidden) return;
-    if (!drawingsOf().length) { hide(); return; }
+    const live = drawingsOf();
+    if (!live.length) { hide(); return; }
+    // The host made the selection read-only, or lifted that: the controls
+    // on the bar are the wrong set, so it is built again rather than synced.
+    if (live.every(isReadOnly) !== shownReadOnly) { ids = []; show(); return; }
     for (const s of syncers) s();
     reposition();
   }

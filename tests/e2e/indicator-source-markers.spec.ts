@@ -164,7 +164,8 @@ test('transparent plots leave no blank value in the legend', async ({ page }, in
   await fixture(page, 'legend');
   const rows: Bounds[] = [];
   for (let row = 0; row < 5; row++) {
-    rows.push(bounds(await ink(page, { left: 60, right: 200, top: 6 + row * 18, bottom: 24 + row * 18 }, 'green')));
+    // Row 0 is the persistent Indicators N control, so study rows start one row down.
+    rows.push(bounds(await ink(page, { left: 60, right: 200, top: 6 + (row + 1) * 18, bottom: 24 + (row + 1) * 18 }, 'green')));
   }
   for (const row of rows.slice(0, 4)) expect(row.left).toBe(rows[4].left);
   await screenshot(page, info, 'transparent-legend');
@@ -178,7 +179,8 @@ test('source braces, enlarged hitboxes and stacked rows identify the clicked ins
     await page.evaluate(size => window.__indicatorRegression.chart.setLegendIconSize(size), size);
     const pitch = size === 16 ? 18 : 26;
     for (let row = 0; row < 2; row++) {
-      const cy = 6 + row * pitch + pitch / 2;
+      // The persistent Indicators N control holds the first row at every icon size.
+      const cy = 6 + (row + 1) * pitch + pitch / 2;
       await page.mouse.move(30, cy);
       await paint(page);
       const value = bounds(await ink(page, { left: 60, right: 150, top: cy - 7, bottom: cy + 7 }, 'green'));
@@ -205,7 +207,7 @@ test('source braces, enlarged hitboxes and stacked rows identify the clicked ins
       });
       if (size === 24 && row === 1) await screenshot(page, info, 'source-enlarged-second-row');
     }
-    const plainY = 6 + 2 * pitch + pitch / 2;
+    const plainY = 6 + 3 * pitch + pitch / 2;
     await page.mouse.move(30, plainY);
     await paint(page);
     const value = bounds(await ink(page, { left: 60, right: 150, top: plainY - 7, bottom: plainY + 7 }, 'green'));

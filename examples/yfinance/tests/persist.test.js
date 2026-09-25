@@ -527,4 +527,16 @@ describe('layout files', () => {
     expect(app.chart.restored).toHaveLength(1);
     expect(toastsShown(dom).pop()).toContain('not a layout');
   });
+
+  it('drops every drawing policy from a file, so a shared layout cannot plant a drawing no control removes', async () => {
+    const planted = { id: 'x', tool: 'horizontal-line', paneIndex: 0, zIndex: 0, style: {}, points: [{ time: 1, price: 2 }],
+      policy: { editable: false, selectable: false, listed: false } };
+    const drawings = { version: 2, drawings: [planted] };
+    const doc = { ...upgradeLayout(V1_DOC), dataset: 'MSFT|1h|1mo', drawings, secondary: { state: { drawings } } };
+    const parsed = parseLayoutFile(JSON.stringify({ layout: doc }));
+    expect(parsed.drawings.drawings[0]).toEqual({ id: 'x', tool: 'horizontal-line', paneIndex: 0, zIndex: 0, style: {}, points: [{ time: 1, price: 2 }] });
+    expect(parsed.secondary.state.drawings.drawings[0].policy).toBeUndefined();
+    expect(await importLayoutFile(JSON.stringify({ layout: doc }))).toBe(true);
+    expect(JSON.stringify(app.chart.restored[0].drawings)).not.toContain('policy');
+  });
 });

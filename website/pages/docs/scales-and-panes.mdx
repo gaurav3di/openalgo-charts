@@ -20,6 +20,16 @@ chart.timeScale.setRightOffset(4);         // empty bars kept right of the last 
 chart.resetScale();                        // configured default view + autoscale
 ```
 
+Direct navigation mutations on `chart.timeScale` repaint and publish one `pan` or
+`zoom` event after the final range changes, so linked charts follow them too.
+This includes spacing, offset, visible range, pixel scrolling, cursor zoom and
+fit. No-op changes are silent. `setWidth` and `setBaseIndex` are silent layout and
+data bookkeeping methods; ordinary hosts should use the chart's sizing and data
+APIs. A standalone `TimeScale.setChangeHandler` receives the previous logical
+range. Valid explicit range requests invoke that handler even when unchanged, so
+they can cancel pending motion without a navigation event. Do not replace the
+owning chart's handler.
+
 ### Default visible bars
 
 Configure the initial view and the view restored by `resetScale()`:
@@ -42,6 +52,66 @@ all call `resetScale()`. The explicit `chart.fitContent()` and
 `chart.timeScale.fitContent(barCount)` methods continue to fit all supplied bars. In the
 widget, ordinary data loads use the configured count; a host that explicitly applies a
 visible range after loading data takes control of that view.
+
+### Allow panning and zooming independently
+
+Both actions are enabled by default. Change them at creation or at runtime:
+
+```ts
+const chart = createChart(el, {
+  navigation: { panEnabled: true, zoomEnabled: false },
+});
+chart.setNavigationOptions({ panEnabled: false });
+chart.navigationOptions().zoomEnabled; // false
+```
+
+Panning covers plot drags, horizontal or shift-wheel movement, pinch translation,
+keyboard steps and momentum. Zooming covers ordinary or control-wheel movement,
+price/time-axis drags, pinch scaling, zoom keys and user reset/fit actions. The
+native navigation row hides disabled actions. Turning an action off cancels its
+active motion; re-enabling it requires a fresh gesture. Rejected wheel input is
+left available to the page.
+
+Crosshair, selection, drawings and chart picking remain usable. Programmatic
+scale setters, `fitContent()`, `resetScale()`, linked charts, state restoration and
+data updates still work. These options control native user navigation rather
+than freezing the viewport. Custom hosts should check the policy before invoking
+their own user-facing fit or reset buttons, as the packaged widget and reference
+host do. Both controls are available in **Axes / Navigation** settings and saved
+with the chart. An older saved state that omits a key retains its current value.
+
+<RunnableExample height={320} code={`el.style.position = 'relative';
+const controls = document.createElement('div');
+controls.style.cssText = 'position:absolute;left:10px;top:8px;right:64px;display:flex;gap:8px;z-index:2';
+controls.addEventListener('pointerdown', event => event.stopPropagation());
+el.appendChild(controls);
+const surface = document.createElement('div');
+surface.style.cssText = 'position:absolute;inset:44px 0 0';
+el.appendChild(surface);
+const chart = lib.createChart(surface, { branding: false,
+  navigation: { mousePan: 'horizontal', defaultVisibleBars: 60 } });
+chart.addSeries('candlestick').setData(lib.generateBars(1700000000, 180, 60));
+for (const [key, label] of [['panEnabled', 'Pan'], ['zoomEnabled', 'Zoom']]) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.onpointerdown = () => button.focus({ preventScroll: true });
+  button.onmousedown = event => {
+    event.preventDefault();
+    button.focus({ preventScroll: true });
+  };
+  button.style.cssText = 'padding:5px 9px;border:1px solid #64748b;border-radius:4px;background:#172033;color:#e2e8f0;font:12px sans-serif;cursor:pointer';
+  const refresh = () => {
+    const on = chart.navigationOptions()[key] !== false;
+    button.textContent = label + (on ? ' on' : ' off');
+    button.setAttribute('aria-pressed', String(on));
+  };
+  button.onclick = () => {
+    chart.setNavigationOptions({ [key]: chart.navigationOptions()[key] === false });
+    refresh();
+  };
+  refresh(); controls.appendChild(button);
+}
+return chart;`} />
 
 ### Preserve zoom across a data reload
 
@@ -100,11 +170,15 @@ logarithmic axis is correct too. A trend drawn at 45 degrees stays at 45 degrees
 time axis zooms. The axis goes manual while it holds, because auto-fit would re-fit the data
 every frame and undo the ratio; auto-fit or `resetScale()` releases it.
 
-**Moving an axis** swaps the two side scale objects rather than copying their state, so the
+**The legacy `movePriceAxis` method** swaps the two side scale objects rather than copying their state, so the
 range, mode, margins and formatter travel with the axis; the vacated strip starts again from
 the chart-wide defaults, and the column is freed when nothing is left on it. The pane's
 crosshair tag, last-price line, coordinate API and axis drag all follow the scale the prices
 are actually labelled in, and the left strip is draggable. `priceAxisMoved` fires on success.
+
+To move or reorder a column while keeping its scale ID, use
+[`setPriceAxisPlacement`](#multiple-axes-on-the-same-side). It also supports
+several independent scales on either side.
 
 Turning these into a menu, including the disabled-but-visible rows, is covered on
 [Settings & Menus](/docs/settings-and-menus#the-price-axis-menu).
@@ -173,6 +247,8 @@ untouched and neither side can collapse.
 | `chart.movePane(index, -1 \| 1)` | Move a pane one slot up or down. |
 | `chart.maximizePane(index)` | Give one pane the whole chart and hide the rest; call again to restore. |
 | `chart.maximizedPane()` | The maximized pane index, or `null`. |
+| `chart.setPaneCollapsed(index, collapsed)` | Fold a lower pane to its header strip, or open it again. |
+| `chart.paneCollapsed(index)` | Whether a pane is folded. Always `false` for pane 0. |
 | `chart.removePane(index)` | Remove a pane with its series and indicators. |
 
 <Callout type="info">
@@ -194,25 +270,65 @@ captures the real stack rather than a placeholder. The maximized index is not pa
 the saved state: `restoreState` brings back the layout unmaximized.
 </Callout>
 
-Events: `paneResized`, `paneMoved`, `paneMaximized`, `paneRemoved`.
+Events: `paneResized`, `paneMoved`, `paneMaximized`, `paneCollapsed`, `paneRemoved`.
+
+### Collapsing a pane
+
+A lower pane can fold to a strip one legend row tall and open again later. Nothing in it
+is lost: its series keep taking data, its studies keep recomputing, and its drawings,
+scales and stored weight are untouched, so it opens at exactly the height it had. The
+open panes share the rest of the chart by weight.
+
+```ts
+const rsi = chart.addIndicator('rsi');
+chart.setPaneCollapsed(rsi.paneIndex, true);   // a header strip
+chart.paneCollapsed(rsi.paneIndex);            // true
+chart.setPaneCollapsed(rsi.paneIndex, false);  // back to its former height
+```
+
+The strip shows one legend row: the pane's first study row, and that row's collapse
+button opens it again. The study row leads the strip even when the host placed its own
+row on the pane first, and whichever study is first carries the button, open or folded,
+so one that becomes first because the study above it was closed or moved gains it.
+Nothing else on the strip paints or answers the pointer: no
+plot, grid, price ladder or crosshair. `click`, `crosshair:move` and `contextmenu` report no price there,
+and `priceToCoordinate` and `coordinateToPrice` return `null` for the pane, so a drawing
+tool, a price alert or a host overlay cannot land on a pane nobody can see. Alerts on the
+pane's studies and drawings keep firing while it is folded.
+
+<Callout type="info">
+**Pane 0 always stays open**, the way it always stays in place. Collapsing the bottom
+pane keeps the time axis at the foot of the chart, under its strip; the navigator and
+the brand mark move up to the lowest open pane. Maximizing a collapsed pane shows it
+whole and folds it again on restore, and collapsing the maximized pane ends the
+maximize. A divider beside a strip moves height between the open panes either side of it.
+
+`getState` saves `collapsed: true` on a folded pane, and a pane saved without it restores
+open. A restore that lists panes or rebuilds studies also opens any pane it does not list,
+so a study rebuilt onto an existing pane never opens inside a stale strip. This is
+separate from collapsing study legend rows into a count, which never changes a pane; with
+both on, a strip keeps its first study row, since its collapse button is the way back.
+</Callout>
 
 ## Pane legends
 
 Every indicator gets a legend row at the top-left of its pane: a colour swatch, the name,
 its parameters, and one reading per plot in that plot's own colour, tracking the crosshair.
 Hovering the row reveals inline controls; the chart handles the presses itself, so you get
-show/hide, move, maximize, and delete without wiring anything.
+show/hide, move, collapse, maximize, and delete without wiring anything.
 
 | Control | Effect |
 |---|---|
 | Eye | Show / hide the source's plots (it stays on the chart). |
 | Gear | Emits `indicatorSettings` (see below). |
 | Up / Down | Move this pane one slot. |
+| Collapse | Fold this pane to its header strip; press again to open it. |
 | Maximize | Expand this pane; press again to restore. |
 | Trash | Remove the source, and its pane if that empties it. |
 
-The first legend on a non-price pane also carries the pane-level controls (move, maximize),
-so extra rows on the same pane stay uncluttered.
+The first study row on a non-price pane also carries the pane-level controls (move, collapse, maximize),
+whichever study that is and whether or not the host added a row above it, so extra rows on the same
+pane stay uncluttered.
 
 The base engine has no built-in settings dialog: the gear emits an event for the host.
 The optional widget supplies the dialog through that public API.
@@ -253,7 +369,7 @@ symbol.setValues([
 ```
 
 `actions: []` gives a read-only row. Pass any of `'hide' | 'settings' | 'up' | 'down' |
-'maximize' | 'close'` to show controls; they hit-test as `${id}::<action>` and route through
+'collapse' | 'maximize' | 'close'` to show controls; they hit-test as `${id}::<action>` and route through
 `chart.subscribeClick`.
 
 ### Status line options
@@ -327,17 +443,235 @@ strokes rather than text glyphs (`⛶` and `🗑` render as emoji on some platfo
 
 Assign a series to a price axis with `priceScaleId`:
 
-- **`'right'`** (default) and **`'left'`** each draw their own axis and autoscale
+- **`'right'`** (default) and **`'left'`** default to their named side and autoscale
   independently: spot price on one side, a premium or spread on the other.
-- **`''`** (empty string) is a hidden overlay scale with no axis, autoscaled on its own:
+- **`''`** (empty string) defaults to a hidden overlay scale, autoscaled on its own:
   the standard way to pin a volume histogram inside the price pane.
-- **`'overlay:name'`** creates an independent hidden scale. Series with the same
+- **`'overlay:name'`** creates an independent scale that is hidden by default. Series with the same
   name share its range and baseline; different names keep separate price units.
-  The scale is released when its last series is removed. Named overlays are
-  included in pane-wide scale operations, excluded from axis-only operations,
-  and reserve no visible axis column.
+  Bound primitives and explicit scale configuration keep the scale alive after
+  its last series is removed. Hidden scales reserve no visible column. Use
+  `setPriceAxisPlacement` to expose one on either side without changing its ID.
 
 Reach a series' scale with `series.priceScale()` and tune it via `.setOptions(...)`.
+
+### Multiple axes on the same side
+
+Each scale can own a separate visible column, even when another scale already
+uses that side. The scale ID identifies the data and configuration; placement
+controls where its labels appear.
+
+```ts
+const price = chart.addSeries('line', { priceScaleId: 'right' });
+const spread = chart.addSeries('line', { priceScaleId: 'overlay:spread' });
+price.setData(pricePoints);
+spread.setData(spreadPoints);
+
+chart.setPriceAxisPlacement(0, 'overlay:spread', 'right');   // append outside price
+chart.setPriceAxisPlacement(0, 'overlay:spread', 'right', 0); // nearest the plot
+chart.setPriceAxisPlacement(0, 'overlay:spread', 'left');
+chart.setPriceAxisPlacement(0, 'overlay:spread', 'hidden');  // keep data and range
+
+const placement = chart.priceAxisPlacement(0, 'overlay:spread');
+const columns = chart.priceAxisLayout(0);
+```
+
+| API | Result | Meaning |
+|---|---|---|
+| `priceAxisPlacement(paneIndex, scaleId)` | `PriceAxisPlacement \| null` | Detached `{ side, order }`, including placement retained by an unused scale. |
+| `setPriceAxisPlacement(paneIndex, scaleId, side, order?)` | `boolean` | Updates placement. Invalid or unchanged requests return `false` before mutation. |
+| `priceAxisLayout(paneIndex = 0)` | `readonly PriceAxisSlot[]` | Active columns with `{ scaleId, side, order, x, width }`. |
+
+`side` is `'left'`, `'right'` or `'hidden'`. Order zero is nearest the plot.
+An explicit order must be a nonnegative safe integer and is clamped to the side's
+available ranks. Omit it to retain the current rank on the same side or append
+when switching sides. The layout's `x` is the column's left edge in absolute pane
+CSS pixels, and `width` measures one column. Re-read layout after resizing or
+changing sources or placement.
+
+The placement getter returns `null` for an invalid ID, missing pane or destroyed
+chart. Layout returns an empty array for a missing pane or destroyed chart. A
+successful change emits `priceAxisPlacementChanged` with
+`{ paneIndex, scaleId, side, order }`, followed by `objects:change`.
+
+Placement preserves the scale object, range, formatter, ratio lock, source and
+study IDs, markers and alert anchors. It does not reassign data to another scale.
+The legacy `movePriceAxis` method retains that separate reassignment behavior.
+
+Attached series, including series hidden with `visible: false`, and explicitly
+bound primitives occupy columns. A configured scale without sources retains its
+placement but reserves no column. A chart with no sources keeps its default
+right column. Hiding an axis keeps its sources plotted on the same scale.
+
+All panes reserve the maximum number of columns needed on each side so time
+coordinates stay aligned. A pane packs its active columns nearest the plot;
+unused outer cells have no price-axis input target. Columns use
+`ChartOptions.priceAxisWidth`, reduced equally on narrow charts to leave at least
+one column-width for the plot. Ticks and value labels stay within their own
+column. Wheel input, dragging and context menus act on the column under the
+pointer. The crosshair price readout remains on the primary series' scale.
+
+Full chart and workspace snapshots preserve optional
+`PriceScaleState.placement: { side, order }`. Old snapshots without it restore
+default placement. Indicator templates currently retain scale IDs but do not
+save pane column placement.
+
+Try the [multiple price axes example](/examples#multiple-price-axes).
+
+### Reassign a live series
+
+```ts
+const changed = chart.setSeriesPriceScale(series, 'left');
+chart.setSeriesPriceScale(series, 'overlay:spread');
+chart.setSeriesPriceScale(series, 'right');
+```
+
+`setSeriesPriceScale` moves one host-created series to a scale on its current
+pane. The handle, data, styles, primary role and marker bindings survive. Both
+scale objects keep their configuration, including manual ranges and ratio locks.
+An unused source scale remains available for a later return without drawing
+stale labels. A side's column disappears when no series or bound primitive uses it on any pane;
+a chart containing only hidden-scale series reserves neither axis column.
+Crosshair price tags are omitted for a hidden readout scale.
+Last-price and series-value tags follow their source's left or right axis. The
+readout series alone carries the countdown; other visible sources use their plot
+colors, including sources on the opposite axis. Each column resolves its own
+tick/tag collisions. Hidden-scale sources draw no axis tags.
+
+Left tags fit inside the reserved column and stay within the pane at its top and
+bottom edges. A tag is omitted if there is too little room to draw it. Hidden
+series, `lastValueVisible: false`, transparent plots and nonfinite current values
+do not produce tags.
+
+Explicit series `priceFormat` applies to the target, followed by its style
+precision, just as with `addSeries`. This also changes formatting for other
+series sharing the target scale; the source scale's formatter is unchanged.
+Without an explicit format or precision, the target keeps its formatter.
+
+A successful move repaints and publishes one `objects:change`, without resetting
+data or recalculating studies. The method returns `false` before mutation for an
+unchanged assignment, invalid ID, removed or foreign handle, destroyed chart, or
+indicator-owned plot. Use the study's `setPriceScale` to move its local resources
+together, or `setPlotPriceScales` for selected plots. To move every series and bound primitive on one visible axis along
+with that axis's configuration, use `movePriceAxis`.
+
+### Reassign a whole study
+
+```ts
+const study = chart.addIndicator('rsi', { period: 14 }, { priceScaleId: 'left' });
+study.priceScaleId();                    // 'left', or null for descriptor defaults
+study.setPriceScale('overlay:momentum');  // hidden axis, independent range
+study.setPriceScale('right');
+study.setPriceScale(null);               // restore declared plot assignments
+```
+
+All local plots, fills, levels, drawings and attached price primitives move in
+one transaction. Plot markers follow their series. Explicit `overlay: true`
+resources retain their price-pane placement and effective scale; price-anchored
+markers retain their primary-series binding. Tables and background shading stay
+in screen space. A fill whose endpoints would use different panes or scales
+rejects the request before any resource moves.
+Unplotted calculation columns used by a fill take that fill's local band scale.
+
+The move retains the instance, plot handles, data and provider attachments,
+updates the legend and axis columns, then emits one `objects:change`. It does
+not recalculate the study or evaluate alerts. Invalid, unchanged and removed
+requests return `false`. The override survives settings changes and pane moves.
+Native plot type changes through settings also preserve the plot handle and its
+scale; transform types continue to require host-prepared data.
+
+Target ranges, modes and ratio locks remain authoritative. Explicit plot price
+formats and style precision apply in descriptor order to the shared target
+formatter. A descriptor's fixed range is an owned default for an eligible scale.
+Moving or removing its owner releases only that default and preserves host
+manual ranges, host fixed ranges and other sources' settings.
+If settings change the same owner's declared range, the fit default updates while
+the current manual view remains in force until auto-fit is enabled again.
+
+`movePriceAxis` has a narrower scope: it refuses studies with mixed local scale
+assignments or explicit price overlays. This conservative guard belongs to the
+legacy operation; saved state can represent mixed plot bindings.
+`priceAxisState().movable` reflects this boundary.
+Uniform local studies and primitive-only studies adopt the moved side.
+`study.setPriceScale` still moves every local resource while retaining explicit
+price overlays.
+
+Saved `IndicatorState.priceScaleId` carries a whole-study override, and
+`plotPriceScaleIds` carries explicit plot overrides. Without either, plots use
+descriptor defaults. Saved scales may include
+`indicatorRange: { instanceId, manual }`, identifying a study-owned fixed range
+and any later manual view intent. Preserve that metadata with the scale state so
+restoring a layout can distinguish the study default from a host range with the
+same endpoints. Source data and runtime formatter callbacks remain host-owned.
+
+See the [whole-study scale example](/examples#move-a-whole-study-between-scales).
+
+### Reassign individual study plots
+
+Use one instance for related calculations even when its outputs have different
+units. Assign its declared plots independently:
+
+```ts
+const study = chart.addIndicator('my-mixed-study', {}, {
+  plotPriceScaleIds: { upper: 'overlay:band', lower: 'overlay:band' },
+});
+study.plotPriceScaleId('upper'); // effective scale ID
+study.plotPriceScaleIds();      // detached map of explicit overrides
+study.setPlotPriceScales({ upper: 'left', lower: 'left' });
+study.setPlotPriceScales({ upper: null, lower: null }); // remove these overrides
+```
+
+The patch is partial and atomic: omitted keys stay unchanged, while null removes
+an override. A fill's endpoints must share a pane and scale, so move the pair in
+one patch. Unknown plots, invalid IDs, accessors and incompatible fills return
+false before mutation. Empty and unchanged patches also return false.
+`plotPriceScaleId` returns null for an unknown plot. Invalid creation options or
+known-descriptor restore assignments fail before chart resources change.
+
+Precedence is per-plot override, local whole-study override, descriptor scale,
+then `right`. Explicit `overlay: true` plots remain on the price pane and ignore
+the whole-study override. Their per-plot overrides still select a scale there.
+A successful `setPriceScale(id)` clears local plot overrides; passing null also
+clears the whole-study override and restores local descriptor defaults. Explicit
+price-overlay overrides survive both calls and can be cleared individually.
+
+Levels, unbound price drawings, attached price primitives and study-owned range
+intent follow the first local plot. A drawing that names a `plot` follows that
+plot's scale; a price-pane drawing follows the scale the price pane quotes prices on, the
+candles' own, without binding one. Plot
+markers, including marker groups that name a plot, follow their series. The move
+preserves handles and data without recalculation. Target ranges stay intact;
+formatting is shared by plots assigned to the same ID. Explicit plot formats
+apply in descriptor order on a destination scale. A price format restores the
+chart's price formatter, replacing a prior percent or volume formatter. To expose a
+named scale's column, call `setPriceAxisPlacement` for the plot's pane.
+
+Chart state, workspace documents and legacy study templates retain
+`IndicatorState.plotPriceScaleIds`. Restore checks declared plots and fills when
+the descriptor is registered. Portable template pane metadata and ownership of
+copied scales are separate concerns. Source data and formatter callbacks remain
+host-owned.
+
+Try [individual plot assignments](/examples#assign-scales-to-individual-study-plots),
+including a rejected split fill, whole-study reset and saved-layout restore.
+
+### Bind a custom price primitive
+
+`pane.bindPrimitiveScale(primitive, id)` assigns an attached primitive to a scale;
+`null` restores its default right-scale behavior. The owner schedules layout and
+repaint after its transaction. `pane.primitiveScaleId(primitive)` reads the
+explicit binding. Drawing, hit-testing, autoscale and SVG export use the bound
+scale. Bindings follow pane transfers and axis moves, and clear on removal.
+
+`PrimitiveRenderContext.priceAxisSide` identifies `'left'`, `'right'` or `'hidden'`.
+`priceAxisWidth` is one column's width, or zero when hidden. Optional
+`priceAxisOffset` is the plot-relative x of that column's inner edge; omitted
+offsets default to zero on the left and `plotWidth` on the right. Native contexts
+supply the actual offset. `PriceLine` and `PriceLevels` confine their axis tags to
+the column while retaining plot-relative line and hit coordinates. Bound hits carry
+`PrimitiveHit.priceScale`, which supplies drag prices. A `PriceLine` uses the left
+column for a left binding and omits the axis pill for a hidden binding while
+keeping its plot line and label.
 
 ### Dual left / right axes
 
@@ -376,8 +710,8 @@ return chart;`} />
 
 ### Per-series price format
 
-`priceFormat` sets a series' axis and crosshair-tag formatting without affecting other
-series (each has its own scale):
+`priceFormat` sets formatting on the series' scale, including its axis and
+crosshair tag. Other series sharing that scale use the same formatting:
 
 ```ts
 // currency
@@ -562,3 +896,25 @@ ps.setAutoScale(true);                   // re-enable autoscale after a manual a
 ps.setBaseline(prevClose);               // what percentage / indexed-to-100 quote against
 ps.ticks(6);                             // the tick ladder, in prices, at most 6 of them
 ```
+
+## Fit the primary prices only
+
+Use `chart.setPriceOnlyAutoScale(true)` to fit the primary series' current scale
+without including overlays or primitive extents on that scale. Read it with
+`chart.priceOnlyAutoScale()`. The constructor option is `priceOnlyAutoScale`,
+defaulting to `false`.
+
+The preference follows the actual primary series across panes and named scales.
+Other axes still fit their own data. Studies continue to calculate and draw;
+values outside the fitted range can be clipped. A hidden or empty primary does
+not substitute indicator extents. Explicit `afterAutoscale` extensions retain
+their authority to adjust the resulting range.
+
+Toggling this preference preserves manual ranges and ratio locks. Enable
+`chart.setPriceAxisAutoFit(paneIndex, scaleId, true)` separately when auto-fit is
+wanted. With auto-fit active, the primary price range follows visible bars as
+navigation changes the time window.
+
+The widget and reference host expose **Fit primary prices only** in Axes settings
+and on the primary scale's context menu. The schema key is `scales.priceOnly`.
+The preference is saved per chart in native state and portable workspaces.

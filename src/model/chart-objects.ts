@@ -65,6 +65,12 @@ export interface ChartObjectDrawing {
   visible?: boolean;
   locked?: boolean;
   zIndex?: number;
+  /**
+   * The drawing tier's policy flags the inventory honours: `listed` false
+   * leaves the drawing out, `selectable` false withholds select, and
+   * `editable` false withholds hide, lock and remove.
+   */
+  policy?: { readonly selectable?: boolean; readonly editable?: boolean; readonly listed?: boolean };
 }
 
 export interface ChartObjectDrawingGroup {
@@ -80,6 +86,8 @@ export interface ChartObjectDrawingSource {
   select(id: string | readonly string[] | null, additive?: boolean): void;
   update(id: string, patch: { visible?: boolean; locked?: boolean }): void;
   remove(id: string): boolean;
+  /** Delete several as one undo step; a group row holding an unlisted drawing needs it to offer remove. */
+  removeMany?(ids: readonly string[]): void;
   reorder?(id: string, direction: -1 | 1): boolean;
   groups?(): readonly ChartObjectDrawingGroup[];
   createGroup?(name: string, ids: readonly string[]): ChartObjectDrawingGroup | null;
@@ -94,7 +102,8 @@ export interface ChartObjectsOptions {
   onSettings?(object: ChartObjectSnapshot): void;
 }
 
-type Actions = Pick<ChartObjectProvider, 'select' | 'setVisible' | 'setLocked' | 'remove' | 'openSettings' | 'focus' | 'reorder' | 'move'>;
+type Actions = Pick<ChartObjectProvider, 'select' | 'setVisible' | 'setLocked' | 'remove' | 'openSettings' | 'focus' | 'reorder' | 'move'>
+  & { ungroup?(): boolean };
 interface Entry { row: ChartObjectSnapshot; actions: Actions }
 interface Registration { provider: ChartObjectProvider; off?: () => void }
 const EMPTY: readonly ChartObjectSnapshot[] = Object.freeze([]);
@@ -276,9 +285,9 @@ export class ChartObjects {
   }
 
   public ungroup(id: string): boolean {
-    const row = this.get(id);
-    if (this._destroyed || row?.kind !== 'group' || id !== 'group:' + row.sourceId) return false;
-    const result = this._options.drawings?.removeGroup?.(row.sourceId, false) === true;
+    const ungroup = this._destroyed ? undefined : this._entries.get(id)?.actions.ungroup;
+    if (!ungroup) return false;
+    const result = ungroup();
     this.refresh();
     return result;
   }
@@ -338,9 +347,14 @@ export class ChartObjects {
       });
     }
     if (draw) {
+      // An unlisted drawing is not in the inventory at all, so no row, group
+      // or group-wide action reaches it from here.
+      const listed = (drawing: ChartObjectDrawing): boolean => drawing.policy?.listed !== false;
       const membership = new Map<string, string>();
       for (const group of draw.groups?.() ?? []) {
-        const members = group.members.flatMap(id => { const drawing = draw.get(id); return drawing ? [drawing] : []; });
+        // A member the source no longer holds is skipped, as it always was.
+        const found = group.members.flatMap(id => { const drawing = draw.get(id); return drawing ? [drawing] : []; });
+        const members = found.filter(listed);
         if (!members.length) continue;
         const id = 'group:' + group.id;
         for (const member of members) membership.set(member.id, id);
@@ -348,15 +362,28 @@ export class ChartObjects {
           if (draw.updateMany) draw.updateMany(members.map(member => ({ id: member.id, patch: value })));
           else for (const member of members) draw.update(member.id, value);
         };
+        const pickable = members.filter(member => member.policy?.selectable !== false);
+        // Removing or dissolving the whole group would reach its unlisted
+        // members too, so a group holding one removes just the members
+        // listed here, and is not ungrouped from here at all.
+        const whole = members.length === found.length;
+        const remove = whole ? draw.removeGroup && (() => { draw.removeGroup!(group.id, true); })
+          : draw.removeMany && (() => { draw.removeMany!(members.map(member => member.id)); });
         add(id, group.id, { kind: 'group', name: group.name, paneIndex: members[0].paneIndex,
           visible: members.some(member => member.visible !== false), locked: members.every(member => member.locked === true),
-          selected: members.every(member => selected.includes(member.id)),
-        }, { select: () => draw.select(members.map(member => member.id)), setVisible: visible => patch({ visible }),
-          setLocked: locked => patch({ locked }),
-          ...(draw.removeGroup ? { remove: () => { draw.removeGroup!(group.id, true); } } : {}),
+          selected: pickable.length > 0 && pickable.every(member => selected.includes(member.id)),
+        }, {
+          ...(pickable.length ? { select: () => draw.select(pickable.map(member => member.id)) } : {}),
+          ...(whole && draw.removeGroup ? { ungroup: () => draw.removeGroup!(group.id, false) === true } : {}),
+          // A group-wide switch that skipped a read-only member would leave
+          // the group half done, so a group holding one offers none.
+          ...(members.every(member => member.policy?.editable !== false) ? {
+            setVisible: (visible: boolean) => patch({ visible }), setLocked: (locked: boolean) => patch({ locked }),
+            ...(remove ? { remove } : {}),
+          } : {}),
         });
       }
-      for (const drawing of [...draw.drawings()].sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0))) {
+      for (const drawing of [...draw.drawings()].filter(listed).sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0))) {
         const id = 'drawing:' + drawing.id;
         const canFocus = chart.dataLayer.length > 0 && drawing.points.length > 0
           && drawing.points.every(p => Number.isFinite(p.time) && Number.isFinite(p.price))
@@ -367,8 +394,11 @@ export class ChartObjects {
           locked: drawing.locked === true, selected: selected.includes(drawing.id),
         }, {
           ...(draw.reorder ? { reorder: (direction: -1 | 1) => draw.reorder!(drawing.id, direction) } : {}),
-          select: () => draw.select(drawing.id), setVisible: on => draw.update(drawing.id, { visible: on }),
-          setLocked: on => draw.update(drawing.id, { locked: on }), remove: () => { draw.remove(drawing.id); },
+          ...(drawing.policy?.selectable !== false ? { select: () => draw.select(drawing.id) } : {}),
+          ...(drawing.policy?.editable !== false ? {
+            setVisible: (on: boolean) => draw.update(drawing.id, { visible: on }),
+            setLocked: (on: boolean) => draw.update(drawing.id, { locked: on }), remove: () => { draw.remove(drawing.id); },
+          } : {}),
           ...(canFocus ? { focus: () => this._focusDrawing(drawing) } : {}), ...settings(id),
         });
       }
@@ -401,6 +431,8 @@ export class ChartObjects {
     scale.setPriceRange({ min: min - pad, max: max + pad });
     const maximized = chart.maximizedPane();
     if (maximized !== null && maximized !== drawing.paneIndex) chart.maximizePane(maximized);
+    // A strip draws nothing, so focusing a drawing on one opens its pane.
+    chart.setPaneCollapsed(drawing.paneIndex, false);
     chart.setVisibleLogicalRange({ from: (from + to - span) / 2, to: (from + to + span) / 2 });
   }
 

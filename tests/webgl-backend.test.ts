@@ -879,8 +879,8 @@ describe('in a chart', () => {
       const types = ops.map((o) => o.type);
       // The blit sits between the plot clip and its restore, so the price
       // line and tags the pane draws afterwards land over the series.
-      const clip = types.lastIndexOf('clip');
       const blit = types.lastIndexOf('drawImage');
+      const clip = types.lastIndexOf('clip', blit);
       const restore = types.indexOf('restore', clip);
       expect(clip).toBeGreaterThan(-1);
       expect(blit).toBeGreaterThan(clip);

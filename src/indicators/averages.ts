@@ -79,13 +79,10 @@ function shift(values: readonly number[], k: number): number[] {
 }
 
 /**
- * `smaSeededEma` over a series that itself opens with a warmup gap. the reference `ema`
- * re-seeds from `sma(src, length)` for as long as its own previous value is
- * `na`, and that SMA stays `na` until the window holds `length` real values, so
- * an EMA chained onto a gapped series starts `length - 1` bars after the inner
- * series does, not at `length - 1`. `smaSeededEma` seeds unconditionally from index 0,
- * where a leading NaN would poison the recursion forever and blank the whole
- * column, so it is only ever shown the live tail and the answer is re-padded.
+ * Align a chained SMA-seeded EMA with its input's leading warmup gap.
+ * Smoothing starts at the first finite value and the result is padded back to
+ * the original bar positions. `smaSeededEma` supplies finite-window seeding and
+ * subsequent gap behavior; the wrapper keeps the composition's alignment explicit.
  */
 function emaOfGapped(values: readonly number[], period: number): number[] {
   const n = values.length;

@@ -170,22 +170,22 @@ describe('Stochastic smooths the raw %K once and the %D again', () => {
   });
 });
 
-describe('ADX holds its directional indicators across a zero true range', () => {
+describe('ADX leaves undefined directional ratios absent across a zero true range', () => {
   // high, low, close. Bar 3 is flat at the previous close, so its true range is
   // exactly 0, and at DI length 1 the smoothed true range is 0 with it.
   //
   //   tr   = [na, 3, 4, 0, 6, 2]        (bar 0 has no previous close)
-  //   +DM  = [0, 2, 0, 0, 6, 1]
-  //   -DM  = [0, 0, 2, 0, 0, 0]
+  //   +DM  = [na, 2, 0, 0, 6, 1]
+  //   -DM  = [na, 0, 2, 0, 0, 0]
   //
   // At DI length 1 Wilder's average is the value itself, so
   //   bar 1: +DI 2/3*100, -DI 0
   //   bar 2: +DI 0,       -DI 2/4*100 = 50
-  //   bar 3: undefined, so both carry bar 2 forward
+  //   bar 3: undefined, so both directional ratios and DX are absent
   //   bar 4: +DI 6/6*100 = 100, -DI 0
   //   bar 5: +DI 1/2*100 = 50,  -DI 0
-  // One indicator is zero on every bar here, so DX is 100 throughout and its
-  // 2-bar average is 100 from bar 2 on.
+  // One indicator is zero on every available bar here, so DX is 100 on those
+  // bars. Its 2-bar average retains state across the absent bar 3.
   const locked = hlcBars([
     [10, 8, 9],
     [12, 9, 11],
@@ -195,34 +195,26 @@ describe('ADX holds its directional indicators across a zero true range', () => 
     [15, 13, 14],
   ]);
 
-  it('carries the last reading across the hole instead of dropping it', () => {
+  it('emits no directional ratio at the hole and resumes finite readings', () => {
     const out = ADX.calc(locked, { period: 1, adxPeriod: 2 }, {});
-    expect(out.plusDi[2] as number).toBeCloseTo(0, 12);
-    expect(out.minusDi[2] as number).toBeCloseTo(50, 12);
-    expect(out.plusDi[3] as number).toBeCloseTo(0, 12);
-    expect(out.minusDi[3] as number).toBeCloseTo(50, 12);
-    expect(out.plusDi[4] as number).toBeCloseTo(100, 12);
-    expect(out.minusDi[4] as number).toBeCloseTo(0, 12);
+    expect(out.plusDi).toEqual([null, (2 / 3) * 100, 0, null, 100, 50]);
+    expect(out.minusDi).toEqual([null, 0, 50, null, 0, 0]);
   });
 
-  it('keeps the ADX alive for the rest of the series after the hole', () => {
-    // A gap at bar 3 would enter Wilder's average and never leave it, so every
-    // later bar would be blank too.
+  it('leaves the missing DX absent while retaining the ADX smoothing state', () => {
     const out = ADX.calc(locked, { period: 1, adxPeriod: 2 }, {});
-    expect(out.adx[3] as number).toBeCloseTo(100, 12);
-    expect(out.adx[4] as number).toBeCloseTo(100, 12);
-    expect(out.adx[5] as number).toBeCloseTo(100, 12);
+    expect(out.adx).toEqual([null, null, 100, null, 100, 100]);
   });
 
   // high, low, close with no flat bar, DI length 2 and ADX smoothing 2.
   //   tr    = [na, 3, 4, 5, 2]
   //   trR   = [na, na, 3.5, 4.25, 3.125]        (Wilder from bar 1)
-  //   +DM   = [0, 2, 0, 2, 0]  -> +DMr = [0, 1, 0.5, 1.25, 0.625]
-  //   -DM   = [0, 0, 2, 0, 0]  -> -DMr = [0, 0, 1,   0.5,  0.25]
-  //   bar 2: +DI 0.5/3.5*100 = 100/7,   -DI 1/3.5*100 = 200/7,   dx = 100/3
-  //   bar 3: +DI 1.25/4.25*100,         -DI 0.5/4.25*100,        dx = 300/7
-  //   bar 4: +DI 0.625/3.125*100 = 20,  -DI 0.25/3.125*100 = 8,  dx = 300/7
-  //   adx seeds at bar 3 with (100/3 + 300/7)/2 = 800/21, then (800/21 + 300/7)/2
+  //   +DM   = [na, 2, 0, 2, 0] -> +DMr = [na, na, 1, 1.5, 0.75]
+  //   -DM   = [na, 0, 2, 0, 0] -> -DMr = [na, na, 1, 0.5, 0.25]
+  //   bar 2: +DI 1/3.5*100 = 200/7,   -DI 1/3.5*100 = 200/7,   dx = 0
+  //   bar 3: +DI 1.5/4.25*100,        -DI 0.5/4.25*100,        dx = 50
+  //   bar 4: +DI 0.75/3.125*100 = 24, -DI 0.25/3.125*100 = 8,  dx = 50
+  //   adx seeds at bar 3 with (0 + 50)/2 = 25, then (25 + 50)/2 = 37.5
   const clean = hlcBars([
     [10, 8, 9],
     [12, 9, 11],
@@ -234,15 +226,15 @@ describe('ADX holds its directional indicators across a zero true range', () => 
   it('matches the hand-computed indicators and ADX with no hole present', () => {
     const out = ADX.calc(clean, { period: 2, adxPeriod: 2 }, {});
     expect(out.plusDi.slice(0, 2)).toEqual([null, null]);
-    expect(out.plusDi[2] as number).toBeCloseTo(100 / 7, 12);
+    expect(out.plusDi[2] as number).toBeCloseTo(200 / 7, 12);
     expect(out.minusDi[2] as number).toBeCloseTo(200 / 7, 12);
-    expect(out.plusDi[3] as number).toBeCloseTo((1.25 / 4.25) * 100, 12);
+    expect(out.plusDi[3] as number).toBeCloseTo(600 / 17, 12);
     expect(out.minusDi[3] as number).toBeCloseTo((0.5 / 4.25) * 100, 12);
-    expect(out.plusDi[4] as number).toBeCloseTo(20, 12);
+    expect(out.plusDi[4] as number).toBeCloseTo(24, 12);
     expect(out.minusDi[4] as number).toBeCloseTo(8, 12);
     expect(out.adx.slice(0, 3)).toEqual([null, null, null]);
-    expect(out.adx[3] as number).toBeCloseTo(800 / 21, 12);
-    expect(out.adx[4] as number).toBeCloseTo(850 / 21, 12);
+    expect(out.adx[3] as number).toBeCloseTo(25, 12);
+    expect(out.adx[4] as number).toBeCloseTo(37.5, 12);
   });
 
   it('starts the indicators at bar 14 and the ADX at bar 27 on the defaults', () => {

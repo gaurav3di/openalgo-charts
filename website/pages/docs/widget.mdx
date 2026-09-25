@@ -12,7 +12,7 @@ import { Callout } from 'nextra/components'
 with a top bar (symbol, interval, chart type, theme, settings, indicators, objects, alerts), a drawing rail
 down the left, a status line, the dialogs behind each of those buttons, keyboard shortcuts
 with a `?` panel that lists them, and optional persistence of the layout. It is one of nine
-loadable tiers (**59.22 kB** Brotli in 2.5.3) and the only tier that supplies
+loadable tiers (**71.33 kB** Brotli in 2.5.4) and the only tier that supplies
 application controls.
 
 The drawing rail includes Anchored VWAP and fixed-range Volume Profile. They use
@@ -132,6 +132,14 @@ Colour controls share a compact palette, recent colours, and a native custom
 colour chooser. Values with alpha retain it; opacity is editable for those values.
 Unsupported colour expressions remain unchanged until the user selects a colour.
 
+Custom study descriptors can also declare symbol, session, multiline, price and
+absolute timestamp inputs. Symbol lookup uses the configured `symbolSearch`
+and commits its exchange with the instrument. Invalid drafts stay in the form
+with an error. Price and time picking suspend the dialog and resume it after
+selection or Escape; ambiguous study scales require an explicit pick target.
+Timestamps are edited as UTC seconds without rounding fractional values.
+See [typed study inputs](/docs/indicators#typed-study-inputs).
+
 ## Use individual controls in your own host
 
 `AlertUi.context` exposes the same widget context used by its alert dialogs.
@@ -144,6 +152,10 @@ Custom terminals can also supply their own `WidgetContext` and compose controls:
 - `mountPanelDock(context, stage, options)` mounts one Data or Objects view at a
   time. Each content factory receives its container and returns a `destroy()` handle.
 - `mountSymbolPicker(context, input, options)` supplies shared search results.
+- `mountIndicatorInputControls(context, options)` adds search and picking to an
+  existing study form. Supply the instance, input declarations, panel, field
+  lookup and atomic `onPatch` callback. Destroy the returned handle with the form.
+  A custom host can supply `suspend()` to release its modal during a chart pick.
 - `mountQuickEntry(context, options)` uses the host's `enabled()` callback to decide
   which chart owns typing. Destroy it with the chart.
 - `createColorPicker(document, options)` supports `openOverlay: context.openOverlay`
@@ -213,8 +225,9 @@ picker offers only what you registered yourself.
 
 ## One call
 
-The widget inherits the engine's navigation preferences. Set
-`navigation: { mousePan: 'both', defaultVisibleBars: 100 }` to show the
+The widget uses 8 CSS pixels per bar by default, preserving candle density across
+desktop and mobile. Set `navigation.defaultBarSpacing` to change this preference.
+Use `navigation: { mousePan: 'both', defaultVisibleBars: 100 }` to show the
 latest 100 bars on load and reset. Axes settings save these choices in the
 widget layout. The count changes the visible window without discarding history;
 0 fits all loaded bars. Mouse and pen pan time and price by default.
@@ -247,7 +260,7 @@ widget.dataController;        // DataLoadingController | null (null without a fe
 widget.chart;                 // the Chart underneath, every base API available
 widget.draw;                  // the DrawingController the rail drives
 widget.objects;               // shared ChartObjects inventory and supported actions
-widget.series;                // the primary series; setChartType replaces it
+widget.series;                // primary handle, retained across chart-type changes
 widget.root;                  // the .oac-widget element
 widget.context;               // what every dialog was handed, for a panel of your own
 widget.symbol(); widget.exchange(); widget.interval(); widget.chartType(); widget.theme();
@@ -360,7 +373,8 @@ A control exists only where the engine has something behind it. Every dialog is 
 from a schema the engine already ships: chart settings from `chartSettingsSchema`,
 indicator settings from the descriptor, drawing properties from `drawingSettingsSchema`,
 so a field appears only when the renderer reads it. The right-click menu draws its order
-rows only when `onOrder` is given.
+rows only when `onOrder` is given, and offers **Collapse pane** or **Expand pane** only
+over a lower pane, since the price pane always stays open.
 </Callout>
 
 ## Live history and reconnect recovery
@@ -541,13 +555,13 @@ widget: a tier loaded beside it would import its own second engine. See
 
 ## Size
 
-Budgets from `.size-limit.json` and measurements from the 2.5.3 build, decimal
+Budgets from `.size-limit.json` and measurements from the 2.5.4 build, decimal
 Brotli kB, enforced by `npm run size`:
 
 | Row | Files | Budget | Measured |
 |---|---|--:|--:|
-| Widget tier | `openalgo-charts.widget.mjs` | 60.5 kB | 59.22 kB |
-| Widget terminal | base + draw + indicators + widget | 229 kB | 227.16 kB |
+| Widget tier | `openalgo-charts.widget.mjs` | 71.34 kB | 71.33 kB |
+| Widget terminal | base + draw + indicators + widget | 267.56 kB | 267.55 kB |
 
 The widget is a tier because of these rows. A host that never calls `createWidget`
 downloads none of it, and the base engine's own budget is unchanged.
@@ -574,6 +588,65 @@ on which it was captured. The history loader always releases its completion latc
 For a custom replay host, call `dataController.setPaused(true)` for the entire
 replay lifetime, including paused replay; stop replay before resuming delivery.
 See [data loading](/docs/data-loading) for the interactive failure/retry example.
+
+## Go to a date or range
+
+**Go to** in the toolbar (or **More**, then **Go to** on a narrow screen) opens a
+compact panel. **Date** shows one date at the current zoom; **Range** fits two
+dates, or two date and time pairs, to the plot. Dates and times are read in the
+chart timezone, IST unless the host sets another. A blank time is the start of
+the day, or its end for the To field. Daily and longer intervals show the date
+fields alone, since a time cannot change which bar a date names. On a tick or
+volume interval the button is greyed with the reason, and
+`widget.openDateNavigation()` returns false.
+
+When the date is older than the loaded history, the widget pages back through
+its feed first: a date-window feed receives one request that reaches the date,
+a paged feed one page at a time. The view moves only after that load is
+accepted, so later live bars and refreshes keep the placement instead of
+returning to the newest bars. Closing the panel while it is loading cancels the
+request: the older bars still arrive, but the view stays where the user left it.
+A pan or zoom while older history loads does the same, from a gesture, a key, a
+linked chart or the host's own `setVisibleLogicalRange`; the move the widget makes
+itself to keep the bars in view still when a refresh lands does not count. The
+panel closes when the interval or the chart timezone changes under it, since its
+fields were built for both.
+
+```ts
+const result = await widget.goTo({
+  from: zonedStringToUtcSeconds('2024-03-04', widget.chart.timezone()),
+  to: zonedStringToUtcSeconds('2024-03-28 23:59', widget.chart.timezone()),
+});
+// { status: 'placed', from, to }  open times of the first and last placed bars
+```
+
+| `status` | Meaning |
+| --- | --- |
+| `placed` | The date or range is in view. |
+| `partial` | Something is in view, but `history` says why the source stopped before the requested start (`exhausted`, `empty`, `limited` or `unavailable`), or `clipped` says the range is wider than the plot and its start is shown. |
+| `no-data` | No bar at or after the date, or none inside the range. The view is unchanged. |
+| `unsupported` | The interval has no time buckets (tick or volume bars). |
+| `invalid` | A non-finite time, or a range that ends before it starts. |
+| `cancelled` | A newer request, a symbol or interval change, a pan or zoom while older history loads, or `destroy` took over. |
+| `error` | The feed failed; `error` carries the reason. |
+
+A date lands on its own daily bar whether the feed stamps bars at midnight or at
+the session open, and on a day of 23 or 25 hours around a daylight saving change.
+It names the bar the axis labels with that date: west of UTC, a daily bar stamped
+at UTC midnight is labelled with the previous date and is found by it, so set the
+chart timezone to `UTC` for such a feed when its bars should read by their UTC
+date. A date on a weekend or in an overnight gap moves to the next
+session. History is never loaded during replay, and a date beyond the replay
+cursor is `no-data`. A chart linked through a link group follows the placement
+by time. The panel closes once a request is placed and otherwise keeps the reason
+in view. `widget.openDateNavigation()` opens it programmatically. A custom host
+uses the same rules through `DateNavigator` and `openDateNavigation`, whose
+`cancel` option runs when the panel is dismissed mid-load and whose `pending`
+option lets a host that rebuilds its chart reopen the panel on a request already
+under way; see [data loading](/docs/data-loading). Only the host knows which view
+moves are its own, so a custom host that wants a pan or zoom to drop a loading
+request listens for the chart's `pan` and `zoom` events around its loader and
+calls `navigator.cancel()`.
 
 ## Timeline event details
 

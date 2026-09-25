@@ -179,6 +179,7 @@ interface ChartNavigationOptions {
   mousePan: 'horizontal' | 'both';
   /** Newest loaded bars in the initial/reset view. 0 fits all loaded bars. */
   defaultVisibleBars: number;
+  defaultBarSpacing?: number;
 }
 ```
 
@@ -199,7 +200,7 @@ requests or discard data. See [Interactions](/docs/interactions).
 interface AddSeriesOptions {
   paneIndex?: number;
   style?: SeriesStyle;
-  priceScaleId?: 'right' | 'left' | '';
+  priceScaleId?: PriceScaleId;
   priceFormat?:
     | { type: 'price'; precision?: number; minMove?: number }
     | { type: 'volume' }
@@ -207,7 +208,7 @@ interface AddSeriesOptions {
 }
 ```
 
-Options passed to `chart.addSeries(type, options)`. `paneIndex` defaults to `0` (price pane); higher indices create sub-panes on demand. `priceScaleId` picks the axis: `'right'` (default) and `'left'` autoscale independently and each draw an axis; `''` is a hidden overlay scale (volume-in-price-pane). `priceFormat` sets that series' axis and crosshair-tag formatting. See [Scales & panes](/docs/scales-and-panes#left-right--overlay-price-scales).
+Options passed to `chart.addSeries(type, options)`. `paneIndex` defaults to `0` (price pane); higher indices create sub-panes on demand. `priceScaleId` is `'right'`, `'left'`, `''` or a named `overlay:name` scale. Each ID has an independent range; the built-in side IDs default to that side and overlays default to hidden. `setPriceAxisPlacement` changes visible placement without changing identity. `priceFormat` sets that scale's axis and crosshair-tag formatting. See [Scales & panes](/docs/scales-and-panes#multiple-axes-on-the-same-side).
 
 ### `CrosshairMoveEvent`
 
@@ -273,7 +274,7 @@ interface ContextMenuTarget {
 }
 ```
 
-Payload of `chart.on('contextmenu', ...)`. `target` is the part a canvas cannot work out for itself: it hands your app an object rather than a pixel. On a `'price-scale'` hit, `scaleId` is the scale that strip actually draws, which is `''` when the pane's values all live on the hidden overlay scale, and it is the argument the `priceAxis*` calls take. See [Settings & Menus](/docs/settings-and-menus#the-right-click-menu).
+Payload of `chart.on('contextmenu', ...)`. `target` is the part a canvas cannot work out for itself: it hands your app an object rather than a pixel. On a `'price-scale'` hit, `scaleId` identifies the column under the pointer, including a named overlay exposed on either side. Pass it to the `priceAxis*` calls. Unused outer cells reserved for another pane do not target a price scale. See [Settings & Menus](/docs/settings-and-menus#the-right-click-menu).
 
 ### `PriceAxisState`
 
@@ -282,7 +283,7 @@ interface PriceAxisState {
   paneIndex: number;
   scaleId: PriceScaleId;
   side: 'right' | 'left';
-  active: boolean;      // some series on the pane maps to this scale
+  active: boolean;      // attached series or an explicitly bound primitive uses this scale
   autoFit: boolean;
   inverted: boolean;
   mode: PriceScaleMode;
@@ -315,11 +316,60 @@ interface PickHost {
 }
 ```
 
-The slice of a chart the standalone `beginPick(host, kind, cb)` needs. Structural, so `Chart` satisfies it with nothing to cast, and the module never imports the core. `chart.beginPick` is sugar over the exported function.
+The slice of a chart the standalone `beginPick(host, kind, cb)` needs. Structural,
+so `Chart` satisfies it without a cast. The chart method additionally checks plot
+bounds and supports explicit pane and scale targets.
+
+### `PickHandle`
+
+`PickHandle` is the callable cancellation handle returned by a pick. Its
+readonly `active(): boolean` method reports ownership of that invocation. It
+becomes false before `pick:end`, including when a notification listener cancels
+or replaces the pick synchronously.
+
+### `PickOptions`
+
+```ts
+interface PickOptions {
+  paneIndex?: number;
+  priceScaleId?: PriceScaleId;
+}
+```
+
+The optional third argument to `chart.beginPick`. Price-scale targeting applies
+to price picks only. The pane and scale must already exist; omitted fields retain
+the ordinary chart pick behavior.
 
 ---
 
 ## Scales
+
+### `PriceAxisSide`, `PriceAxisPlacement`, `PriceAxisSlot`
+
+```ts
+type PriceAxisSide = 'left' | 'right' | 'hidden';
+
+interface PriceAxisPlacement {
+  side: PriceAxisSide;
+  order: number;       // zero is nearest the plot
+}
+
+interface PriceAxisSlot {
+  scaleId: PriceScaleId;
+  side: 'left' | 'right';
+  order: number;
+  x: number;           // left edge in absolute pane CSS pixels from Chart.priceAxisLayout
+  width: number;       // width of this column in CSS pixels
+}
+```
+
+These types are exported from `openalgo-charts`. `priceAxisPlacement(pane, id)`
+returns a detached placement or `null`; `setPriceAxisPlacement(pane, id, side,
+order?)` returns whether placement changed. `priceAxisLayout(pane = 0)` returns
+the active columns. Placement can remain configured when a scale has no column.
+The optional `PriceScaleState.placement` field saves it in full chart and
+workspace state; indicator templates do not yet preserve column placement.
+See [multiple axes](/docs/scales-and-panes#multiple-axes-on-the-same-side).
 
 ### `PriceRange`
 
@@ -1178,7 +1228,11 @@ interface IndicatorCalcContext {
 
 The optional trailing argument to a descriptor's `calc` (fourth) and `calcTail` (sixth): what the calculation cannot read off the bars themselves. Being optional and trailing is the point, since every descriptor written against `calc(bars, settings, store)` keeps its exact signature and behaviour.
 
-`isConfirmed` is inferred from the last bar's gap against the chart clock, the only interval signal the engine has, so a session break or a holiday widens it. `isRealtime` is sticky once set. `symbol` and `interval` are `undefined` under `chart.addIndicator`, since the core is handed bars and never an instrument. See [The calculation context](/docs/indicators#the-calculation-context).
+`isConfirmed` uses the declared duration or calendar boundary. Unknown and count-driven
+intervals remain unconfirmed. Hosts without an interval retain the legacy gap estimate;
+empty history is confirmed. `isRealtime` is sticky once set. `symbol` and `interval`
+come from `chart.setDataContext` or a custom host and remain undefined when not supplied.
+See [The calculation context](/docs/indicators#the-calculation-context).
 
 ### `IndicatorAlertSpec`
 

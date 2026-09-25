@@ -20,7 +20,7 @@ import { checkTradingCapability, getIndicator, isReplaying, PRICE_SCALE_MODES } 
 import type { Chart, ContextMenuEvent, ContextMenuTarget, PriceScaleId, PriceScaleMode, TradingCapabilityRequest, TradingCapabilitySource } from 'openalgo-charts';
 import { drawingSettingsSchema } from 'openalgo-charts/draw';
 import type { Drawing } from 'openalgo-charts/draw';
-import type { WidgetContext } from '../context';
+import { editableIds, type WidgetContext } from '../context';
 import { boxInRoot, chromeGlyph, el, glyphSvg, openPanel, placePanel, stopOwnKeys, type PanelHandle } from '../form';
 import { mountDrawingProperties } from './drawing-properties';
 import { mountIndicatorPicker } from './indicator-picker';
@@ -120,23 +120,29 @@ function drawingEntries(ctx: WidgetContext, primary: Drawing, ids: readonly stri
   const hidden = primary.visible === false;
   const behind = primary.zIndex < 0;
   const many = ids.length > 1;
+  // A selection with nothing the user may edit keeps its edit rows, greyed
+  // with the reason; the controller would refuse each one anyway. Cut and
+  // delete count only what they take.
+  const mine = editableIds(draw, ids).length;
+  const fixed = mine === 0;
+  const why = fixed ? widgetText(ctx, 'read-only') : undefined;
   out.push({ id: 'draw-props', label: many ? widgetText(ctx, 'Properties of the selection...') : widgetText(ctx, 'Properties...'), icon: 'settings',
     run: () => { mountDrawingProperties(ctx, undefined, { ids }); } });
   if (!many && isTextContent(primary)) {
-    out.push({ id: 'draw-text', label: widgetText(ctx, 'Edit text'), icon: 'text', chord: 'Enter', run: () => { mountTextEditor(ctx, undefined, { id: primary.id }); } });
+    out.push({ id: 'draw-text', label: widgetText(ctx, 'Edit text'), icon: 'text', chord: 'Enter', disabled: fixed, note: why, run: () => { mountTextEditor(ctx, undefined, { id: primary.id }); } });
   }
   if (schema.fields.some((f) => f.kind === 'levels')) {
-    out.push({ id: 'draw-levels', label: widgetText(ctx, 'Edit levels...'), run: () => { mountLevelEditor(ctx, undefined, { ids }); } });
+    out.push({ id: 'draw-levels', label: widgetText(ctx, 'Edit levels...'), disabled: fixed, note: why, run: () => { mountLevelEditor(ctx, undefined, { ids }); } });
   }
   out.push(SEP);
   out.push({ id: 'draw-copy', label: many ? widgetText(ctx, 'Copy {count} drawings', { count: ids.length }) : widgetText(ctx, 'Copy drawing'), icon: 'copy', chord: 'Ctrl+C', run: () => { void draw.copy(ids); } });
-  out.push({ id: 'draw-cut', label: many ? widgetText(ctx, 'Cut {count} drawings', { count: ids.length }) : widgetText(ctx, 'Cut drawing'), chord: 'Ctrl+X', disabled: locked, note: locked ? widgetText(ctx, 'locked') : undefined,
+  out.push({ id: 'draw-cut', label: mine > 1 ? widgetText(ctx, 'Cut {count} drawings', { count: mine }) : widgetText(ctx, 'Cut drawing'), chord: 'Ctrl+X', disabled: locked || fixed, note: why ?? (locked ? widgetText(ctx, 'locked') : undefined),
     run: () => { void draw.cut(ids); } });
   out.push({ id: 'draw-duplicate', label: widgetText(ctx, 'Duplicate'), icon: 'duplicate', chord: 'Ctrl+D', run: () => { draw.duplicate(ids); } });
   out.push(SEP);
-  out.push({ id: 'draw-lock', label: locked ? widgetText(ctx, 'Unlock') : widgetText(ctx, 'Lock'), icon: locked ? 'lock' : 'unlock', mark: 'check', on: locked,
+  out.push({ id: 'draw-lock', label: locked ? widgetText(ctx, 'Unlock') : widgetText(ctx, 'Lock'), icon: locked ? 'lock' : 'unlock', mark: 'check', on: locked, disabled: fixed, note: why,
     run: () => { draw.updateMany(ids.map((id) => ({ id, patch: { locked: !locked } }))); } });
-  out.push({ id: 'draw-hide', label: hidden ? widgetText(ctx, 'Show') : widgetText(ctx, 'Hide'), icon: hidden ? 'eye-off' : 'eye', mark: 'check', on: hidden,
+  out.push({ id: 'draw-hide', label: hidden ? widgetText(ctx, 'Show') : widgetText(ctx, 'Hide'), icon: hidden ? 'eye-off' : 'eye', mark: 'check', on: hidden, disabled: fixed, note: why,
     run: () => { draw.updateMany(ids.map((id) => ({ id, patch: { visible: hidden } }))); } });
   out.push(SEP);
   out.push(header(widgetText(ctx, 'Order')));
@@ -149,12 +155,12 @@ function drawingEntries(ctx: WidgetContext, primary: Drawing, ids: readonly stri
   out.push({ id: 'draw-behind', label: widgetText(ctx, 'Behind the series'), icon: glyphSvg(BEHIND_GLYPH), mark: 'radio', on: behind,
     run: () => { for (const id of ids) draw.sendBehindSeries(id); } });
   out.push(SEP);
-  out.push({ id: 'draw-delete', label: many ? widgetText(ctx, 'Delete {count} drawings', { count: ids.length }) : widgetText(ctx, 'Delete'), icon: 'trash', chord: 'Del', danger: true,
-    disabled: locked, note: locked ? widgetText(ctx, 'locked') : undefined, run: () => { draw.removeMany(ids); } });
+  out.push({ id: 'draw-delete', label: mine > 1 ? widgetText(ctx, 'Delete {count} drawings', { count: mine }) : widgetText(ctx, 'Delete'), icon: 'trash', chord: 'Del', danger: true,
+    disabled: locked || fixed, note: why ?? (locked ? widgetText(ctx, 'locked') : undefined), run: () => { draw.removeMany(ids); } });
   return out;
 }
 
-/** The rows for one price axis, every one read off `priceAxisState`. */
+/** Axis settings and placement stay attached to the target scale's identity. */
 function axisEntries(ctx: WidgetContext, paneIndex: number, scaleId: PriceScaleId): MenuEntry[] {
   const { chart } = ctx;
   const state = (): ReturnType<Chart['priceAxisState']> => chart.priceAxisState(paneIndex, scaleId);
@@ -163,6 +169,13 @@ function axisEntries(ctx: WidgetContext, paneIndex: number, scaleId: PriceScaleI
   const out: MenuEntry[] = [];
   out.push({ id: 'axis-autofit', label: widgetText(ctx, 'Auto-fit to the data'), mark: 'check', on: s.autoFit, keepOpen: true,
     run: () => { const now = state(); if (now !== null) chart.setPriceAxisAutoFit(paneIndex, scaleId, !now.autoFit); } });
+  const primaryScale = (): boolean => {
+    const primary = chart.primarySeries?.();
+    return primary != null && primary.priceScale() === chart.panes()[paneIndex]?.scaleFor(scaleId);
+  };
+  if (primaryScale()) out.push({ id: 'axis-price-only', label: widgetText(ctx, 'Fit primary prices only'),
+    mark: 'check', on: chart.priceOnlyAutoScale(), keepOpen: true,
+    run: () => { if (primaryScale()) chart.setPriceOnlyAutoScale(!chart.priceOnlyAutoScale()); } });
   out.push({ id: 'axis-invert', label: widgetText(ctx, 'Invert'), mark: 'check', on: s.inverted, keepOpen: true,
     run: () => { const now = state(); if (now !== null) chart.setPriceAxisOptions(paneIndex, scaleId, { inverted: !now.inverted }); } });
   // Holding the price-per-bar ratio while the time axis zooms needs a measured
@@ -181,14 +194,36 @@ function axisEntries(ctx: WidgetContext, paneIndex: number, scaleId: PriceScaleI
     out.push({ id: `axis-mode-${mode}`, label: widgetText(ctx, `schema.scaleMode.${mode}`, {}, SCALE_MODE_LABELS[mode]), mark: 'radio', on: s.mode === mode, keepOpen: true,
       run: () => { chart.setPriceAxisOptions(paneIndex, scaleId, { mode }); } });
   }
-  out.push(SEP);
-  out.push({ id: 'axis-move', label: s.side === 'right' ? widgetText(ctx, 'Move the scale to the left') : widgetText(ctx, 'Move the scale to the right'),
-    disabled: !s.movable, note: s.movable ? undefined : (s.active ? widgetText(ctx, 'other side taken') : widgetText(ctx, 'nothing on this side')),
-    run: () => {
-      const now = state();
-      if (now === null) return;
-      if (!chart.movePriceAxis(paneIndex, now.side, now.side === 'right' ? 'left' : 'right')) ctx.toast(widgetText(ctx, 'That side is already in use'), 'info');
-    } });
+  const placement = chart.priceAxisPlacement(paneIndex, scaleId);
+  const columns = (side: 'left' | 'right'): ReturnType<Chart['priceAxisLayout']> =>
+    chart.priceAxisLayout(paneIndex).filter(column => column.side === side).sort((a, b) => a.order - b.order);
+  if (placement !== null && placement.side !== 'hidden') {
+    out.push(SEP);
+    out.push({ id: 'axis-move', label: placement.side === 'right' ? widgetText(ctx, 'Move the scale to the left') : widgetText(ctx, 'Move the scale to the right'),
+      disabled: !s.active, note: s.active ? undefined : widgetText(ctx, 'nothing on this side'),
+      run: () => {
+        const now = chart.priceAxisPlacement(paneIndex, scaleId);
+        if (!state()?.active || now === null || now.side === 'hidden') return;
+        if (!chart.setPriceAxisPlacement(paneIndex, scaleId, now.side === 'right' ? 'left' : 'right')) {
+          ctx.toast(widgetText(ctx, 'The scale could not be moved'), 'info');
+        }
+      } });
+    const peers = columns(placement.side), index = peers.findIndex(column => column.scaleId === scaleId);
+    if (index >= 0 && peers.length > 1) for (const delta of [-1, 1] as const) {
+      out.push({ id: delta < 0 ? 'axis-closer' : 'axis-further',
+        label: delta < 0 ? widgetText(ctx, 'Move the scale closer to the plot') : widgetText(ctx, 'Move the scale further from the plot'),
+        disabled: peers[index + delta] === undefined, keepOpen: true,
+        run: () => {
+          const now = chart.priceAxisPlacement(paneIndex, scaleId);
+          if (!state()?.active || now === null || now.side === 'hidden') return;
+          const current = columns(now.side), at = current.findIndex(column => column.scaleId === scaleId);
+          const neighbor = at < 0 ? undefined : current[at + delta];
+          if (neighbor && !chart.setPriceAxisPlacement(paneIndex, scaleId, now.side, neighbor.order)) {
+            ctx.toast(widgetText(ctx, 'The scale could not be moved'), 'info');
+          }
+        } });
+    }
+  }
   out.push(SEP);
   out.push({ id: 'axis-settings', label: widgetText(ctx, 'Axis settings...'), icon: 'settings', run: () => { mountSettingsDialog(ctx, undefined, { tab: 'axes' }); } });
   return out;
@@ -308,18 +343,29 @@ export function contextMenuEntries(ctx: WidgetContext, e: ContextMenuEvent, hook
     }
   }
 
+  // A lower pane folds to its header strip and opens again; pane 0 stays open.
+  if (e.paneIndex > 0 && target.kind !== 'time-scale') {
+    const folded = chart.paneCollapsed(e.paneIndex);
+    sep();
+    out.push({ id: 'pane-collapse', label: widgetText(ctx, folded ? 'Expand pane' : 'Collapse pane'),
+      run: () => { chart.setPaneCollapsed(e.paneIndex, !folded); } });
+  }
+
   if (target.kind !== 'time-scale') {
     sep();
     out.push({ id: 'draw-paste', label: widgetText(ctx, 'Paste'), icon: 'paste', chord: 'Ctrl+V',
       run: () => { void draw.paste().then((made) => { if (made.length === 0) ctx.toast(widgetText(ctx, 'Nothing to paste'), 'info'); }); } });
-    const n = draw.drawings().length;
+    // What `clear` would take: a read-only drawing stays, so it is not counted.
+    const n = draw.drawings().filter((d) => d.policy?.editable !== false).length;
     if (n > 0) {
       out.push({ id: 'draw-clear', label: widgetText(ctx, 'Remove all drawings ({count})', { count: n }), icon: 'trash', danger: true, run: () => { draw.clear(); } });
     }
   }
 
   sep();
-  out.push({ id: 'chart-fit', label: widgetText(ctx, 'Fit all bars'), icon: glyphSvg(FIT_GLYPH), run: () => { chart.fitContent(); } });
+  out.push({ id: 'chart-fit', label: widgetText(ctx, 'Fit all bars'), icon: glyphSvg(FIT_GLYPH),
+    disabled: chart.navigationOptions().zoomEnabled === false,
+    run: () => { if (chart.navigationOptions().zoomEnabled !== false) chart.fitContent(); } });
   if (target.kind !== 'time-scale') {
     out.push({ id: 'chart-indicators', label: widgetText(ctx, 'Indicators...'), run: () => { mountIndicatorPicker(ctx); } });
   }

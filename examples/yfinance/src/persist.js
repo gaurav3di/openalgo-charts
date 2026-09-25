@@ -479,12 +479,33 @@ export function exportLayout() {
   };
 }
 
+const withoutPolicy = (d) => {
+  if (!isRecord(d) || !('policy' in d)) return d;
+  const out = { ...d };
+  delete out.policy;
+  return out;
+};
+
+/**
+ * A chart state with every drawing's `policy` taken off, and nothing else
+ * changed. A policy is a host's restriction on drawings it placed itself, and
+ * a file from elsewhere is not this host: honouring one would let a shared
+ * layout plant a drawing that no control here can move or delete, and that
+ * every autosave then writes back.
+ */
+export function untrustedDrawings(state) {
+  if (!isRecord(state) || state.drawings === undefined) return state;
+  const { drawings } = state;
+  return { ...state, drawings: Array.isArray(drawings) ? drawings.map(withoutPolicy)
+    : isRecord(drawings) && Array.isArray(drawings.drawings) ? { ...drawings, drawings: drawings.drawings.map(withoutPolicy) } : drawings };
+}
+
 /** Parse and upgrade a file body. Throws `LayoutError` (or a JSON error) for anything that is not a layout. */
 export function parseLayoutFile(text) {
   let parsed;
   try { parsed = JSON.parse(text); } catch (e) { throw new LayoutError('not JSON: ' + e.message); }
-  const doc = isRecord(parsed) && isRecord(parsed.layout) ? parsed.layout : parsed;
-  return upgradeLayout(doc);
+  const doc = untrustedDrawings(upgradeLayout(isRecord(parsed) && isRecord(parsed.layout) ? parsed.layout : parsed));
+  return isRecord(doc.secondary?.state) ? { ...doc, secondary: { ...doc.secondary, state: untrustedDrawings(doc.secondary.state) } } : doc;
 }
 
 /**

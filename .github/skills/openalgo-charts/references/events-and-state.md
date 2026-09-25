@@ -53,6 +53,7 @@ Every name emitted by the engine, verified against the `emit(` call sites in `sr
 | `paneRemoved` | `{ paneIndex }` | A pane was removed. |
 | `paneMoved` | `{ from, to }` | A pane swapped position. |
 | `paneMaximized` | `{ paneIndex }` | A pane was maximized; `paneIndex` is `null` when un-maximizing. |
+| `paneCollapsed` | `{ paneIndex, collapsed }` | A lower pane folded to its header strip (`collapsed: true`) or opened again, through `setPaneCollapsed`, its legend's collapse button or a host menu. Collapsing the maximized pane first emits `paneMaximized` with `null`. |
 | `paneResized` | `{ paneIndex }` | A pane-divider drag released. |
 | `priceAxisMoved` | `{ paneIndex, from, to }` | `movePriceAxis` succeeded: a pane's prices and their scale changed strip. Re-read `priceAxisState` for any menu still open on that axis. |
 | `indicatorRemoved` | `{ instanceId, indicatorId, paneIndex }` | An indicator instance was removed (legend button or `removeIndicator`). |
@@ -114,7 +115,18 @@ subscription or an explicit `objects.refresh()` after a host-side change.
 
 ## getState and restoreState
 
-`chart.getState(): ChartState & ChartSettingsState` returns a JSON-safe snapshot; `chart.restoreState(state): RestoreReport` puts it back. The widened return type is still a `ChartState` to every existing consumer.
+`chart.getState(): ChartState & ChartSettingsState` returns a JSON-safe snapshot; `chart.restoreState(state, options?: ChartRestoreOptions): RestoreReport` puts it back. The widened return type is still a `ChartState` to every existing consumer.
+
+`ChartRestoreOptions.preserveScaleFormats` selects existing `{ paneIndex, scaleId }`
+targets whose runtime formatter callback or default formatter must survive automatic
+study-series recreation. Numeric saved scale settings still apply. Invalid or absent
+targets reject before mutation. No callbacks are serialized, and later explicit
+settings/formatter changes retain normal behavior. Forward the workspace template
+planner's `restoreOptions` when applying its state patch. Omitted options preserve
+ordinary full-restore semantics.
+
+A synchronous newer restore from `state:restore:start` supersedes the older call,
+which returns `applied: false`. Hosts must not roll back over that newer state.
 
 | Captured in `ChartState` | Restored |
 |---|---|
@@ -122,22 +134,36 @@ subscription or an explicit `objects.refresh()` after a host-side change.
 | `viewport` `{ from, to }` (logical range), `barSpacing` | yes, viewport only when the chart already has data |
 | `grid` `{ vertLines, horzLines }` plus the grid style keys | yes |
 | `canvas` (grid, crosshair, scales, margins), `statusLine`, `trading` colours, `events` filters | yes; `canvas` is applied **before** the panes, so a pane's own saved margins are the more specific answer and win |
-| `navigation` (`mousePan`, `defaultVisibleBars`) | yes; controls pointer panning and the initial/reset view. An explicitly restored viewport takes precedence until reset |
+| `navigation` (`mousePan`, `defaultVisibleBars`, optional `defaultBarSpacing`) | yes; controls pointer panning and the initial/reset view. Positive spacing selects CSS pixels per bar. An explicitly restored viewport takes precedence until reset |
 | `crosshairMode` `'normal' \| 'magnet'` | yes |
 | `timezone` (IANA name) | yes, but a name this runtime does not recognise is **skipped**, not thrown, so one stale zone cannot cost the whole layout |
-| `panes[]`: `weight`, and per-pane `priceScale` `{ marginTop, marginBottom, minMove, mode, inverted, autoScale, range? }` | yes; panes are created as needed, `range` only present when `autoScale` is false |
+| `panes[]`: `weight`, right `priceScale`, optional secondary `scales`, optional `collapsed` | yes; every scale retains margins, `minMove`, optional `minPrecision`, mode, inversion, auto-scale, manual `range`, declared `fixedRange` and `ratioLock` geometry. `collapsed: true` is written only for a folded pane; a pane saved without it restores open, and pane 0 always restores open. A restore that lists panes or rebuilds studies also opens a pane it does not list |
 | `indicators[]`: `{ indicatorId, instanceId?, settings, paneIndex, visible? }` | yes, replaced not appended; saved identities are stable, legacy entries receive new IDs |
-| `drawings` | round-tripped opaquely; only present when a drawing state has been set. The draw tier writes a `DrawingsDocument` (`{ version: 2, drawings }`) here and reads a 1.9.x bare array too |
+| `drawings` | round-tripped opaquely; only present when a drawing state has been set. The draw tier writes a `DrawingsDocument` (`{ version: 2, drawings }`) here, without transient drawings (`policy.persistent: false`), and reads a 1.9.x bare array too |
 | `alerts` | optional `AlertsDocument`; lifecycle, scope, anchors and consumed bars survive reload; unsupported runtime payloads reject serialization |
 | `series[]`: `{ type, style, paneIndex, priceScaleId }` | **no**, reported back to you |
 | series **data** | **no**, never captured |
 
-**`restoreState` never recreates series.** The chart does not know your symbol, timeframe, or feed. It restores what it owns and hands back the descriptors so you rebuild and refeed them.
+**`restoreState` never recreates host source series.** It rebuilds registered indicator outputs. The returned descriptors include both kinds, so use the host's source manifest when rebuilding and feeding price, volume or comparison series.
 
 Indicator visibility is saved with its instance settings. Drawing visibility and
 lock remain in the drawing document. `ChartObjects` provider callbacks, profile
 data and profile state are host-owned and are not serialized; re-register them
 after chart replacement and persist them separately when needed.
+
+`PaneState.priceScale` remains the right-axis field for older readers;
+`PaneState.scales` is keyed by secondary `PriceScaleId`. `PriceScaleState.ratioLock`
+contains `{ barSpacing, height }` paired with the saved manual range, preserving
+its proportion when the restored chart has a different size. `Pane.scaleStates()`
+returns detached snapshots of its existing scales, including the right scale;
+`Pane.clearRatioLocks()` releases its locks without changing ranges.
+
+`parsePaneState(value, allowLegacyPartial = false)` validates and copies a pane
+snapshot, throwing on invalid settings, including a `collapsed` flag that is not
+a boolean. The optional legacy mode supplies defaults
+for missing primary-scale settings; secondary settings remain complete. Both
+chart restoration and workspace parsing use it. Layouts cannot serialize runtime
+formatter functions or a price scale's data-derived baseline.
 
 `RestoreReport`:
 
@@ -150,7 +176,7 @@ after chart replacement and persist them separately when needed.
 
 Rejection is total, never partial: a non-object, or one without a numeric `version`, gives `reason: 'not a chart state object'`; a `version` greater than `CHART_STATE_VERSION` gives `state version N is newer than M`. An **older** version is accepted. `CHART_STATE_VERSION` is `1` and is exported from the package root.
 
-**An indicator whose tier was never imported is skipped, not thrown.** `restoreState` checks `hasIndicator(id)` and moves on, so a layout saved with `openalgo-charts/indicators` loaded still restores everything else in an app that omits the tier. Any pane left empty as a result (index > 0, no series) is then removed, so a skipped indicator does not leave a blank region claiming height.
+**An indicator whose tier was never imported is skipped, not thrown.** `restoreState` checks `hasIndicator(id)` and moves on, so a layout saved with `openalgo-charts/indicators` loaded still restores everything else in an app that omits the tier. Empty positive panes are then removed. A pane containing a live study or host primitive survives even with no series, including studies that render only levels or perform calculations without plots.
 
 **Restore the viewport after your data lands.** Logical ranges index bars, so `viewport` is skipped entirely while `dataLayer.length === 0`. Calling `restoreState` a second time is safe and idempotent, indicators are removed and rebuilt, not duplicated.
 

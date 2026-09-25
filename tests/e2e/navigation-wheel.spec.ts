@@ -6,6 +6,18 @@ test.beforeEach(async ({ page }) => {
   await page.waitForFunction(() => (window as any).ready && (window as any).chart.panes()[0].priceScale.scaled);
 });
 
+test('horizontal dragging with slight vertical drift keeps the visible prices fitted', async ({ page }, info) => {
+  await page.mouse.move(500, 280);
+  await page.mouse.down();
+  await page.mouse.move(610, 281, { steps: 5 });
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate(() => (window as any).chart.panes()[0].priceScale.autoScale)).toBe(true);
+  await expect.poll(() => page.evaluate(() => (window as any).chart.panes()[0].priceScale.priceRange().max)).toBeCloseTo(24251.25, 2);
+  await info.attach('autofit after horizontal drag', {
+    body: await page.screenshot({ path: info.outputPath('autofit-drag.png') }), contentType: 'image/png',
+  });
+});
+
 test('holding the plot grabs both axes and release stops all mouse movement', async ({ page }, info) => {
   const host = page.locator('#chart');
   const state = () => page.evaluate(() => {

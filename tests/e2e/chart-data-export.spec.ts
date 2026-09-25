@@ -9,10 +9,140 @@ async function reference(page: Page) {
   await page.waitForFunction(() => (window as any).__oac?.app.chart && !(window as any).__oac.app.loading);
 }
 async function csv(page: Page, button: Locator) {
-  const [download] = await Promise.all([page.waitForEvent('download'), button.click()]);
+  await button.click();
+  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Download CSV', exact: true }).click()]);
   const path = await download.path();
   if (!path) throw new Error('Missing downloaded CSV');
   return { filename: download.suggestedFilename(), rows: (await readFile(path, 'utf8')).trimEnd().split('\r\n').map(row => row.split(',')) };
+}
+
+async function downloadRows(page: Page, button: Locator) {
+  const [download] = await Promise.all([page.waitForEvent('download'), button.click()]);
+  const path = await download.path();
+  if (!path) throw new Error('Missing downloaded CSV');
+  return (await readFile(path, 'utf8')).trimEnd().split('\r\n').map(row => row.split(','));
+}
+
+async function openDataDialog(page: Page, host: 'widget' | 'reference') {
+  if (host === 'widget') {
+    const desktopCapture = page.getByRole('button', { name: 'Capture chart', exact: true });
+    if (await desktopCapture.isVisible()) await desktopCapture.click();
+    else {
+      await page.locator('[data-mobile-action="more"]').click();
+      await page.locator('[data-mobile-action="capture"]').click();
+    }
+    await page.getByRole('menuitemradio', { name: /Download chart data \(CSV\)/ }).click();
+  } else {
+    await page.getByRole('button', { name: 'Chart snapshot', exact: true }).click();
+    await page.locator('#snap-data').click();
+  }
+  const dialog = page.locator(host === 'widget' ? '.oac-csv' : '#chartdatamodal .csv-card');
+  await expect(dialog).toBeVisible();
+  return {
+    dialog,
+    from: dialog.locator(host === 'widget' ? '[data-key="from"] input' : '#csv-from'),
+    to: dialog.locator(host === 'widget' ? '[data-key="to"] input' : '#csv-to'),
+    alignment: dialog.locator(host === 'widget' ? '[data-key="alignment"] select' : '#csv-alignment'),
+    studies: dialog.locator(host === 'widget' ? '[data-key^="study-"] input' : '#csv-studies input'),
+    visible: dialog.locator(host === 'widget' ? '[data-action="csv-visible"]' : '#csv-visible'),
+    all: dialog.locator(host === 'widget' ? '[data-action="csv-all"]' : '#csv-all-rows'),
+    download: dialog.getByRole('button', { name: 'Download CSV', exact: true }),
+    error: dialog.locator(host === 'widget' ? '.oac-csv__error' : '#csv-error'),
+  };
+}
+
+for (const host of ['widget', 'reference'] as const) for (const width of [1100, 390]) {
+  test(`${host} selected CSV controls preserve captured choices and shifted replay at ${width}px`, async ({ page }, info) => {
+    const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+    await page.setViewportSize({ width, height: 820 });
+    if (host === 'widget') {
+      await page.goto('/tests/e2e/widget-fixture.html');
+      await page.waitForFunction(() => (window as any).__loaded > 0);
+    } else {
+      await page.goto(ORIGIN + '/examples/yfinance/index.html?test=1');
+      await page.waitForFunction(() => (window as any).__oac?.app.chart && !(window as any).__oac.app.loading);
+    }
+    const state = await page.evaluate(host => {
+      const chart = host === 'widget' ? (window as any).__widget.chart : (window as any).__oac.app.chart;
+      chart.indicators().slice().forEach((study: any) => study.remove());
+      const bars = Array.from({ length: 32 }, (_, index) => ({ time: -0.5 + index * 0.25,
+        open: 10 + index, high: 11 + index, low: 9 + index, close: 10 + index, volume: index }));
+      chart.primarySeries().setData(bars);
+      const first = chart.addIndicator('sma', { length: 1 });
+      const second = chart.addIndicator('sma', { length: 1 }); second.setVisible(false);
+      second.series('ma').applyOptions({ barOffset: 1.5 });
+      chart.setVisibleLogicalRange({ from: 4, to: 14 });
+      const view = chart.getVisibleLogicalRange();
+      const visible = bars.filter(bar => { const i = chart.dataLayer.timeToIndex(bar.time); return i >= view.from && i <= view.to; });
+      (window as any).__csvFixture = { chart, bars, first, second };
+      return { first: first.id, second: second.id, from: visible[0].time, to: visible[visible.length - 1].time };
+    }, host);
+    let controls = await openDataDialog(page, host);
+    await expect(controls.studies).toHaveCount(2);
+    await expect(controls.dialog).toContainText(state.first); await expect(controls.dialog).toContainText(state.second);
+    expect(await controls.dialog.evaluate(node => node.contains(document.activeElement))).toBe(true);
+    await page.keyboard.press('Tab');
+    expect(await controls.dialog.evaluate(node => node.contains(document.activeElement))).toBe(true);
+    const lateId = await page.evaluate(() => {
+      const fixture = (window as any).__csvFixture;
+      fixture.chart.setVisibleLogicalRange({ from: 18, to: 28 });
+      fixture.late = fixture.chart.addIndicator('sma', { length: 1 }); return fixture.late.id;
+    });
+    await controls.visible.click();
+    await expect(controls.from).toHaveValue(String(state.from)); await expect(controls.to).toHaveValue(String(state.to));
+    await expect(controls.studies).toHaveCount(2);
+    await controls.studies.nth(0).uncheck();
+    await controls.from.fill('invalid'); await controls.download.click();
+    await expect(controls.error).toContainText('finite'); await expect(controls.dialog).toBeVisible();
+    await controls.from.fill('-0.25'); await controls.to.fill('0');
+    const box = await controls.dialog.boundingBox();
+    expect(box!.x).toBeGreaterThanOrEqual(0); expect(box!.x + box!.width).toBeLessThanOrEqual(width + 1);
+    expect(await controls.dialog.evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+    await page.screenshot({ path: info.outputPath(`${host}-${width}-selected-controls.png`) });
+    const source = await downloadRows(page, controls.download);
+    expect(source[0]).toEqual(['time', 'open', 'high', 'low', 'close', 'volume', 'oi', `indicator:${state.second}:ma`]);
+    expect(source.slice(1).map(row => [row[0], row[4], row[7]])).toEqual([['-0.25', '11', '11'], ['0', '12', '12']]);
+    expect(source[0].join(',')).not.toContain(lateId);
+
+    controls = await openDataDialog(page, host);
+    await controls.studies.nth(0).uncheck(); await controls.studies.nth(2).uncheck();
+    await controls.alignment.selectOption('display'); await controls.from.fill('0'); await controls.to.fill('0.5');
+    const displayed = await downloadRows(page, controls.download);
+    expect(displayed[0]).toEqual(['time', 'logical_index', 'time_origin', 'open', 'high', 'low', 'close', 'volume', 'oi', `indicator:${state.second}:ma`]);
+    expect(displayed.slice(1).map(row => [row[0], row[2], row[6], row[9]]))
+      .toEqual([['0', 'axis', '12', ''], ['0.125', 'interpolated', '', '11'], ['0.25', 'axis', '13', ''],
+        ['0.375', 'interpolated', '', '12'], ['0.5', 'axis', '14', '']]);
+
+    await page.evaluate(async () => {
+      const fixture = (window as any).__csvFixture;
+      const path = '/dist/openalgo-charts.mjs', { ReplayController } = await import(path);
+      fixture.second.series('ma').applyOptions({ barOffset: 1 });
+      fixture.replay = new ReplayController(fixture.chart, { series: fixture.chart.primarySeries(), bars: fixture.bars, startIndex: 2 });
+    });
+    controls = await openDataDialog(page, host);
+    await controls.studies.nth(0).uncheck(); await controls.studies.nth(2).uncheck();
+    await controls.alignment.selectOption('display');
+    const replay = await downloadRows(page, controls.download);
+    expect(replay.slice(1).map(row => [row[0], row[2], row[6], row[9]]))
+      .toEqual([['-0.5', 'axis', '10', ''], ['-0.25', 'axis', '11', '10'], ['0', 'axis', '12', '11'], ['0.25', 'projected', '', '12']]);
+    await page.evaluate(async () => {
+      (window as any).__csvFixture.chart.fitContent();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    });
+    const ink = await page.locator(host === 'widget' ? '.oac-chart canvas' : '#chart canvas').first().evaluate(node => {
+      const canvas = node as HTMLCanvasElement;
+      const rgba = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data;
+      let colored = 0;
+      for (let i = 0; i < rgba.length; i += 4) if (Math.max(rgba[i], rgba[i + 1], rgba[i + 2]) - Math.min(rgba[i], rgba[i + 1], rgba[i + 2]) > 50) colored++;
+      return colored;
+    });
+    expect(ink).toBeGreaterThan(30);
+    await page.screenshot({ path: info.outputPath(`${host}-${width}-replay-chart.png`) });
+    controls = await openDataDialog(page, host);
+    await controls.from.focus(); await page.keyboard.press('Escape'); await expect(controls.dialog).toBeHidden();
+    if (host === 'widget' && width === 390) await expect(page.locator('[data-mobile-action="more"]')).toBeFocused();
+    expect(errors).toEqual([]);
+  });
 }
 
 test('reference layouts download the captured chart with OI studies and aligned comparisons', async ({ page }, info) => {
@@ -99,6 +229,7 @@ test('widget capture downloads actual CSV and reports browser file failures', as
   await page.evaluate(() => { URL.createObjectURL = () => { throw new Error('Download refused'); }; });
   await page.getByRole('button', { name: 'Capture chart', exact: true }).click();
   await page.getByRole('menuitemradio', { name: /Download chart data \(CSV\)/ }).click();
+  await page.getByRole('button', { name: 'Download CSV', exact: true }).click();
   await expect(page.locator('.oac-statusline__msg')).toContainText('Download refused');
 });
 

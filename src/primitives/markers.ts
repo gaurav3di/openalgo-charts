@@ -7,6 +7,7 @@ import type { SeriesId } from '../model/data-layer';
 import type { PriceScale } from '../scale/price-scale';
 import type { IPrimitive, PrimitiveHost, PrimitiveRenderContext, PrimitiveHit, ZOrder } from './primitive';
 import { roundRectPath, contrastText } from '../render/pill';
+import { hasTextStyle, textFont, validateTextStyle } from '../render/text-style';
 
 /**
  * `labelUp` / `labelDown` are text plates with a tail, for named signals ("Buy",
@@ -35,6 +36,17 @@ export interface SeriesMarker {
   size: MarkerSize;
   color: string;
   text?: string;
+  /** Overrides marker-matching text or contrasting label text without changing the glyph fill. */
+  textColor?: string;
+  /** Positive finite CSS pixels. Defaults to max(9, the size preset), independently of bar spacing. */
+  fontSize?: number;
+  /** CSS font-family list. Defaults to system-ui, sans-serif. */
+  fontFamily?: string;
+  /** Label plates default to semibold; other marker text defaults to normal. */
+  bold?: boolean;
+  italic?: boolean;
+  /** Multiline row alignment inside the centered text block. Defaults to center. */
+  textAlign?: 'left' | 'center' | 'right';
   id?: string;
 }
 
@@ -117,6 +129,19 @@ export function drawShape(
  * whichever tier ends up painting it.
  */
 const LINE_H = 1.35;
+type MarkerTextStyle = Pick<SeriesMarker, 'fontFamily' | 'bold' | 'italic' | 'textAlign' | 'textColor'>;
+
+function labelLayout(ctx: CanvasRenderingContext2D, up: boolean, anchorY: number, text: string, fontPx: number) {
+  const padX = fontPx * 0.5;
+  const lines = text.indexOf('\n') < 0 ? undefined : text.split('\n');
+  let textW = ctx.measureText(lines === undefined ? text : lines[0]).width;
+  if (lines !== undefined) for (let i = 1; i < lines.length; i++) textW = Math.max(textW, ctx.measureText(lines[i]).width);
+  const lh = fontPx * LINE_H;
+  const w = textW + padX * 2;
+  const h = fontPx + fontPx * 0.64 + (lines === undefined ? 0 : lh * (lines.length - 1));
+  const tail = fontPx * 0.42;
+  return { lines, lh, w, h, tail, textW, top: up ? anchorY + tail : anchorY - tail - h };
+}
 
 /**
  * A signal label: rounded plate, contrasting text, and a tail that points at
@@ -137,20 +162,16 @@ export function drawLabel(
   fontPx: number,
 ): void {
   ctx.font = `600 ${fontPx}px system-ui, sans-serif`;
-  const padX = fontPx * 0.5;
   // The overwhelmingly common label is one row, so it never pays for a split:
   // undefined here keeps the original single-measure, single-fillText path and
   // with it the exact plate geometry markers have always had.
-  const lines = text.indexOf('\n') < 0 ? undefined : text.split('\n');
-  let textW = ctx.measureText(lines === undefined ? text : lines[0]).width;
-  if (lines !== undefined) {
-    for (let i = 1; i < lines.length; i++) textW = Math.max(textW, ctx.measureText(lines[i]).width);
-  }
-  const lh = fontPx * LINE_H;
-  const w = textW + padX * 2;
-  const h = fontPx + fontPx * 0.64 + (lines === undefined ? 0 : lh * (lines.length - 1));
-  const tail = fontPx * 0.42;
-  const top = up ? anchorY + tail : anchorY - tail - h;
+  const layout = labelLayout(ctx, up, anchorY, text, fontPx);
+  paintLabel(ctx, up, cx, anchorY, text, color, fontPx, layout);
+}
+
+function paintLabel(ctx: CanvasRenderingContext2D, up: boolean, cx: number, anchorY: number, text: string,
+  color: string, fontPx: number, layout: ReturnType<typeof labelLayout>, style?: MarkerTextStyle): void {
+  const { w, h, top, tail, lines, lh, textW } = layout;
 
   ctx.fillStyle = color;
   ctx.beginPath();
@@ -166,15 +187,16 @@ export function drawLabel(
   ctx.closePath();
   ctx.fill();
 
-  ctx.fillStyle = contrastText(color);
-  ctx.textAlign = 'center';
+  ctx.fillStyle = style?.textColor ?? contrastText(color);
+  ctx.textAlign = style?.textAlign ?? 'center';
   ctx.textBaseline = 'middle';
+  const tx = style?.textAlign === 'left' ? cx - textW / 2 : style?.textAlign === 'right' ? cx + textW / 2 : cx;
   if (lines === undefined) {
-    ctx.fillText(text, cx, top + h / 2);
+    ctx.fillText(text, tx, top + h / 2);
     return;
   }
   const first = top + h / 2 - (lh * (lines.length - 1)) / 2;
-  for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], cx, first + lh * i);
+  for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], tx, first + lh * i);
 }
 
 export class SeriesMarkers implements IPrimitive {
@@ -183,7 +205,7 @@ export class SeriesMarkers implements IPrimitive {
   private readonly _priceScale: (() => PriceScale) | undefined;
   private _markers: SeriesMarker[] = [];
   private _host: PrimitiveHost | null = null;
-  private _lastPositions: { id: string; x: number; y: number }[] = [];
+  private _lastPositions: { id: string; x: number; y: number; clip?: { width: number; height: number } }[] = [];
 
   /**
    * @param seriesId The series whose pane and price scale the marks live on.
@@ -203,11 +225,18 @@ export class SeriesMarkers implements IPrimitive {
   }
 
   public attached(host: PrimitiveHost): void { this._host = host; }
-  public detached(): void { this._host = null; }
+  public detached(): void { this._host = null; this._lastPositions = []; }
   public zOrder(): ZOrder { return 'normal'; }
 
   public setMarkers(markers: readonly SeriesMarker[]): void {
+    for (const marker of markers) {
+      validateTextStyle(marker);
+      if (marker.textColor !== undefined && (typeof marker.textColor !== 'string' || marker.textColor.trim() === '')) {
+        throw new TypeError('Marker textColor must be a nonempty color string');
+      }
+    }
     this._markers = markers.slice().sort((a, b) => a.time - b.time);
+    this._lastPositions = [];
     this._host?.requestUpdate();
   }
 
@@ -231,8 +260,9 @@ export class SeriesMarkers implements IPrimitive {
 
     ctx.save();
     for (const m of this._markers) {
+      const styled = hasTextStyle(m) || m.textColor !== undefined;
       const index = rc.dataLayer.timeToIndex(m.time);
-      if (index === undefined || index < range.from - 1 || index > range.to + 1) continue;
+      if (index === undefined || (!styled && (index < range.from - 1 || index > range.to + 1))) continue;
       const bar = barByTime.get(m.time);
       const px = effectiveMarkerPx(m.size, rc.timeScale.barSpacing) * rc.dpr;
       const x = rc.timeScale.indexToX(index) * rc.dpr;
@@ -256,29 +286,62 @@ export class SeriesMarkers implements IPrimitive {
       } else {
         continue;
       }
-      if (!Number.isFinite(y)) continue;
+      if (!Number.isFinite(y) || !Number.isFinite(x)) continue;
       stackByTime.set(m.time, stack + 1);
+      const fontPx = (m.fontSize ?? Math.max(9, markerSizePx(m.size))) * rc.dpr;
+      const label = m.shape === 'labelUp' || m.shape === 'labelDown';
+      const validFont = Number.isFinite(fontPx) && fontPx > 0;
+      if (label && !validFont) continue;
+      let drawText = validFont && m.text !== undefined;
+      const below = m.position === 'belowBar' || m.position === 'paneTop';
+      const ty = below ? y + px : y - px;
+      let textW = 0, layout: ReturnType<typeof labelLayout> | undefined;
+      if (styled) {
+        if (drawText) ctx.font = textFont(m, fontPx, 'system-ui, sans-serif', label);
+        let left = x - px / 2, right = x + px / 2, top = y - px / 2, bottom = y + px / 2;
+        if (drawText && m.text !== undefined) {
+          if (label) {
+            layout = labelLayout(ctx, m.shape === 'labelUp', y, m.text, fontPx);
+            left = x - layout.w / 2; right = x + layout.w / 2;
+            top = Math.min(y, layout.top); bottom = Math.max(y, layout.top + layout.h);
+          } else {
+            const lines = m.text.split('\n');
+            for (const line of lines) textW = Math.max(textW, ctx.measureText(line).width);
+            const textH = fontPx + (lines.length - 1) * fontPx * LINE_H;
+            left = Math.min(left, x - textW / 2); right = Math.max(right, x + textW / 2);
+            top = Math.min(top, below ? ty : ty - textH); bottom = Math.max(bottom, below ? ty + textH : ty);
+          }
+        }
+        if (!label && ![left, right, top, bottom].every(Number.isFinite)) {
+          // Unrenderable text cannot erase an independently sized signal glyph.
+          drawText = false;
+          left = x - px / 2; right = x + px / 2; top = y - px / 2; bottom = y + px / 2;
+        }
+        if (![left, right, top, bottom].every(Number.isFinite) || right < 0 || left > rc.plotWidth * rc.dpr
+          || bottom < 0 || top > rc.plotHeight * rc.dpr) continue;
+        ctx.save(); ctx.beginPath(); ctx.rect(0, 0, rc.plotWidth * rc.dpr, rc.plotHeight * rc.dpr); ctx.clip();
+      }
+      const clip = styled ? { width: rc.plotWidth, height: rc.plotHeight } : undefined;
       if (m.shape === 'labelUp' || m.shape === 'labelDown') {
         if (m.text !== undefined) {
-          drawLabel(ctx, m.shape === 'labelUp', x, y, m.text, m.color,
-            Math.max(9, markerSizePx(m.size)) * rc.dpr);
+          if (layout) paintLabel(ctx, m.shape === 'labelUp', x, y, m.text, m.color, fontPx, layout, m);
+          else drawLabel(ctx, m.shape === 'labelUp', x, y, m.text, m.color, fontPx);
         }
-        if (m.id !== undefined) this._lastPositions.push({ id: m.id, x: x / rc.dpr, y: y / rc.dpr });
+        if (m.id !== undefined) this._lastPositions.push({ id: m.id, x: x / rc.dpr, y: y / rc.dpr, clip });
+        if (styled) ctx.restore();
         continue;
       }
       drawShape(ctx, m.shape, x, y, px, m.color);
-      if (m.text !== undefined) {
-        const fontPx = Math.max(9, markerSizePx(m.size)) * rc.dpr;
-        ctx.fillStyle = m.color;
-        ctx.font = `${fontPx}px system-ui, sans-serif`;
-        ctx.textAlign = 'center';
+      if (drawText && m.text !== undefined) {
+        ctx.fillStyle = m.textColor ?? m.color;
+        ctx.font = textFont(m, fontPx, 'system-ui, sans-serif');
+        ctx.textAlign = m.textAlign ?? 'center';
         // Text grows away from the edge a pinned marker sits on, the way it
         // grows away from the bar for the bar-anchored positions.
-        const below = m.position === 'belowBar' || m.position === 'paneTop';
         ctx.textBaseline = below ? 'top' : 'bottom';
-        const ty = below ? y + px : y - px;
+        const tx = m.textAlign === 'left' ? x - textW / 2 : m.textAlign === 'right' ? x + textW / 2 : x;
         if (m.text.indexOf('\n') < 0) {
-          ctx.fillText(m.text, x, ty);
+          ctx.fillText(m.text, tx, ty);
         } else {
           // Rows grow away from the bar (down below it, up above it) and the
           // block is written from the anchor outward, so whichever edge the
@@ -286,11 +349,12 @@ export class SeriesMarkers implements IPrimitive {
           const lines = m.text.split('\n');
           const lh = fontPx * LINE_H;
           for (let i = 0; i < lines.length; i++) {
-            ctx.fillText(lines[below ? i : lines.length - 1 - i], x, below ? ty + lh * i : ty - lh * i);
+            ctx.fillText(lines[below ? i : lines.length - 1 - i], tx, below ? ty + lh * i : ty - lh * i);
           }
         }
       }
-      if (m.id !== undefined) this._lastPositions.push({ id: m.id, x: x / rc.dpr, y: y / rc.dpr });
+      if (m.id !== undefined) this._lastPositions.push({ id: m.id, x: x / rc.dpr, y: y / rc.dpr, clip });
+      if (styled) ctx.restore();
     }
     ctx.restore();
   }
@@ -298,6 +362,7 @@ export class SeriesMarkers implements IPrimitive {
   public hitTest(x: number, y: number): PrimitiveHit | null {
     let best: PrimitiveHit | null = null;
     for (const p of this._lastPositions) {
+      if (p.clip && (x < 0 || y < 0 || x > p.clip.width || y > p.clip.height)) continue;
       const d = Math.hypot(p.x - x, p.y - y);
       if (d <= 8 && (best === null || d < best.distance)) {
         best = { externalId: p.id, zOrder: 'normal', distance: d, cursor: 'pointer' };

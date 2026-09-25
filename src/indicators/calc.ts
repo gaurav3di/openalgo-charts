@@ -7,10 +7,256 @@
  *
  * `ema`, `rsi`, `atr`, `trueRange`, and `supertrend` are NOT re-implemented
  * here — they ship in the base bundle and the tier imports them from it.
+ *
+ * For helpers accepting missing-value options, omitted options use each
+ * helper's documented default. Supplied options treat NaN and infinities as
+ * missing. An empty options object selects chronological propagation.
+ *
+ * Varying window lengths must align with the source. Each bar uses its own
+ * positive safe-integer length; NaN lengths produce gaps without discarding
+ * source history. Other invalid numeric lengths throw RangeError, malformed
+ * elements throw TypeError, and unequal array lengths throw RangeError.
+ * Array lengths default to chronological propagation. With `skip`, changed
+ * lengths reevaluate finite history even on missing source bars. These paths
+ * use O(n + sum of evaluated window lengths) time and O(n) working storage.
  */
 
-/** Simple moving average. First value lands at index `period - 1`. */
-export function sma(values: readonly number[], period: number): number[] {
+import type { NumericalWindowOptions } from './statistics';
+import { windowMean, windowSum } from './window-mean';
+
+interface Observation { value: number; index: number }
+
+function checkedPolicy(period: number, options: NumericalWindowOptions): 'skip' | 'propagate' {
+  if (!Number.isSafeInteger(period) || period <= 0) {
+    throw new RangeError('Missing-value period must be a positive safe integer');
+  }
+  if (options === null || typeof options !== 'object' || Array.isArray(options)) {
+    throw new TypeError('Missing-value options must be an object');
+  }
+  const policy = options.missing === undefined ? 'propagate' : options.missing;
+  if (policy !== 'skip' && policy !== 'propagate') {
+    throw new TypeError('Missing-value policy must be skip or propagate');
+  }
+  return policy;
+}
+
+/**
+ * Opt-in windows require positive safe-integer periods and finite observations.
+ * Keeping original indices lets skipped gaps age an extreme's bar offset.
+ */
+function observationWindows(
+  values: readonly number[], period: number, options: NumericalWindowOptions,
+  evaluate: (window: readonly Observation[], index: number) => number,
+  previousOnly = false,
+): number[] {
+  const policy = checkedPolicy(period, options);
+  const out = new Array<number>(values.length).fill(NaN);
+  const window: Observation[] = [];
+  let missing = 0;
+  for (let i = 0; i < values.length; i++) {
+    const value = values[i];
+    const finite = Number.isFinite(value);
+    if (previousOnly && finite && window.length === period && missing === 0) out[i] = evaluate(window, i);
+    if (policy === 'propagate' || finite) {
+      window.push({ value, index: i });
+      if (!finite) missing++;
+      if (window.length > period && !Number.isFinite(window.shift()!.value)) missing--;
+    }
+    if (!previousOnly && window.length === period && missing === 0) out[i] = evaluate(window, i);
+  }
+  return out;
+}
+
+function checkedVaryingParameter(value: number, minimum: number, label: string, missingAllowed: boolean): void {
+  if (typeof value !== 'number') throw new TypeError(`${label} must contain numbers`);
+  if (missingAllowed && Number.isNaN(value)) return;
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    throw new RangeError(`${label} must be a safe integer greater than or equal to ${minimum}`);
+  }
+}
+
+function checkedParameterSeries(parameters: readonly number[], length: number, minimum: number, label: string): void {
+  if (!Array.isArray(parameters)) throw new TypeError(`${label} must be an array`);
+  if (parameters.length !== length) throw new RangeError(`${label} array length must match the source`);
+  for (let i = 0; i < parameters.length; i++) checkedVaryingParameter(parameters[i], minimum, label, true);
+}
+
+/** Retained history lets later windows grow past an earlier, shorter window. */
+function varyingWindows(
+  values: readonly number[], periods: readonly number[], options: NumericalWindowOptions | undefined,
+  evaluate: (window: readonly Observation[], index: number) => number,
+  previousOnly = false,
+): number[] {
+  checkedParameterSeries(periods, values.length, 1, 'Window length');
+  const policy = checkedPolicy(1, options === undefined ? {} : options);
+  const out = new Array<number>(values.length).fill(NaN);
+  const history: Observation[] = [];
+  let consecutive = 0;
+  const observe = (value: number, index: number): void => {
+    const finite = Number.isFinite(value);
+    consecutive = finite ? consecutive + 1 : 0;
+    if (policy === 'propagate' || finite) history.push({ value, index });
+  };
+  for (let i = 0; i < values.length; i++) {
+    const value = values[i];
+    if (!previousOnly) observe(value, i);
+    const period = periods[i];
+    if (!Number.isNaN(period) && period <= history.length &&
+        (policy === 'skip' || period <= consecutive) && (!previousOnly || Number.isFinite(value))) {
+      out[i] = evaluate(history.slice(history.length - period), i);
+    }
+    if (previousOnly) observe(value, i);
+  }
+  return out;
+}
+
+/** Exact integer units of 2^-1074 retain residuals after overflowing sums. */
+function exactFiniteAverage(values: readonly number[], weights?: readonly number[]): number {
+  const bits = new DataView(new ArrayBuffer(8));
+  const fractionMask = (1n << 52n) - 1n;
+  let numerator = 0n;
+  let denominator = 0n;
+  for (let i = 0; i < values.length; i++) {
+    const weight = BigInt(weights?.[i] ?? 1);
+    if (weight === 0n) continue;
+    bits.setFloat64(0, values[i]);
+    const encoded = bits.getBigUint64(0);
+    const exponent = Number((encoded >> 52n) & 0x7ffn);
+    const fraction = encoded & fractionMask;
+    const magnitude = exponent === 0 ? fraction : ((1n << 52n) | fraction) << BigInt(exponent - 1);
+    numerator += (encoded >> 63n ? -magnitude : magnitude) * weight;
+    denominator += weight;
+  }
+  return roundedBinaryAverage(numerator, denominator);
+}
+
+// Static file tracers can mistake accumulator initializers for final values.
+// Parameters keep them from evaluating an unexecuted zero-denominator quotient.
+function roundedBinaryAverage(numerator: bigint, denominator: bigint): number {
+  const negative = numerator < 0n;
+  const magnitude = negative ? -numerator : numerator;
+  const wholeUnits = magnitude / denominator;
+  const shift = Math.max(0, wholeUnits.toString(2).length - 53);
+  const divisor = denominator << BigInt(shift);
+  let significand = magnitude / divisor;
+  const remainder = magnitude % divisor;
+  if (2n * remainder > divisor || (2n * remainder === divisor && (significand & 1n) !== 0n)) {
+    significand++;
+  }
+  const result = Number(significand) * 2 ** (shift - 1074);
+  return negative ? -result : result;
+}
+
+/** Nonnegative integer weights allow division after a compensated sum. */
+function finiteAverage(values: readonly number[], weights?: readonly number[]): number {
+  let sum = 0;
+  let correction = 0;
+  let denominator = 0;
+  let minimum = Infinity;
+  let maximum = -Infinity;
+  for (let i = 0; i < values.length; i++) {
+    const weight = weights?.[i] ?? 1;
+    if (weight === 0) continue;
+    minimum = Math.min(minimum, values[i]);
+    maximum = Math.max(maximum, values[i]);
+    denominator += weight;
+    const term = values[i] * weight;
+    const next = sum + term;
+    correction += Math.abs(sum) >= Math.abs(term) ? (sum - next) + term : (term - next) + sum;
+    sum = next;
+  }
+  if (minimum === maximum) return minimum;
+  const numerator = sum + correction;
+  const average = Number.isFinite(numerator) && Number.isSafeInteger(denominator)
+    ? numerator / denominator : exactFiniteAverage(values, weights);
+  // A convex average is bounded by its participating observations.
+  return Math.max(minimum, Math.min(maximum, average));
+}
+
+function observationMean(window: readonly Observation[]): number {
+  return finiteAverage(window.map((item) => item.value));
+}
+
+/** Center before scaling to retain spreads near a large common offset. */
+function observationDeviation(window: readonly Observation[], squared: boolean): number {
+  const origin = window[0].value;
+  let maximum = 0;
+  let spread = 0;
+  let deltas = window.map(({ value }) => {
+    maximum = Math.max(maximum, Math.abs(value));
+    const delta = value - origin;
+    spread = Math.max(spread, Math.abs(delta));
+    return delta;
+  });
+  if (spread === 0) return 0;
+  // Binary scaling also preserves subnormal inputs before final rounding.
+  const scale = 2 ** Math.min(1023, Math.floor(Math.log2(Number.isFinite(spread) ? spread : maximum)));
+  deltas = Number.isFinite(spread)
+    ? deltas.map((delta) => delta / scale)
+    : window.map(({ value }) => value / scale - origin / scale);
+  const center = finiteAverage(deltas);
+  const meanDeviation = finiteAverage(deltas.map((delta) => {
+    const distance = Math.abs(delta - center);
+    return squared ? distance * distance : distance;
+  }));
+  // Both population deviations are bounded by the largest absolute input.
+  return Math.min(maximum, (squared ? Math.sqrt(meanDeviation) : meanDeviation) * scale);
+}
+
+function observationExtreme(window: readonly Observation[], high: boolean): Observation {
+  let best = window[0];
+  for (let i = 1; i < window.length; i++) {
+    const item = window[i];
+    if (high ? item.value >= best.value : item.value <= best.value) best = item;
+  }
+  return best;
+}
+
+function observedSmoothing(
+  values: readonly number[], period: number, options: NumericalWindowOptions, currentWeight: number,
+): number[] {
+  const policy = checkedPolicy(period, options);
+  const out = new Array<number>(values.length).fill(NaN);
+  let count = 0;
+  const seed: number[] = [];
+  let previous = NaN;
+  for (let i = 0; i < values.length; i++) {
+    const value = values[i];
+    if (!Number.isFinite(value)) {
+      if (policy === 'propagate') { count = 0; seed.length = 0; previous = NaN; }
+      else if (count === period) out[i] = previous;
+      continue;
+    }
+    if (count < period) {
+      seed.push(value);
+      if (++count < period) continue;
+      previous = finiteAverage(seed);
+      seed.length = 0;
+    } else previous = finiteAverage([previous, value], [period - 1, currentWeight]);
+    out[i] = previous;
+  }
+  return out;
+}
+
+/**
+ * Simple moving average. Valid scalar windows without options sum oldest first
+ * afresh, then divide once. Missing or overflowing sums produce NaN and recover
+ * when they expire. This uses O(n * period) time and O(1) extra working storage.
+ * Unsupported scalar periods retain their historical behavior.
+ * Supplied `skip` collects period finite observations and holds across gaps;
+ * `propagate` (also the default for {}) requires a complete chronological
+ * window. Warmup is NaN. Option-path periods must be positive safe integers;
+ * invalid periods throw RangeError and malformed options throw TypeError.
+ */
+export function sma(values: readonly number[], period: number, options?: NumericalWindowOptions): number[];
+/** Bar-aligned lengths use each current window; NaN lengths give gaps. Arrays default to propagation. */
+export function sma(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[];
+export function sma(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[] {
+  if (typeof period !== 'number') return varyingWindows(values, period, options, observationMean);
+  if (options !== undefined) return observationWindows(values, period, options, observationMean);
+  if (Number.isSafeInteger(period) && period > 0) return windowMean(values, period);
+  // Unsupported scalar periods retain their historical behavior. Valid windows
+  // above sum afresh, so an expired prefix cannot invent a numerical signal.
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0 || n < period) return out;
@@ -35,25 +281,80 @@ export function sma(values: readonly number[], period: number): number[] {
   return out;
 }
 
-/** Linearly weighted moving average (most recent bar carries weight `period`). */
-export function wma(values: readonly number[], period: number): number[] {
+/**
+ * Linearly weighted average, newest observation carrying weight period.
+ * Valid scalar defaults sum weighted terms oldest first and omit nonfinite
+ * results. Supplied `skip` weights period
+ * finite observations and holds across gaps; `propagate` requires a full
+ * chronological window. Warmup is NaN. The option path validates a positive
+ * safe-integer period and a missing policy, throwing RangeError or TypeError.
+ */
+export function wma(values: readonly number[], period: number, options?: NumericalWindowOptions): number[];
+/** Bar-aligned lengths weight the newest selected observation most; NaN lengths give gaps. */
+export function wma(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[];
+export function wma(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[] {
+  if (typeof period !== 'number') return varyingWindows(values, period, options,
+    (window) => finiteAverage(window.map((item) => item.value), window.map((_, i) => i + 1)));
+  if (options !== undefined) return observationWindows(values, period, options, (window) => {
+    return finiteAverage(window.map((item) => item.value), window.map((_, i) => i + 1));
+  });
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0 || n < period) return out;
   const denom = (period * (period + 1)) / 2;
+  const chronological = Number.isSafeInteger(period);
   for (let i = period - 1; i < n; i++) {
     let acc = 0;
-    for (let k = 0; k < period; k++) acc += values[i - k] * (period - k);
-    out[i] = acc / denom;
+    for (let k = 0; k < period; k++) {
+      const back = chronological ? period - 1 - k : k;
+      acc += values[i - back] * (period - back);
+    }
+    const value = acc / denom;
+    if (!chronological || Number.isFinite(value)) out[i] = value;
+  }
+  return out;
+}
+
+/** Seed from a current finite suffix; later source gaps leave running state intact. */
+function seededSmoothing(values: readonly number[], period: number, exponential: boolean): number[] {
+  const out = new Array<number>(values.length).fill(NaN);
+  if (values.length < period) return out;
+  const weight = 2 / (period + 1);
+  let consecutive = 0, running = NaN, seeded = false;
+  for (let i = 0; i < values.length; i++) {
+    const value = values[i];
+    if (!Number.isFinite(value)) { consecutive = 0; continue; }
+    if (!seeded) {
+      if (++consecutive < period) continue;
+      let sum = 0;
+      for (let at = i + 1 - period; at <= i; at++) sum += values[at];
+      const mean = sum / period;
+      if (!Number.isFinite(mean)) continue;
+      running = mean === 0 ? 0 : mean;
+      seeded = true;
+    } else {
+      // Overflow from an actual update remains committed. It is not a new seed.
+      running = exponential ? value * weight + running * (1 - weight)
+        : (running * (period - 1) + value) / period;
+    }
+    if (Number.isFinite(running)) out[i] = running === 0 ? 0 : running;
   }
   return out;
 }
 
 /**
- * Wilder's smoothing (RMA): seed with the SMA of the first `period` values,
- * then `(prev * (period - 1) + v) / period`. The basis of RSI, ATR, and ADX.
+ * Wilder's smoothing (RMA): seed from the first complete finite window,
+ * then `(prev * (period - 1) + v) / period`. Valid scalar defaults retry
+ * nonfinite seeds, leave a gap for missing inputs and retain seeded state.
+ * Running overflow is unavailable without restarting. Supplied `skip` seeds from period
+ * finite observations and holds state across gaps. `propagate` clears state on
+ * a missing input and reseeds after period consecutive finite observations.
+ * Warmup is NaN. The option path requires a positive safe-integer period and
+ * valid policy, throwing RangeError or TypeError respectively.
  */
-export function rma(values: readonly number[], period: number): number[] {
+export function rma(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
+  if (options !== undefined) return observedSmoothing(values, period, options, 1);
+  if (Number.isSafeInteger(period) && period > 0) return seededSmoothing(values, period, false);
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0 || n < period) return out;
@@ -68,26 +369,55 @@ export function rma(values: readonly number[], period: number): number[] {
   return out;
 }
 
-/** Rolling population standard deviation over `period`. */
-export function stdev(values: readonly number[], period: number): number[] {
+/**
+ * Population standard deviation. Valid scalar defaults accumulate squared
+ * deviations oldest first and omit nonfinite results.
+ * Supplied `skip` uses period finite observations and holds across gaps;
+ * `propagate` requires a full chronological window. Ties retain multiplicity;
+ * warmup is NaN. Invalid option-path periods throw RangeError, malformed
+ * options TypeError. A period must be a positive safe integer.
+ */
+export function stdev(values: readonly number[], period: number, options?: NumericalWindowOptions): number[];
+/** Bar-aligned lengths select the current population; NaN lengths give gaps. Arrays default to propagation. */
+export function stdev(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[];
+export function stdev(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[] {
+  if (typeof period !== 'number') return varyingWindows(values, period, options,
+    (window) => observationDeviation(window, true));
+  if (options !== undefined) return observationWindows(values, period, options,
+    (window) => observationDeviation(window, true));
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0 || n < period) return out;
   const means = sma(values, period);
+  const chronological = Number.isSafeInteger(period);
   for (let i = period - 1; i < n; i++) {
     let acc = 0;
     const m = means[i];
     for (let k = 0; k < period; k++) {
-      const d = values[i - k] - m;
+      const d = values[i - (chronological ? period - 1 - k : k)] - m;
       acc += d * d;
     }
-    out[i] = Math.sqrt(acc / period);
+    const value = Math.sqrt(acc / period);
+    if (!chronological || Number.isFinite(value)) out[i] = value;
   }
   return out;
 }
 
-/** Rolling maximum over `period` bars. */
-export function highest(values: readonly number[], period: number): number[] {
+/**
+ * Rolling maximum. Omitted options preserve legacy warmup and gap behavior.
+ * Supplied `skip` searches period finite observations and holds across gaps;
+ * `propagate` requires period chronological finite bars. Insufficient or
+ * all-missing history is NaN. Invalid option-path periods throw RangeError;
+ * malformed policies throw TypeError. Periods must be positive safe integers.
+ */
+export function highest(values: readonly number[], period: number, options?: NumericalWindowOptions): number[];
+/** Bar-aligned lengths select the current maximum window; NaN lengths give gaps. */
+export function highest(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[];
+export function highest(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[] {
+  if (typeof period !== 'number') return varyingWindows(values, period, options,
+    (window) => observationExtreme(window, true).value);
+  if (options !== undefined) return observationWindows(values, period, options,
+    (window) => observationExtreme(window, true).value);
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0) return out;
@@ -99,8 +429,21 @@ export function highest(values: readonly number[], period: number): number[] {
   return out;
 }
 
-/** Rolling minimum over `period` bars. */
-export function lowest(values: readonly number[], period: number): number[] {
+/**
+ * Rolling minimum. Omitted options preserve legacy warmup and gap behavior.
+ * Supplied `skip` searches period finite observations and holds across gaps;
+ * `propagate` requires period chronological finite bars. Insufficient or
+ * all-missing history is NaN. Invalid option-path periods throw RangeError;
+ * malformed policies throw TypeError. Periods must be positive safe integers.
+ */
+export function lowest(values: readonly number[], period: number, options?: NumericalWindowOptions): number[];
+/** Bar-aligned lengths select the current minimum window; NaN lengths give gaps. */
+export function lowest(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[];
+export function lowest(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[] {
+  if (typeof period !== 'number') return varyingWindows(values, period, options,
+    (window) => observationExtreme(window, false).value);
+  if (options !== undefined) return observationWindows(values, period, options,
+    (window) => observationExtreme(window, false).value);
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0) return out;
@@ -129,12 +472,19 @@ export function nulls(values: readonly number[]): (number | null)[] {
 // documented behaviour (`ema` matches `openalgo.ta`, not the reference).
 
 /**
- * the reference `ema`: seeded with the **SMA of the first `period` values**, NaN
- * before that. The base bundle's `ema` seeds from `values[0]` and emits from
- * index 0 instead, so the two disagree for roughly the first `period` bars and
- * converge after. Anything reproducing a reference platform plot needs this one.
+ * EMA seeded with an SMA, then smoothed with alpha=2/(period+1). Valid scalar
+ * defaults seed from the first complete finite window, retry nonfinite seeds,
+ * and emit gaps for missing inputs while retaining seeded state. A nonfinite
+ * running update stays committed, without restarting. Supplied
+ * `skip` seeds from period finite observations and holds state across gaps.
+ * `propagate` clears state on any missing input and reseeds with period
+ * consecutive finite observations. Warmup is NaN. Invalid option-path
+ * periods throw RangeError; malformed options throw TypeError. Periods must
+ * be positive safe integers.
  */
-export function smaSeededEma(values: readonly number[], period: number): number[] {
+export function smaSeededEma(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
+  if (options !== undefined) return observedSmoothing(values, period, options, 2);
+  if (Number.isSafeInteger(period) && period > 0) return seededSmoothing(values, period, true);
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0 || n < period) return out;
@@ -171,29 +521,58 @@ export function roc(values: readonly number[], n: number): number[] {
 }
 
 /**
- * the reference `dev`: mean **absolute** deviation from the SMA over `period` — not
- * a standard deviation. CCI's 0.015 constant is calibrated against this.
+ * Mean absolute deviation from the average. Valid scalar defaults accumulate
+ * deviations oldest first and omit nonfinite results.
+ * Supplied `skip` uses period finite observations and holds across
+ * gaps; `propagate` requires a full chronological window. Ties retain their
+ * multiplicity and warmup is NaN. Invalid option-path periods throw RangeError,
+ * malformed options TypeError. Periods must be positive safe integers.
  */
-export function dev(values: readonly number[], period: number): number[] {
+export function dev(values: readonly number[], period: number, options?: NumericalWindowOptions): number[];
+/** Bar-aligned lengths select the current deviation window; NaN lengths give gaps. */
+export function dev(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[];
+export function dev(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[] {
+  if (typeof period !== 'number') return varyingWindows(values, period, options,
+    (window) => observationDeviation(window, false));
+  if (options !== undefined) return observationWindows(values, period, options,
+    (window) => observationDeviation(window, false));
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0 || n < period) return out;
   const means = sma(values, period);
+  const chronological = Number.isSafeInteger(period);
   for (let i = period - 1; i < n; i++) {
     let acc = 0;
-    for (let k = 0; k < period; k++) acc += Math.abs(values[i - k] - means[i]);
-    out[i] = acc / period;
+    for (let k = 0; k < period; k++) acc += Math.abs(values[i - (chronological ? period - 1 - k : k)] - means[i]);
+    const value = acc / period;
+    if (!chronological || Number.isFinite(value)) out[i] = value;
   }
   return out;
 }
 
 /**
- * the reference `percentrank`: the percentage of the **previous** `period` values
- * that are less than or equal to the current one. The current bar is the
- * subject of the comparison, not part of the window, so the first answer lands
- * at index `period`.
+ * Percentage of period previous values less than or equal to the current
+ * subject, excluding the subject itself. Omitted options preserve legacy
+ * behavior. Supplied `skip` collects previous finite observations; `propagate`
+ * requires a full previous chronological window. A missing subject or
+ * insufficient history produces NaN under either policy. Equality counts.
+ * Invalid option-path periods throw RangeError; malformed policies throw
+ * TypeError. Periods must be positive safe integers.
  */
-export function percentRank(values: readonly number[], period: number): number[] {
+export function percentRank(values: readonly number[], period: number, options?: NumericalWindowOptions): number[];
+/** Bar-aligned lengths count previous observations. A missing current subject or length gives NaN. */
+export function percentRank(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[];
+export function percentRank(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[] {
+  if (typeof period !== 'number') return varyingWindows(values, period, options, (window, index) => {
+    let count = 0;
+    for (const item of window) if (item.value <= values[index]) count++;
+    return count * 100 / window.length;
+  }, true);
+  if (options !== undefined) return observationWindows(values, period, options, (window, index) => {
+    let count = 0;
+    for (const item of window) if (item.value <= values[index]) count++;
+    return count * 100 / period;
+  }, true);
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0) return out;
@@ -251,15 +630,42 @@ export function vwma(
 }
 
 /**
- * the reference `highestbars` / `lowestbars`: the **offset** to the extreme bar
- * in the window, `0` for the current bar and `-(period - 1)` for the oldest.
- * Aroon is built entirely out of these, and the sign convention is why.
+ * Highest-value bar offset, zero for current and negative into history; ties
+ * choose the latest bar. Omitted options preserve legacy behavior. Supplied
+ * `skip` searches period finite observations and retains original bar indices,
+ * so an offset can extend beyond period-1 and ages across missing current bars.
+ * `propagate` requires period chronological finite bars. Warmup and all-missing
+ * history are NaN. Invalid option-path periods throw RangeError; malformed
+ * policies throw TypeError. Periods must be positive safe integers.
  */
-export function highestBars(values: readonly number[], period: number): number[] {
+export function highestBars(values: readonly number[], period: number, options?: NumericalWindowOptions): number[];
+/** Bar-aligned lengths retain original offsets and latest ties; NaN lengths give gaps. */
+export function highestBars(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[];
+export function highestBars(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[] {
+  if (typeof period !== 'number') return varyingWindows(values, period, options,
+    (window, index) => observationExtreme(window, true).index - index);
+  if (options !== undefined) return observationWindows(values, period, options,
+    (window, index) => observationExtreme(window, true).index - index);
   return extremeBars(values, period, true);
 }
 
-export function lowestBars(values: readonly number[], period: number): number[] {
+/**
+ * Lowest-value bar offset, zero for current and negative into history; ties
+ * choose the latest bar. Omitted options preserve legacy behavior. Supplied
+ * `skip` searches period finite observations using their original indices;
+ * offsets age across gaps. `propagate` requires a full chronological window.
+ * Warmup and all-missing history are NaN. Invalid option-path periods throw
+ * RangeError; malformed policies throw TypeError. Periods must be positive
+ * safe integers.
+ */
+export function lowestBars(values: readonly number[], period: number, options?: NumericalWindowOptions): number[];
+/** Bar-aligned lengths retain original offsets and latest ties; NaN lengths give gaps. */
+export function lowestBars(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[];
+export function lowestBars(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[] {
+  if (typeof period !== 'number') return varyingWindows(values, period, options,
+    (window, index) => observationExtreme(window, false).index - index);
+  if (options !== undefined) return observationWindows(values, period, options,
+    (window, index) => observationExtreme(window, false).index - index);
   return extremeBars(values, period, false);
 }
 
@@ -284,8 +690,14 @@ function extremeBars(values: readonly number[], period: number, wantHigh: boolea
   return out;
 }
 
-/** the reference `sum`: rolling sum over `period` bars. NaN during warmup. */
+/**
+ * Fresh oldest-first sum over each complete finite window; NaN on warmup or
+ * overflow. Missing values expire with the window. Valid integer periods use
+ * O(n * period) time and O(1) extra working storage, excluding the result.
+ * Unsupported scalar periods retain their historical behavior.
+ */
 export function rollingSum(values: readonly number[], period: number): number[] {
+  if (Number.isSafeInteger(period) && period > 0) return windowSum(values, period);
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0 || n < period) return out;
@@ -439,12 +851,58 @@ export function cci(values: readonly number[], period: number): number[] {
  * value `right` bars back. Comparisons are strict on both sides, so a tie is
  * not a pivot.
  */
-export function pivotHigh(values: readonly number[], left: number, right: number): number[] {
+export function pivotHigh(values: readonly number[], left: number, right: number): number[];
+/**
+ * Array widths align with the source and are read on the confirmation bar.
+ * NaN array elements give gaps; scalar companions and other array elements
+ * must be nonnegative safe integers. Mismatched array lengths throw RangeError.
+ * Zero widths are valid. Finite neighbors and strict comparisons are required.
+ * Results stay on confirmation bars, including repeated confirmations of one
+ * candidate. Invalid numbers throw RangeError; malformed elements TypeError.
+ */
+export function pivotHigh(values: readonly number[], left: number | readonly number[], right: number | readonly number[]): number[];
+export function pivotHigh(values: readonly number[], left: number | readonly number[], right: number | readonly number[]): number[] {
+  if (typeof left !== 'number' || typeof right !== 'number') return varyingPivot(values, left, right, true);
   return pivot(values, left, right, true);
 }
 
-export function pivotLow(values: readonly number[], left: number, right: number): number[] {
+export function pivotLow(values: readonly number[], left: number, right: number): number[];
+/**
+ * Array widths follow pivotHigh's validation and confirmation placement, with
+ * strictly lower candidates. Missing widths or neighbors give NaN. Both widths
+ * are read from the current confirmation bar, even if the candidate repeats.
+ */
+export function pivotLow(values: readonly number[], left: number | readonly number[], right: number | readonly number[]): number[];
+export function pivotLow(values: readonly number[], left: number | readonly number[], right: number | readonly number[]): number[] {
+  if (typeof left !== 'number' || typeof right !== 'number') return varyingPivot(values, left, right, false);
   return pivot(values, left, right, false);
+}
+
+function varyingPivot(
+  values: readonly number[], left: number | readonly number[], right: number | readonly number[], wantHigh: boolean,
+): number[] {
+  for (const [label, widths] of [['Left pivot width', left], ['Right pivot width', right]] as const) {
+    if (typeof widths === 'number') checkedVaryingParameter(widths, 0, label, false);
+    else checkedParameterSeries(widths, values.length, 0, label);
+  }
+  const out = new Array<number>(values.length).fill(NaN);
+  for (let i = 0; i < values.length; i++) {
+    const before = typeof left === 'number' ? left : left[i];
+    const after = typeof right === 'number' ? right : right[i];
+    // Check available history before adding widths or scanning a large span.
+    if (Number.isNaN(before) || Number.isNaN(after) || after > i || before > i - after) continue;
+    const candidate = i - after;
+    const value = values[candidate];
+    if (!Number.isFinite(value)) continue;
+    let extreme = true;
+    for (let index = candidate - before; index <= i && extreme; index++) {
+      if (index === candidate) continue;
+      const neighbor = values[index];
+      if (!Number.isFinite(neighbor) || (wantHigh ? neighbor >= value : neighbor <= value)) extreme = false;
+    }
+    if (extreme) out[i] = value;
+  }
+  return out;
 }
 
 function pivot(values: readonly number[], left: number, right: number, wantHigh: boolean): number[] {

@@ -75,6 +75,45 @@ for (const [dpr, automaticFonts, weightedFonts] of [
   test.describe(`table layout at DPR ${dpr}`, () => {
     test.use({ deviceScaleFactor: dpr, viewport: { width: 1000, height: 760 } });
 
+    test('merged cells retain multiline text, spanning backgrounds and an independent frame', async ({ page }, info) => {
+      await ready(page);
+      const evidence = await page.evaluate(() => {
+        const { entries, dpr, margin } = (window as any).__tableLayout;
+        const { canvas, ctx, table, incomingFont, afterTable } = entries.formatted;
+        const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        let coveredInk = 0, frameInk = 0;
+        const textRows = new Set<number>();
+        for (let i = 0; i < pixels.length; i += 4) {
+          const [r, g, b] = pixels.slice(i, i + 3);
+          if (r > 240 && g < 10 && b > 240) coveredInk++;
+          if (r > 240 && g > 190 && g < 215 && b < 10) frameInk++;
+          // Include partially covered glyph pixels so font antialiasing does not
+          // split one text line into several disconnected rows.
+          if (r < 20 && g > 80 && b > 100 && b < 215) textRows.add(Math.floor(i / 4 / canvas.width));
+        }
+        const rows = [...textRows].sort((a, b) => a - b);
+        let blocks = 0;
+        rows.forEach((row, index) => { if (index === 0 || row > rows[index - 1] + 1) blocks++; });
+        const sample = (x: number, y: number) => Array.from(ctx.getImageData(Math.round(x * dpr), Math.round(y * dpr), 1, 1).data).slice(0, 3);
+        return {
+          coveredInk, frameInk, blocks,
+          headingSeam: sample(margin + 100, margin + 4),
+          rowSeam: sample(margin + 10, margin + 80),
+          inside: table.hitTest(margin + 299, margin + 119)?.externalId,
+          outside: table.hitTest(margin + 301, margin + 119), incomingFont, afterTable,
+        };
+      });
+      expect(evidence.coveredInk).toBe(0);
+      expect(evidence.frameInk).toBeGreaterThan(300);
+      expect(evidence.blocks, JSON.stringify(evidence)).toBe(2);
+      expect(evidence.headingSeam).toEqual([51, 68, 85]);
+      expect(evidence.rowSeam).toEqual([18, 52, 86]);
+      expect(evidence.inside).toBe('formatted');
+      expect(evidence.outside).toBeNull();
+      expect(evidence.afterTable).toEqual({ font: evidence.incomingFont, fillStyle: '#22cc88', textAlign: 'left', textBaseline: 'top' });
+      await page.locator('#formatted').screenshot({ path: info.outputPath('formatted-table.png') });
+    });
+
     test('automatic widths follow rendered fonts and preserve the next primitive', async ({ page }, info) => {
       const errors: string[] = [];
       page.on('pageerror', error => errors.push(error.message));

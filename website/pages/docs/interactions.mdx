@@ -38,6 +38,11 @@ price range can still adjust to the bars now in view. Touch continues to pan bot
 Saved horizontal preferences are preserved when upgrading. To enable two-axis panning,
 choose **Axes > Mouse drag > Time and price** or set `mousePan: 'both'`.
 
+While autofit is enabled, mouse and pen drags ignore vertical drift of up to 3 CSS
+pixels from the press. A larger vertical movement selects manual price panning.
+This keeps a nearly horizontal drag from accidentally freezing the price range.
+Already-manual axes retain fine adjustments, and touch behavior is unchanged.
+
 ```ts
 const chart = createChart(el, {
   navigation: { mousePan: 'both', defaultVisibleBars: 120 },
@@ -64,6 +69,13 @@ loaded bars, and a positive value targets the newest N loaded bars plus four emp
 slots on the right, within the available data and bar-spacing limits. Updating this count
 applies that default view immediately. It does not change how much history your feed loads
 or discard any bars. `chart.fitContent()` always fits all loaded bars.
+
+For consistent candle density across desktop and mobile, use
+`navigation: { defaultBarSpacing: 8 }`. This uses 8 CSS pixels per bar, showing more
+bars on a wider chart. The preference is saved and applied on initial load and reset;
+resizing preserves the current zoom. A positive spacing overrides the bar count.
+Set spacing to `0` to disable it, or edit `defaultVisibleBars` to return to count mode.
+Both modes obey the configured spacing limits and retain all loaded history.
 
 ## Time navigator (hover-revealed zoom controls)
 
@@ -116,9 +128,14 @@ const cancel = chart.beginPick('price', (price) => {
 
 cancel();                                        // give up without an answer
 chart.beginPick('time', (t) => setAnchor(t));    // a bar time instead
+
+// Select a value in a study pane's own units.
+chart.beginPick('price', setThreshold, { paneIndex: 1, priceScaleId: 'left' });
 ```
 
-`beginPick(kind, cb)` returns a cancel function and is also exported standalone, so it works
+`beginPick(kind, cb)` returns a callable `PickHandle`. Call it to cancel, or use
+`handle.active()` to check whether this invocation still owns the capture. The
+function is also exported standalone as `beginPick(host, kind, cb)`, so it works
 against anything structurally matching `PickHost` rather than only against `Chart`. The
 chart emits [`pick:start` and `pick:end`](/docs/events#what-the-engine-emits) around it, so
 you can swap the cursor or show a hint while a pick is live; `pick:end` carries `null` when
@@ -133,9 +150,17 @@ the pick was cancelled, and fires before the callback when it was not.
 - **Panning is left alone.** A pick deliberately does not arm placement mode, so you can
   scroll back to the bar you mean and then click it, and a drag emits no click at all, so
   panning cannot answer a pick by accident. It also means arming a pick never cancels an
-  active drawing tool.
+  active drawing tool. Finish drawing placement before arming a chart pick;
+  starting placement during a pick cancels it.
 - **One pick per chart.** Arming a second cancels the first, so a single click can never
   answer two callers. Arming a fresh pick from inside the callback works.
+
+The optional third argument, `PickOptions`, selects a pane and, for price picks,
+an existing price scale. A scale without `paneIndex` targets the primary pane.
+Other panes, axes and primitive controls cannot answer the pick. Hidden overlay
+scales are supported. Invalid targets throw before replacing an existing pick.
+Data replacement, context changes, restoration and destruction cancel pending
+selections. A host must also cancel when its editing dialog or study is removed.
 
 ## Touch
 

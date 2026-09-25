@@ -24,7 +24,7 @@
  *   every listener.
  */
 import {
-  AlertController, ChartObjects, DataLoadingController, createChart, darkTheme, lightTheme, registeredIntervals, registeredChartTypes, tryResolveInterval, resolveInterval, isKnownInterval,
+  AlertController, ChartObjects, DataLoadingController, ShortcutManager, createChart, darkTheme, lightTheme, registeredIntervals, registeredChartTypes, tryResolveInterval, resolveInterval, isKnownInterval,
   type Chart, type ChartOptions, type ChartTheme, type DataFeed, type Bar, type SeriesApi, type SeriesType,
   type RestoreReport, type BarsRequest, type DataLoadingOptions, type DataLoadingSnapshot, type AlertTriggeredPayload, type TradingCapabilityRequest, type TradingCapabilitySource,
 } from 'openalgo-charts';
@@ -51,6 +51,8 @@ import { mountDataWindow } from './data-window';
 import { mountPanelDock, sanitizePanelDockState, type PanelDockHandle, type PanelDockState } from './panel-dock';
 import { mountQuickEntry, type QuickEntryHandle } from './quick-entry';
 import { WIDGET_COMPONENT_CSS } from './component-styles';
+import { DateNavigator, timeBuckets, type DateNavigationResult, type DateNavigationTarget, type HistoryReach } from './date-navigator';
+import { openDateNavigation } from './date-navigation-dialog';
 
 /** The intervals offered when the host names none: the registry's codes are appended. */
 export const DEFAULT_INTERVALS: readonly string[] = ['1m', '5m', '15m', '1h', '1d', '1w'];
@@ -120,6 +122,13 @@ export interface WidgetOptions extends Omit<ChartOptions, 'theme'> {
   tradingLocked?: () => boolean;
   /** Host CSP nonce for the widget and dialog stylesheet, assigned before insertion. */
   styleNonce?: string;
+  /**
+   * Which widget answers the keyboard when a host shows several. True sends
+   * chords here as if the chart had focus, false silences this widget and its
+   * chart's shortcuts, and undefined leaves the pointer and the focus to
+   * decide, as they do for a lone widget. The chart grid supplies it per cell.
+   */
+  keyboardRoute?: () => boolean | undefined;
 }
 
 export type WidgetChartState = ReturnType<Chart['getState']>;
@@ -159,7 +168,7 @@ export interface Widget {
   readonly root: HTMLElement;
   /** What every mounted piece was handed; a host mounting its own panel wants the same. */
   readonly context: WidgetContext;
-  /** The primary series, replaced by `setChartType`. */
+  /** The primary series; its handle stays stable across chart-type changes. */
   readonly series: SeriesApi;
   symbol(): string;
   exchange(): string;
@@ -168,6 +177,7 @@ export interface Widget {
   theme(): WidgetThemeName;
   setSymbol(symbol: string, exchange?: string): void;
   setInterval(code: string): void;
+  /** Select a renderer while retaining series state. Transform data remains host-owned. */
   setChartType(id: string): void;
   setTheme(theme: WidgetThemeName | ChartTheme): void;
   /** Open the settings dialog. False when the dialog tier has not registered one. */
@@ -183,6 +193,15 @@ export interface Widget {
   restoreState(state: unknown): WidgetRestoreReport;
   /** Load (or reload) bars from the feed for the current symbol and interval. */
   reload(): Promise<void>;
+  /**
+   * Show a date, or an explicit UTC range, after loading the older history it
+   * needs through the feed. Waits for a load in flight; a newer request, a
+   * symbol or interval change, a pan or zoom while history loads, or
+   * destruction settles it `cancelled`.
+   */
+  goTo(target: DateNavigationTarget): Promise<DateNavigationResult>;
+  /** Open the go-to panel. False after destruction or on an interval without time buckets. */
+  openDateNavigation(): boolean;
   on<K extends WidgetEventName>(event: K, cb: (payload: WidgetBusEvents[K]) => void): () => void;
   off<K extends WidgetEventName>(event: K, cb?: (payload: WidgetBusEvents[K]) => void): void;
   destroy(): void;
@@ -197,7 +216,7 @@ const WIDGET_ONLY_KEYS: ReadonlyArray<keyof WidgetOptions> = [
   'mobile', 'loading', 'persist', 'storage', 'locale', 'translate', 'indicators', 'symbolSearch', 'lookbackBars', 'now', 'onOrder', 'styleNonce',
   'tradingCapabilities', 'tradingMode', 'tradingLocked',
   'eventDetails',
-  'panels', 'typingNavigation',
+  'panels', 'typingNavigation', 'keyboardRoute',
 ];
 
 /**
@@ -209,12 +228,22 @@ export function stripView(state: WidgetChartState): WidgetChartState {
   const out = { ...state } as Record<string, unknown>;
   delete out.viewport;
   delete out.barSpacing;
+  const clearScaleView = (value: unknown): unknown => {
+    if (!isRecord(value)) return value;
+    const scale = { ...value, autoScale: true } as Record<string, unknown>;
+    delete scale.range;
+    delete scale.ratioLock;
+    return scale;
+  };
   if (Array.isArray(out.panes)) {
     out.panes = (out.panes as unknown[]).map((pane) => {
-      if (!isRecord(pane) || !isRecord(pane.priceScale)) return pane;
-      const priceScale = { ...pane.priceScale, autoScale: true } as Record<string, unknown>;
-      delete priceScale.range;
-      return { ...pane, priceScale };
+      if (!isRecord(pane)) return pane;
+      const next = { ...pane };
+      if (isRecord(pane.priceScale)) next.priceScale = clearScaleView(pane.priceScale);
+      if (isRecord(pane.scales)) next.scales = Object.fromEntries(
+        Object.entries(pane.scales).map(([id, scale]) => [id, clearScaleView(scale)]),
+      );
+      return next;
     });
   }
   return out as unknown as WidgetChartState;
@@ -260,6 +289,7 @@ class WidgetContextImpl implements WidgetContext {
   public readonly storage: WidgetStorage;
   public readonly locale: string | undefined;
   public readonly translate?: WidgetTranslator;
+  public readonly symbolSearch?: SymbolSearch;
   public readonly toast: WidgetContext['toast'];
   public readonly openOverlay: WidgetContext['openOverlay'];
   public readonly status: WidgetContext['status'];
@@ -282,6 +312,7 @@ class WidgetContextImpl implements WidgetContext {
     this.storage = parts.storage;
     this.locale = parts.locale;
     this.translate = parts.translate;
+    this.symbolSearch = parts.symbolSearch;
     this.toast = parts.toast;
     this.openOverlay = parts.openOverlay;
     this.status = parts.status;
@@ -303,7 +334,7 @@ class WidgetImpl implements Widget {
   public readonly alerts: AlertController;
   public readonly root: HTMLElement;
   public readonly context: WidgetContext;
-  private _series: SeriesApi;
+  private readonly _series: SeriesApi;
 
   private readonly _doc: Document;
   private readonly _opts: WidgetOptions;
@@ -320,12 +351,20 @@ class WidgetImpl implements Widget {
   private _dock: PanelDockHandle | null = null;
   private _quickEntry: QuickEntryHandle | null = null;
   private _alertsPanel: PanelHandle | null = null;
+  private _goToPanel: PanelHandle | null = null;
+  private readonly _navigator: DateNavigator;
+  /** Bumped by every go-to request and every context change, so a waiting request knows it lost. */
+  private _navigation = 0;
+  private _loading: Promise<unknown> | null = null;
+  /** Set while the widget itself moves the view for arriving data, which is not the user moving on. */
+  private _anchoring = false;
   private readonly _intervals: string[];
 
   private _symbol: string;
   private _exchange: string;
   private _interval: string;
   private _chartType: string;
+  private _chartTypeRequest = 0;
   private _themeName: WidgetThemeName;
   private _chartTheme: ChartTheme;
 
@@ -347,6 +386,7 @@ class WidgetImpl implements Widget {
       now: () => Math.floor((options.now ?? Date.now)() / 1000),
       ...options.loading,
     }) : null;
+    this._navigator = new DateNavigator({ chart: () => this.chart, loadHistory: time => this._loadHistory(time) });
     const doc = options.document ?? container.ownerDocument;
     this._doc = doc;
     injectWidgetStyles(doc, WIDGET_COMPONENT_CSS, options.styleNonce);
@@ -407,9 +447,30 @@ class WidgetImpl implements Widget {
     // so a host keeps every engine option it had.
     const chartOpts = { ...options } as Record<string, unknown>;
     for (const k of WIDGET_ONLY_KEYS) delete chartOpts[k];
+    if (options.navigation?.defaultVisibleBars === undefined && options.navigation?.defaultBarSpacing === undefined) {
+      chartOpts.navigation = { ...options.navigation, defaultBarSpacing: options.timeScale?.barSpacing ?? 8 };
+    }
     const reducedMotion = doc.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
     if (reducedMotion && chartOpts.animZoom === undefined) chartOpts.animZoom = false;
     if (reducedMotion && chartOpts.animAutoscale === undefined) chartOpts.animAutoscale = false;
+    // A routed widget hands the engine's shortcuts the same decision as its own
+    // chords, so a hovered chart that is not the routed one stays still. A
+    // host's own manager, which a grid shares between its charts, is wrapped
+    // per chart rather than rebuilt, and its scope still decides whenever the
+    // route leaves the choice open.
+    const route = options.keyboardRoute;
+    const given = options.shortcuts;
+    if (route !== undefined && given !== false) {
+      const target = given instanceof ShortcutManager ? given : new ShortcutManager(given);
+      chartOpts.shortcuts = new Proxy(target, {
+        get: (t, key) => {
+          if (key === 'scope') return 'global';
+          if (key === 'resolve') return (e: KeyboardEvent) => ((route() ?? (t.scope === 'global' || this._inChart())) ? t.resolve(e) : null);
+          const value = Reflect.get(t, key) as unknown;
+          return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(t) : value;
+        },
+      });
+    }
     this.chart = createChart(chartEl, { ...(chartOpts as ChartOptions), theme: this._chartTheme, document: doc });
     chartEl.setAttribute('aria-label', options.ariaLabel ?? widgetText(options, 'Price chart'));
     this._series = this.chart.addSeries(this._chartType as SeriesType);
@@ -445,6 +506,7 @@ class WidgetImpl implements Widget {
       storage: this._storage,
       locale: options.locale,
       translate: options.translate,
+      symbolSearch: options.symbolSearch,
       toast: (message: string, kind?: ToastKind): ToastHandle => this._toasts.toast(message, kind),
       openOverlay: (el: HTMLElement, o?: OverlayOptions): (() => void) => overlays.open(el, o),
       status: (text: string, kind: 'info' | 'error' = 'info'): void => {
@@ -510,7 +572,7 @@ class WidgetImpl implements Widget {
         intervals: this._intervals,
         indicators: options.indicators,
         search: options.symbolSearch,
-        state: () => ({ symbol: this._symbol, exchange: this._exchange, interval: this._interval, chartType: this._chartType, theme: this._themeName }),
+        state: () => ({ symbol: this._symbol, exchange: this._exchange, interval: this._interval, chartType: this.chartType(), theme: this._themeName }),
         onSymbol: (s, ex) => this.setSymbol(s, ex),
         onInterval: (code) => this.setInterval(code),
         onChartType: (id) => this.setChartType(id),
@@ -520,6 +582,7 @@ class WidgetImpl implements Widget {
         onObjects: (anchor) => this._openObjects(anchor),
         onDataWindow: options.panels === false ? undefined : () => this._dock?.toggle('data'),
         onAlerts: (anchor) => this._openAlerts(anchor),
+        onGoTo: (anchor) => this._openGoTo(anchor),
         settingsAvailable: () => widgetDialog('settings') !== null,
         indicatorsAvailable: () => widgetDialog('indicatorPicker') !== null,
         dataAvailable: () => this.dataController === null || this._dataState?.status === 'ready' || this._dataState?.status === 'stale',
@@ -534,7 +597,7 @@ class WidgetImpl implements Widget {
       tools: typeof options.rail === 'object' ? options.rail.tools : undefined,
       indicators: options.indicators !== false,
       search: options.symbolSearch,
-      state: () => ({ symbol: this._symbol, exchange: this._exchange, interval: this._interval, chartType: this._chartType, theme: this._themeName }),
+      state: () => ({ symbol: this._symbol, exchange: this._exchange, interval: this._interval, chartType: this.chartType(), theme: this._themeName }),
       onSymbol: (symbol, exchange) => this.setSymbol(symbol, exchange),
       onInterval: (code) => this.setInterval(code),
       onChartType: (id) => this.setChartType(id),
@@ -544,7 +607,9 @@ class WidgetImpl implements Widget {
       onObjects: (anchor) => this._openObjects(anchor),
       onDataWindow: options.panels === false ? undefined : () => this._dock?.toggle('data'),
       onAlerts: (anchor) => this._openAlerts(anchor),
+      onGoTo: (anchor) => this._openGoTo(anchor),
       onProperties: (anchor) => this._openDialog('drawingProperties', anchor),
+      onCapture: (anchor) => this._topbar?.openCapture(anchor),
       settingsAvailable: () => widgetDialog('settings') !== null,
       indicatorsAvailable: () => widgetDialog('indicatorPicker') !== null,
     });
@@ -595,7 +660,7 @@ class WidgetImpl implements Widget {
   public symbol(): string { return this._symbol; }
   public exchange(): string { return this._exchange; }
   public interval(): string { return this._interval; }
-  public chartType(): string { return this._chartType; }
+  public chartType(): string { return this.chart.seriesType(this._series) ?? this._chartType; }
   public theme(): WidgetThemeName { return this._themeName; }
   /** The engine palette in force, for the context's `chartTheme` getter. */
   public chartThemeInUse(): ChartTheme { return this._chartTheme; }
@@ -615,6 +680,7 @@ class WidgetImpl implements Widget {
     if (s === this._symbol && ex === this._exchange) { this._topbar?.refresh(); this._mobile?.refresh(); return; }
     this._symbol = s;
     this._exchange = ex;
+    this._cancelNavigation();
     this._keepView = false;
     this._pendingView = null;
     if (this.dataController === null) {
@@ -638,6 +704,7 @@ class WidgetImpl implements Widget {
     resolveInterval(c);
     if (c === this._interval) { this._topbar?.refresh(); this._mobile?.refresh(); return; }
     this._interval = c;
+    this._cancelNavigation();
     this._keepView = false;
     this._pendingView = null;
     if (this.dataController === null) {
@@ -654,15 +721,10 @@ class WidgetImpl implements Widget {
 
   public setChartType(id: string): void {
     if (!registeredChartTypes().includes(id)) throw new Error(`openalgo-charts widget: "${id}" is not a registered chart type`);
-    if (id === this._chartType) return;
-    const data = this._series.getData();
-    this._series.remove();
-    this._series = this.chart.addSeries(id as SeriesType);
-    if (data.length > 0) this._series.setData(data);
-    this._chartType = id;
-    this._topbar?.refresh();
-    this._mobile?.refresh();
-    this._statusline?.refresh();
+    if (id === this.chartType()) return;
+    const request = ++this._chartTypeRequest;
+    if (!this.chart.setSeriesType(this._series, id as SeriesType)) return;
+    if (request !== this._chartTypeRequest || this.chartType() !== id) return;
     this._scheduleSave();
     this._bus.emit('layout', { reason: 'chartType', chartType: id });
   }
@@ -690,6 +752,24 @@ class WidgetImpl implements Widget {
     return true;
   }
   public openAlerts(): boolean { return this._openAlerts(); }
+  public openDateNavigation(): boolean { return this._openGoTo(); }
+
+  private _openGoTo(anchor?: HTMLElement): boolean {
+    if (this._destroyed || timeBuckets(this._interval) === null) return false;
+    if (this._goToPanel?.isOpen()) { this._goToPanel.el.focus(); return true; }
+    let mine = 0;
+    this._goToPanel = openDateNavigation(this.context, anchor, {
+      navigate: target => {
+        const work = this.goTo(target);
+        mine = this._navigation;
+        return work;
+      },
+      // Only the panel's own request: a newer goTo or a context change already replaced it.
+      cancel: () => { if (mine === this._navigation) this._cancelNavigation(); },
+      onClose: () => { this._goToPanel = null; },
+    });
+    return true;
+  }
 
   private _openAlerts(anchor?: HTMLElement): boolean {
     if (this._destroyed) return false;
@@ -738,7 +818,46 @@ class WidgetImpl implements Widget {
     this._displayedBars = null;
     this._series.setData([]);
     this._publishDataContext();
-    await controller.load(request);
+    const work = controller.load(request);
+    this._loading = work;
+    await work;
+    if (this._loading === work) this._loading = null;
+  }
+
+  public async goTo(target: DateNavigationTarget): Promise<DateNavigationResult> {
+    const request = ++this._navigation;
+    this._navigator.cancel();
+    // The placement belongs after the accepted load, or the first data would reset it.
+    if (this._loading !== null) await this._loading;
+    if (request !== this._navigation || this._destroyed) return { status: 'cancelled' };
+    return this._navigator.goTo(target);
+  }
+
+  private _cancelNavigation(): void {
+    this._navigation++;
+    this._navigator.cancel();
+  }
+
+  /** One reach of the managed controller, translated into what the navigator can decide on. */
+  private async _loadHistory(time: number): Promise<HistoryReach> {
+    const controller = this.dataController;
+    const state = controller?.getState();
+    if (controller == null || state === undefined || state.paused || state.request === null) return 'unavailable';
+    if (state.hasMore === false) return 'exhausted';
+    const first = controller.bars()[0]?.time;
+    // A pan or zoom the widget did not make while the page loads (a gesture,
+    // a key, a linked chart, the host's own call) means the view is wanted
+    // elsewhere, and a placement landing after it would undo it. A first load
+    // is not watched: the chart is blank until it lands and then resets.
+    const moved = (): void => { if (!this._anchoring) this._cancelNavigation(); };
+    const offs = [this.chart.on('pan', moved), this.chart.on('zoom', moved)];
+    try { await controller.loadMore(time); } finally { for (const off of offs) off(); }
+    const next = controller.getState();
+    if (next.historyStatus === 'error') throw next.historyError ?? new Error('Older history failed to load');
+    if (next.historyStatus === 'limited') return 'limited';
+    const reached = controller.bars()[0]?.time;
+    if (reached !== undefined && (first === undefined || reached < first)) return 'loaded';
+    return next.hasMore === false ? 'exhausted' : 'empty';
   }
 
   private _applyData(state: DataLoadingSnapshot): void {
@@ -757,6 +876,7 @@ class WidgetImpl implements Widget {
         (before.length === state.bars.length || before.length + 1 === state.bars.length)) this._series.update(tail);
       else {
         this._series.setData(state.bars);
+        this._anchoring = true;
         if (state.bars.length > 0) {
           if (this._initialView) {
             if (this._pendingView) this.chart.setVisibleLogicalRange(this._pendingView);
@@ -770,6 +890,7 @@ class WidgetImpl implements Widget {
             this.chart.setVisibleLogicalRange({ from: view.from + shift, to: view.to + shift });
           }
         }
+        this._anchoring = false;
       }
       this._displayedBars = state.bars;
       this._statusline?.refresh();
@@ -796,7 +917,7 @@ class WidgetImpl implements Widget {
       symbol: this._symbol,
       exchange: this._exchange,
       interval: this._interval,
-      chartType: this._chartType,
+      chartType: this.chartType(),
       theme: this._themeName,
       chart: this.chart.getState(),
       rail: this._rail?.prefs() ?? null,
@@ -826,6 +947,7 @@ class WidgetImpl implements Widget {
       this._pendingView = same ? doc.viewport ?? null : null;
     }
     if (!same) {
+      this._cancelNavigation();
       if (interval !== this._interval) {
         this._interval = interval;
         this._bus.emit('interval', { interval });
@@ -846,7 +968,7 @@ class WidgetImpl implements Widget {
     }
     this._rail?.refresh();
     this._statusline?.refresh();
-    this._bus.emit('layout', { reason: 'restore', chartType: this._chartType });
+    this._bus.emit('layout', { reason: 'restore', chartType: this.chartType() });
     this._scheduleSave();
     return chart === undefined ? { applied: true } : { applied: true, chart };
   }
@@ -889,12 +1011,19 @@ class WidgetImpl implements Widget {
     if (this.context.overlays.size() > 0) return ['overlay'];
     const out: KeyScope[] = [];
     const active = this._doc.activeElement;
-    if (active !== null && this._dataStatus.el.contains(active)) return [];
+    const routed = this._opts.keyboardRoute?.();
+    if (routed === false || (active !== null && this._dataStatus.el.contains(active))) return [];
     if (this._rail !== null && active !== null && this._rail.el.contains(active)) out.push('rail');
-    if (this._pointerInChart || (active !== null && this._chartEl.contains(active))) out.push('chart');
-    if (this._pointerInside || (active !== null && this.root.contains(active))) out.push('widget');
+    if (routed || this._inChart()) out.push('chart');
+    if (routed || this._pointerInside || (active !== null && this.root.contains(active))) out.push('widget');
     out.push('global');
     return out;
+  }
+
+  /** The engine's own test for its shortcuts: the pointer over the chart, or the focus in it. */
+  private _inChart(): boolean {
+    const active = this._doc.activeElement;
+    return this._pointerInChart || (active !== null && this._chartEl.contains(active));
   }
 
   private _installKeys(): void {
@@ -1002,9 +1131,18 @@ class WidgetImpl implements Widget {
 
   /** Every change that lands in `getState` schedules a save and a layout notice. */
   private _followChart(): void {
-    const chartEvents = ['paneAdded', 'paneResized', 'paneMoved', 'paneMaximized', 'paneRemoved', 'indicatorRemoved', 'indicatorSettings', 'priceAxisMoved', 'objects:change'];
+    const chartEvents = ['paneAdded', 'paneResized', 'paneMoved', 'paneMaximized', 'paneCollapsed', 'paneRemoved', 'indicatorRemoved', 'indicatorSettings', 'priceAxisMoved', 'objects:change'];
     for (const ev of chartEvents) {
-      this._cleanups.push(this.chart.on(ev, () => { this._bus.emit('layout', { reason: ev }); this._scheduleSave(); }));
+      this._cleanups.push(this.chart.on(ev, () => {
+        if (ev === 'objects:change' && this.chartType() !== this._chartType) {
+          this._chartType = this.chartType();
+          this._topbar?.refresh();
+          this._mobile?.refresh();
+          this._statusline?.refresh();
+        }
+        this._bus.emit('layout', { reason: ev });
+        this._scheduleSave();
+      }));
     }
     for (const ev of ['draw:add', 'draw:remove', 'draw:update', 'draw:paste', 'draw:cut',
       'alert:created', 'alert:updated', 'alert:removed', 'alert:triggered', 'alert:expired', 'alerts:restored', 'alerts:checkpoint']) {
@@ -1028,6 +1166,9 @@ class WidgetImpl implements Widget {
     if (this._destroyed) return;
     this._saveNow();
     this._destroyed = true;
+    this._cancelNavigation();
+    this._navigator.destroy();
+    this._goToPanel?.close();
     this._quickEntry?.destroy();
     this._dock?.destroy();
     this.dataController?.destroy();

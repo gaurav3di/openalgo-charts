@@ -60,7 +60,7 @@ bindings and preserves a saved view when the original instrument matches.
 | --- | --- |
 | `load(req)` | Cancel the old context, clear its bars, optionally paint closed cache bars, fetch current history and seed the stream. |
 | `refresh()` | Fetch authoritative history, buffer incoming bars, then publish the merged result. A failure retains a stale display and Retry remains available. |
-| `loadMore()` | Share a pending page, deduplicate older bars and reject obsolete responses after a context change. |
+| `loadMore(until?)` | Share a pending page, deduplicate older bars and reject obsolete responses after a context change. `until` (UTC seconds) widens a date feed's window to reach that time in one request, up to `maxBars` bars of a fixed interval; a paged feed keeps its ordinary window and returns one `countBack` page per call. |
 | `pushBar(bar, meta?)` | Accept live bars from an existing host-owned subscription. Omit `feed.subscribeBars` to avoid a second subscription. `meta.provisional` marks a bar whose open is only the first tick a builder saw; it keeps the open history holds for that bucket. |
 | `getState()` / `subscribe(fn)` | Read/observe display bars and typed loading status. Subscribe does not immediately invoke the listener. |
 | `bars()` | Read the current live store, including updates held away from the display. Treat arrays and bars as read-only. |
@@ -81,6 +81,30 @@ at most `maxEmptyPages` date windows per gesture (default 4). An empty weekend
 window does not prove exhaustion. `pageWindowSec` defaults to the initial request
 width. Reaching `maxBars` stops paging with `limited`, separately from provider
 exhaustion; live appends retain the newest bars.
+
+To show a date that is older than the loaded history, page back to it and then
+place it. The widget tier's `DateNavigator` does both through a loader you
+supply, and `widget.goTo` wires it to the widget's own controller; see
+[Go to a date or range](/docs/widget#go-to-a-date-or-range).
+
+```ts
+import { zonedStringToUtcSeconds } from 'openalgo-charts';
+import { DateNavigator } from 'openalgo-charts/widget';
+
+const navigator = new DateNavigator({
+  chart,
+  loadHistory: async time => {
+    const first = data.bars()[0]?.time;
+    await data.loadMore(time);
+    const state = data.getState();
+    if (state.historyStatus === 'error') throw state.historyError;
+    if (state.historyStatus === 'limited') return 'limited';
+    if ((data.bars()[0]?.time ?? Infinity) < (first ?? Infinity)) return 'loaded';
+    return state.hasMore === false ? 'exhausted' : 'empty';
+  },
+});
+const result = await navigator.goTo({ from: zonedStringToUtcSeconds('2024-01-15', chart.timezone()) });
+```
 
 ### Repair that follows the stream (2.3.2)
 

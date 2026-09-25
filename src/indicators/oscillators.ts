@@ -174,7 +174,11 @@ export const BALANCE_OF_POWER: IndicatorDescriptor = {
   calc: (bars) => ({
     bop: bars.map((b) => {
       const range = b.high - b.low;
-      return range === 0 ? null : (b.close - b.open) / range;
+      const change = b.close - b.open;
+      // An overflowed range is undefined, not a zero-strength observation.
+      if (range === 0 || !Number.isFinite(range) || !Number.isFinite(change)) return null;
+      const value = change / range;
+      return Number.isFinite(value) ? value : null;
     }),
   }),
   levels: () => [{ price: 0, color: '#787b86' }],

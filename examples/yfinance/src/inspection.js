@@ -25,7 +25,7 @@ export function directEntryEnabled(host, pane, chartElement, active = document.a
   if (host.workspaceLoading || host.replay || host.replayPicking || host.replayLoading || host.restoringSecondary) return false;
   if (pane === 2 ? host.loading2 || host.loadFailed2 : host.loading || host.loadFailed) return false;
   if (topOverlay() || host.alertUi?.isOpen() || host.alertUi2?.isOpen()) return false;
-  for (const id of ['chartset', 'setmodal', 'cmpmodal', 'textmodal', 'workspacemodal', 'templatemodal', 'indsource']) {
+  for (const id of ['chartset', 'setmodal', 'cmpmodal', 'textmodal', 'workspacemodal', 'templatemodal', 'indsource', 'chartdatamodal']) {
     const modal = el(id);
     if (modal && !modal.hidden) return false;
   }

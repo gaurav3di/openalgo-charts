@@ -89,6 +89,7 @@ export function cloneDrawing(d: Drawing): Drawing {
   };
   if (d.text !== undefined) out.text = { ...d.text };
   if (d.props !== undefined) out.props = JSON.parse(JSON.stringify(d.props)) as Record<string, unknown>;
+  if (d.policy !== undefined) out.policy = { ...d.policy };
   return out;
 }
 
@@ -119,6 +120,8 @@ export function encodeClipboardPayload(drawings: readonly Drawing[]): string {
         zIndex: Number.isFinite(d.zIndex) ? d.zIndex : 0,
         ...(d.locked === undefined ? {} : { locked: d.locked }),
         ...(d.visible === undefined ? {} : { visible: d.visible }),
+        // No `policy`: it binds the drawing the host placed, and a paste is
+        // the user's own drawing.
       })),
     },
   });

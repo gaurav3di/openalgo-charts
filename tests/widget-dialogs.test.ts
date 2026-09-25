@@ -790,11 +790,14 @@ describe('contextMenuEntries', () => {
     const rig = makeRig();
     const entries = contextMenuEntries(rig.ctx, event(rig, { kind: 'price-scale', id: null, side: 'right', scaleId: 'right' }));
     expect(ids(entries)).toEqual([
-      'axis-autofit', 'axis-invert', 'axis-lock', 'axis-mode-linear', 'axis-mode-logarithmic', 'axis-mode-percentage',
+      'axis-autofit', 'axis-price-only', 'axis-invert', 'axis-lock', 'axis-mode-linear', 'axis-mode-logarithmic', 'axis-mode-percentage',
       'axis-mode-indexed-to-100', 'axis-move', 'axis-settings',
     ]);
     const by = (id: string): MenuItem => items(entries).find((i) => i.id === id) as MenuItem;
     expect(by('axis-autofit').on).toBe(true);
+    expect(by('axis-price-only').on).toBe(false);
+    by('axis-price-only').run?.();
+    expect(rig.chart.priceOnlyAutoScale()).toBe(true);
     expect(by('axis-mode-linear').on).toBe(true);
     expect(by('axis-mode-linear').mark).toBe('radio');
     expect(by('axis-lock').disabled).toBe(false);
@@ -809,6 +812,30 @@ describe('contextMenuEntries', () => {
     const move = items(left).find((i) => i.id === 'axis-move') as MenuItem;
     expect(move.disabled).toBe(true);
     expect(move.note).toBe('nothing on this side');
+  });
+
+  it('moves and reorders a named axis without changing its scale or menu target', () => {
+    const rig = makeRig();
+    rig.chart.addSeries('line', { priceScaleId: 'left' }).setData(BARS);
+    const series = rig.chart.addSeries('line', { priceScaleId: 'overlay:menu' });
+    series.setData(BARS);
+    const scale = series.priceScale();
+    rig.chart.setPriceAxisPlacement(0, 'overlay:menu', 'right');
+    const entries = () => items(contextMenuEntries(rig.ctx, event(rig,
+      { kind: 'price-scale', id: null, side: 'right', scaleId: 'overlay:menu' })));
+    const by = (id: string) => entries().find(item => item.id === id)!;
+    expect(by('axis-move').disabled).toBe(false);
+    by('axis-move').run?.();
+    expect(rig.chart.priceAxisPlacement(0, 'overlay:menu')).toEqual({ side: 'left', order: 1 });
+    expect(series.priceScale()).toBe(scale);
+    expect(by('axis-move').label).toBe('Move the scale to the right');
+    by('axis-closer').run?.();
+    expect(rig.chart.priceAxisLayout().filter(column => column.side === 'left').map(column => column.scaleId))
+      .toEqual(['overlay:menu', 'left']);
+    expect(by('axis-closer').disabled).toBe(true);
+    by('axis-mode-logarithmic').run?.();
+    expect(scale.options.mode).toBe('logarithmic');
+    expect(rig.chart.panes()[0].scaleFor('left').options.mode).toBe('linear');
   });
 
   it('appends a host\'s own rows after everything else', () => {

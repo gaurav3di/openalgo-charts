@@ -98,8 +98,13 @@ The Axes tab's **Navigation** group is backed by `ChartNavigationOptions`:
 
 | Key | Input | Default |
 |---|---|---|
+| `navigation.panEnabled` | Boolean: **Enable panning** | `true` |
+| `navigation.zoomEnabled` | Boolean: **Enable zooming** | `true` |
 | `navigation.mousePan` | `select`, label **Mouse drag**: **Horizontal only** (`'horizontal'`) or **Time and price** (`'both'`) | `'both'` |
 | `navigation.defaultVisibleBars` | `number`, label **Default visible bars (0 = all)**, `min: 0`, `max: 100000`, `step: 1` | `0` |
+| `navigation.defaultBarSpacing` | `number`, label **Default bar spacing (0 = use bar count)**, CSS pixels, `min: 0`, `max: 10000`, `step: 0.5` | `0` |
+
+`panEnabled` and `zoomEnabled` control native user gestures, keys and navigation buttons independently. Disabling zoom also disables user fit/reset actions in both hosts. Active motion is cancelled, while programmatic view changes and drawing or picking interactions remain available. Both booleans persist with the chart.
 
 ```ts
 applyChartSettings(chart, {

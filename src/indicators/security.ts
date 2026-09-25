@@ -1,12 +1,9 @@
 /**
  * A higher-timeframe view of the chart's own bars, one value per source bar.
  *
- * A study written for a script language asks for the daily high on a 5-minute
- * chart and gets a column the same length as the chart. The engine has no
- * such call, and every port that needed one folded the bars by hand, each a
- * little differently: some anchored an hourly bucket to midnight and some to
- * the session open, some read the bucket as it stood and some read its final
- * values. This is the one fold, with the three readings named:
+ * securitySeries aligns aggregate OHLC values. securityExpression calculates
+ * on aggregate bars before alignment, so a rolling window counts requested
+ * bars rather than repeated aligned values. securitySeries names its readings:
  *
  * - `offset: 0` (the default) reads the bucket **as it stood at that bar**:
  *   its open so far, high and low so far, the bar's own close, volume so far.
@@ -30,12 +27,25 @@ import {
   bucketStartOf,
   parseSessionSpec,
   resolveInterval,
-  startOfZonedDay,
+  utcSecondsToZonedParts,
+  zonedWallClockToUtcSeconds,
   zonedDayIndex,
   zonedWeekIndex,
   type Bar,
   type Bucketing,
+  type IndicatorValues,
 } from 'openalgo-charts';
+
+export interface SecurityExpressionOptions {
+  timezone?: string;
+  session?: string;
+  /**
+   * confirmed (default) holds the previous observed bucket's result once the
+   * next bucket starts. developing calculates with the current partial bucket.
+   * lookahead aligns the current bucket's final result onto its earlier bars.
+   */
+  mode?: 'confirmed' | 'developing' | 'lookahead';
+}
 
 export interface SecurityOptions {
   /** The calendar the buckets are cut in. Defaults to the shipped default zone. */
@@ -94,7 +104,9 @@ function keyOf(b: Bucketing, time: number, zone: string, sessionStart: number | 
   if (sessionStart === null) return bucketStartOf(b, time);
   // Anchored to this day's session open. The day index keeps two days' buckets
   // apart, which a per-day floor alone would not.
-  const anchor = startOfZonedDay(time, zone) + sessionStart * 60;
+  const date = utcSecondsToZonedParts(time, zone);
+  const anchor = zonedWallClockToUtcSeconds(date.year, date.month, date.day,
+    Math.floor(sessionStart / 60), sessionStart % 60, 0, zone);
   return zonedDayIndex(time, zone) * 1e6 + Math.floor((time - anchor) / s);
 }
 
@@ -208,4 +220,98 @@ export function securitySeries(
     oi[i] = runOi;
   }
   return { open, high, low, close, volume, oi, bucketStart, isNew };
+}
+
+/**
+ * Evaluate on aggregated bars first, then align named columns to source bars.
+ * This differs from applying a rolling formula to already aligned OHLC values,
+ * which counts each repeated requested value as another observation.
+ *
+ * The expression must be pure and causal, returning one value per requested
+ * bar in each column. Confirmed and lookahead modes evaluate the folded history
+ * once; developing mode evaluates every source prefix, with no future source
+ * bars, so its cost includes one expression call per source bar. Completed
+ * buckets are inferred only when the next observed bucket starts. Missing
+ * buckets are not fabricated and the last bucket is never clock-confirmed.
+ *
+ * Supply bars finer than or equal to the requested interval. This function
+ * cannot manufacture lower-timeframe observations from coarser source bars.
+ * Source timestamps must increase strictly. Empty data returns {} without
+ * invoking the expression. Non-finite expression results become null.
+ */
+export function securityExpression(
+  bars: readonly Bar[], interval: string,
+  expression: (bars: readonly Readonly<Bar>[]) => IndicatorValues,
+  options: SecurityExpressionOptions = {},
+): IndicatorValues {
+  const mode = options.mode ?? 'confirmed';
+  if (!['confirmed', 'developing', 'lookahead'].includes(mode)) throw new IndicatorInputError('securityExpression: invalid mode');
+  const zone = options.timezone ?? DEFAULT_TIMEZONE;
+  const { bucketing } = resolveInterval(interval);
+  if (bucketing.mode !== 'interval' && bucketing.mode !== 'calendar') {
+    throw new IndicatorInputError('securityExpression: requested interval must close on the clock');
+  }
+  const session = options.session === undefined ? undefined : parseSessionSpec(options.session);
+  if (session === null) throw new IndicatorInputError('securityExpression: invalid session');
+  if (bars.length === 0) return {};
+  const folded: Readonly<Bar>[] = [];
+  const indices: number[] = [];
+  const out: IndicatorValues = {};
+  let keys: string[] | undefined;
+  let previousKey: number | undefined;
+  let previousTime = -Infinity;
+  const evaluate = (): IndicatorValues => {
+    const result = expression(Object.freeze(folded.slice()));
+    if (result === null || typeof result !== 'object' || Array.isArray(result)) {
+      throw new IndicatorInputError('securityExpression: expression must return named columns');
+    }
+    const names = Object.keys(result);
+    if (keys && (names.length !== keys.length || keys.some(key => !Object.prototype.hasOwnProperty.call(result, key)))) {
+      throw new IndicatorInputError('securityExpression: expression column keys must remain stable');
+    }
+    for (const key of names) {
+      if (!Array.isArray(result[key]) || result[key].length !== folded.length) {
+        throw new IndicatorInputError('securityExpression: expression column length must match requested bars');
+      }
+      if (!Object.prototype.hasOwnProperty.call(out, key)) Object.defineProperty(out, key, {
+        value: new Array<number | null>(bars.length).fill(null), enumerable: true,
+      });
+    }
+    keys = names;
+    return result;
+  };
+  const write = (result: IndicatorValues, sourceIndex: number, requestedIndex: number): void => {
+    for (const key of keys ?? []) {
+      const value = result[key][requestedIndex];
+      (out[key] as (number | null)[])[sourceIndex] = typeof value === 'number' && Number.isFinite(value) ? value : null;
+    }
+  };
+  for (let i = 0; i < bars.length; i++) {
+    const bar = bars[i];
+    if (!Number.isFinite(bar.time) || bar.time <= previousTime) {
+      throw new IndicatorInputError('securityExpression: source times must be finite and strictly increasing');
+    }
+    previousTime = bar.time;
+    const key = keyOf(bucketing, bar.time, zone, session?.start ?? null);
+    if (key !== previousKey) folded.push(Object.freeze({ ...bar }));
+    else {
+      const old = folded[folded.length - 1];
+      const next = { ...old };
+      if (!finite(old.open) && finite(bar.open)) next.open = bar.open;
+      if (finite(bar.high) && (!finite(old.high) || bar.high > old.high)) next.high = bar.high;
+      if (finite(bar.low) && (!finite(old.low) || bar.low < old.low)) next.low = bar.low;
+      if (finite(bar.close)) next.close = bar.close;
+      if (bar.volume !== undefined) next.volume = (old.volume ?? 0) + bar.volume;
+      if (bar.oi !== undefined) next.oi = bar.oi;
+      folded[folded.length - 1] = Object.freeze(next);
+    }
+    previousKey = key;
+    indices.push(folded.length - 1);
+    if (mode === 'developing') write(evaluate(), i, folded.length - 1);
+  }
+  if (mode !== 'developing') {
+    const result = evaluate();
+    for (let i = 0; i < bars.length; i++) write(result, i, indices[i] - (mode === 'confirmed' ? 1 : 0));
+  }
+  return out;
 }

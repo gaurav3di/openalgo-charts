@@ -392,6 +392,34 @@ describe('selection controls', () => {
     expect(names(d.calls, 'clear')).toHaveLength(1);
     expect(page.status.textContent).toBe('removed 3 drawings');
   });
+
+  it('turns lock, eye and trash off for a read-only selection and counts only what each row reaches', () => {
+    const d = setup();
+    d.state.drawings = [
+      { id: 'fixed', policy: { editable: false } },
+      { id: 'ghost', policy: { selectable: false } },
+      { id: 'mine' },
+    ];
+    d.select(['fixed']);
+    app.chart.emit('drawing:select', { ids: ['fixed'] });
+    const [lock, eye, trash] = ['Lock drawing', 'Hide drawing', 'Delete drawing'].map(byLabel);
+    for (const b of [lock, eye, trash]) expect(b.classList.contains('is-off')).toBe(true);
+    trash.dispatchEvent(new FakeEvent('contextmenu'));
+    const rows = page.doc.body.querySelectorAll('.rail-menu button');
+    expect(rows.map((r) => r.textContent)).toEqual(['Select all (2)', 'Remove all drawings (2)']);
+    rows[1].dispatchEvent(new FakeEvent('click'));
+    expect(page.status.textContent).toBe('removed 2 drawings');
+  });
+
+  it('counts only what the trash deletes in a selection that mixes read-only and editable drawings', () => {
+    const d = setup();
+    d.state.drawings = [{ id: 'fixed', policy: { editable: false } }, { id: 'a' }, { id: 'b' }];
+    d.select(['fixed', 'a', 'b']);
+    app.chart.emit('drawing:select', { ids: ['fixed', 'a', 'b'] });
+    const trash = byLabel('Delete 2 drawings');
+    expect(trash).toBeDefined();
+    expect(trash.classList.contains('is-off')).toBe(false);
+  });
 });
 
 describe('keyboard', () => {

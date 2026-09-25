@@ -79,7 +79,7 @@ Everything `src/widget/index.ts` exports at runtime. The shell (`createWidget` a
 |---|---|---|
 | `createWidget(container, options?)` | function | The one call. Returns a `Widget`. |
 | `WIDGET_TIER` | const `'widget'` | The tier's identity constant, like `DRAW_TIER`. |
-| `stripView(state)` | function | A `WidgetChartState` without its viewport and pinned ranges; what a saved layout gets when it lands on a different symbol or interval. |
+| `stripView(state)` | function | A detached `WidgetChartState` view patch without viewport, manual ranges or ratio locks on any scale. It enables auto-fit while retaining formatting and declared fixed ranges when the layout lands on another symbol or interval. |
 | `resolveTheme(t)` | function | `'dark'`, `'light'`, a `ChartTheme` or `undefined` to `{ theme, name }`. |
 | `loadWindow(interval, lookback, nowSec)` | function | The `{ from, to }` the feed is asked for: `lookback` bars back from now, or five years for a non-time bucketing. |
 | `DEFAULT_INTERVALS` | const | `['1m', '5m', '15m', '1h', '1d', '1w']`, with every other registered code appended when the host names none. |
@@ -149,7 +149,7 @@ The sprite is injected once per document on the body (`id="oac-rail-sprite"`), s
 
 | Export | Kind | Purpose |
 |---|---|---|
-| `mountTopbar(ctx, host, opts)` | function | Symbol box with search, interval pills, chart type menu, Indicators, Objects, capture, settings, theme. Returns a `TopbarHandle` (`refresh`, `destroy`). |
+| `mountTopbar(ctx, host, opts)` | function | Symbol box with search, interval pills, chart type menu, Indicators, Go to (with `onGoTo`), Objects, capture, settings, theme. Returns a `TopbarHandle` (`refresh`, `destroy`). |
 | `openMenu(ctx, anchor, rows, opts?)` | function | A popover menu under `anchor`, with an optional filter box; the chart type menu and the symbol results share it. Returns the closer. |
 | `chartTypeChoices()` | function | The registered chart types a user can pick for the instrument (the registry minus histogram-family internals). |
 | `chartTypeLabel(id)` | function | A label from `CHART_TYPE_LABELS`, else the id. |
@@ -205,7 +205,7 @@ Every mount takes the context and an optional anchor element (so it satisfies `D
 | `mountDrawingProperties(ctx, anchor?, { ids?, onClose? })` | function | The selected drawings' fields, from `drawingSettingsSchema`. |
 | `mountLevelEditor(ctx, anchor?, { ids? })` | function | Per-level ratio, colour and visibility for the fib and gann tools. |
 | `mountTextEditor(ctx, anchor?, { id?, onDone? })` | function | In-place editing laid over the painted text. Returns a `TextEditorHandle` with `commit()` and `cancel()`; an outside press commits, Escape cancels. |
-| `mountContextMenu(ctx, anchor?, { event?, hooks? })` | function | The right-click menu for the chart's `contextmenu` payload: trade rows when `onOrder` is given, drawing actions on a drawing, scale modes on a price axis, paste, fit, indicators, settings. |
+| `mountContextMenu(ctx, anchor?, { event?, hooks? })` | function | The right-click menu for the chart's `contextmenu` payload: trade rows when `onOrder` is given, drawing actions on a drawing, scale modes on a price axis, `Collapse pane` or `Expand pane` (row id `pane-collapse`) over a lower pane, paste, fit, indicators, settings. A collapse is saved with the layout and emitted as a `layout` event with reason `paneCollapsed`. |
 | `mountAlertEditor(ctx, anchor?, opts?: AlertEditorOptions)` | function | Draft editor seeded by `source` or editing `alertId`. Save validates source identities, finite bounds and expiry in the labelled chart timezone. Cancel never arms an alert. |
 | `mountAlertsPanel(ctx, anchor?, opts?: AlertsPanelOptions)` | function | Live alert list with lifecycle, scope, timing, availability, last delivery, edit, enable/disable and delete. Both options types accept `onClose`. |
 | `attachContextMenu(ctx, hooks?)` | function | Subscribe to the chart's `contextmenu`, `preventDefault`, mount the menu. Returns the unsubscriber. `createWidget` does this itself. |
@@ -214,9 +214,29 @@ Every mount takes the context and an optional anchor element (so it satisfies `D
 | `renderForm(host, controls, opts)` | function | One control renderer for every generated form: switch column, label, control column; `colorPair` on one row. Returns a `FormHandle`. |
 | `controlsFromInputs(inputs)` | function | `ChartSettingsInput[]` (the engine's settings schema) to `FormControl[]`. |
 | `controlsFromFields(fields)` | function | A drawing tool's `SettingsField[]` to `FormControl[]`. |
+| `mountIndicatorInputControls(ctx, options)` | function | Adds symbol lookup and chart picking to an existing indicator form. Returns `IndicatorInputControlsHandle` with `cancelPick`, `refresh` and `destroy`. |
+| `IndicatorInputControlsOptions`, `IndicatorInputControlsHandle` | types | Native typed-field host actions. |
 | `SettingsDialogOptions`, `IndicatorPickerOptions`, `IndicatorSettingsOptions`, `IndicatorSettingsTab`, `DrawingPropertiesOptions`, `LevelEditorOptions`, `TextEditorOptions`, `TextEditorHandle`, `ContextMenuHooks`, `ContextMenuOptions`, `MenuEntry`, `MenuItem`, `OrderRequest`, `PanelHandle`, `FormControl`, `FormKind`, `FormOptions`, `FormHandle` | types | |
 
 `OrderRequest` is `{ side: 'BUY' | 'SELL'; type: 'MARKET' | 'LIMIT' | 'SL'; price: number | null; paneIndex: number }`; `price` is null for a market order.
+
+`FormKind` includes `symbol`, `session`, `multiline`, `price` and `timestamp`.
+`FormHandle.validate()` checks drafts and `setError(key, message)` reports a
+field error without committing invalid settings. Prices and timestamps preserve
+their numeric value; timestamps are absolute UTC seconds, including fractions.
+An ordinary `time` field retains its existing clock-string contract.
+
+`IndicatorInputControlsOptions` provides `instance`, `inputs`, `panel`,
+`field(key)` and atomic `onPatch(patch): boolean`. Optional `current()` fences
+stale dialogs; `suspend()` lets a custom host hide its modal while picking.
+The built-in `OverlayStack.suspend(panel)` releases the focus trap and scrim
+until its idempotent resume callback runs. Destroy the controls with the form.
+Configured lookup is available as `WidgetContext.symbolSearch`. A selected
+symbol and its `exchangeKey` commit together; a missing exchange defaults to
+an empty string. Without lookup, manual symbol entry remains available.
+Price picks resolve the study's actual pane and scale, including hidden scales;
+a mixed-scale study needs an explicit target. Drawing placement blocks picking.
+Context changes, study removal and chart destruction cancel pending controls.
 
 Alert panels use optional `WidgetContext.alerts`, supplied automatically by
 `createWidget`. Custom contexts without a controller show an unavailable reason.
@@ -261,6 +281,7 @@ Color swatches stay compact. Theme overrides should target these tokens.
 | `now` | `() => number` | `Date.now` | Clock for the load window and the capture filename. |
 | `onOrder` | `(order: OrderRequest) => void` | none | Order entry from the right-click menu. Without it the menu draws no trade rows. |
 | `styleNonce` | `string` | none | Response CSP nonce for the shared widget and dialog stylesheet. Style-attribute policy remains the host's responsibility. |
+| `keyboardRoute` | `() => boolean \| undefined` | none | For hosts with several widgets: false silences this widget's chords and chart shortcuts, true sends them here, undefined keeps the usual rule (pointer or focus, or always for a `shortcuts` scope of `global`). Applies to a `ShortcutManager` instance too, shared or not. The chart grid sets it per cell. |
 
 Confirm defaults against `WidgetOptions` in the typings rather than assuming.
 
@@ -295,16 +316,18 @@ widget.root;                         // the .oac-widget element
 widget.context;                      // the WidgetContext every mounted piece was handed
 widget.objects;                      // the owned base-tier ChartObjects inventory
 widget.alerts;                       // the owned AlertController, including drawing anchors
-widget.series;                       // the primary SeriesApi, replaced by setChartType
+widget.series;                       // the primary SeriesApi, retained by setChartType
 widget.symbol(); widget.exchange(); widget.interval(); widget.chartType(); widget.theme();
 widget.setSymbol(symbol, exchange?);
 widget.setInterval(code);            // throws UnknownIntervalError for a code the registry lacks
-widget.setChartType(id);             // a registered chart type id; the series is rebuilt with the same bars
+widget.setChartType(id);             // registered renderer; retains handle, data, styles, scale and markers
 widget.setTheme('dark' | 'light' | theme);
 widget.openSettings();               // false when no dialog is registered under 'settings'
 widget.openIndicatorPicker();
 widget.openObjects();                // false after destruction; focuses the existing panel when open
 widget.openAlerts();                 // desktop Alerts and mobile More use the same live list
+widget.openDateNavigation();         // the Go to panel; false after destruction
+await widget.goTo({ from, to? });    // DateNavigationResult; loads older history first
 widget.getState();                   // WidgetState; rejects nonportable alert payloads
 widget.restoreState(state);          // WidgetRestoreReport
 await widget.reload();               // fetch again for the current symbol and interval
@@ -341,6 +364,18 @@ selection, and external-indicator data status. Only supported actions appear; an
 action returning `false` or throwing reports through the existing toast. No primary
 source removal control is offered. Settings reuse the widget's current chart,
 indicator and drawing editors. Drawing actions use existing undo history.
+
+Drawing policies reach the panel through the inventory: an unlisted drawing
+(`policy.listed: false`) has no row, a read-only one (`policy.editable: false`)
+has no Hide, Lock or Remove, and an unselectable one no select. Elsewhere in the
+widget a read-only selection keeps its copy and duplicate actions while every
+edit control is drawn disabled with the note "read-only": context menu rows, the
+properties dialog (fields, lock, visibility, delete, restore defaults), the rail's
+lock, eye and trash, and the mobile selection bar. The text and level editors
+decline to open on it. In a selection that mixes the two, Cut, Delete and the trash
+tooltip count only the drawings they take. **Group selected** is off for a
+selection of read-only drawings only, and the alert editor's drawing picker leaves
+unlisted drawings out. See [drawing policies](drawing-tools.md#drawing-policies).
 
 The panel uses the shared overlay for pointer containment, focus trapping, Escape
 and focus restoration. Its scrollable list fits the actual container, including
@@ -417,7 +452,7 @@ alert controllers already attached. Do not restore drawings again afterward.
 
 - `package.json` `exports['./widget']`: `types: ./dist/widget/index.d.ts`, `import: ./dist/openalgo-charts.widget.mjs`. Listed in `sideEffects` (importing registers the dialogs).
 - `rollup.config.js`: `openalgo-charts` and every `openalgo-charts/<tier>` are external for tier builds and emitted as sibling paths (`./openalgo-charts.mjs`, `./openalgo-charts.draw.mjs`), so `dist/` serves with no import map. The widget must never inline the base or the draw tier; `check-dts.mjs` fails a build whose `dist/widget/index.d.ts` declares `Chart` or `DrawingController`.
-- `.size-limit.json`: `Widget tier` row (the bundle alone, 60.5 kB budget) and `Widget terminal` row (base + draw + indicators + widget, 229 kB budget); `Everything` includes the widget. Measure with `npm run size`; never quote from memory.
+- `.size-limit.json`: `Widget tier` row (the bundle alone) and `Widget terminal` row (base + draw + indicators + widget); `Everything` includes the widget. Read the budgets there and measure with `npm run size`; never quote either from memory.
 - The standalone IIFE is base-only and cannot host the widget. Use native ESM from `dist/`.
 
 ## Pitfalls
@@ -497,3 +532,190 @@ view and width; old records stay valid. No saved-state version bump is needed.
 all component styles, including dialogs and indicator-picker additions. Include it
 beside `WIDGET_CSS` when managing styles yourself; apply widget tokens to the root.
 createWidget/createAlertUi inject the complete component styles automatically.
+
+## Date and range navigation (2.5.4)
+
+`widget.goTo({ from, to? })` shows a date, or an explicit range, in UTC seconds.
+It waits for a load in flight, loads older history through
+`dataController.loadMore(until)` until the request is covered, then places it
+with `chart.setVisibleLogicalRange`. A date is centred at the current zoom, and
+kept left of the newest bar's normal margin; a range fills the plot, centred at
+the widest bar spacing when short. Placement runs after the accepted load, so
+later live bars and refreshes keep its anchor. A newer request, a symbol or
+interval change, `restoreState` onto another context, or `destroy` settles the
+promise `{ status: 'cancelled' }` without moving the view, and so does closing the
+panel while its request loads. So does a pan or zoom while an older page loads,
+whether it comes from a gesture, a key, a linked chart or the host's own
+`setVisibleLogicalRange`: the view is wanted elsewhere, and the older bars still
+arrive without moving it. The widget's own move that keeps the bars in view still
+when a refresh lands does not count; nor does a move of the blank chart during a
+first load, which that load's arrival resets. The top bar's **Go to** button and
+the mobile **More** sheet open the panel (`openDateNavigation()`); on a tick or
+volume interval both are greyed with the reason and `openDateNavigation()` returns
+false. Daily and longer intervals show date fields only, since a time cannot change
+which bar a date names. The panel closes when the interval or the chart timezone
+changes under it, since its fields and hint were built for both, and it clears its
+loading line when its request is cancelled.
+
+`DateNavigator` is the DOM-free coordinator behind it, for custom hosts:
+
+```ts
+import { zonedStringToUtcSeconds } from 'openalgo-charts';
+import { DateNavigator, openDateNavigation } from 'openalgo-charts/widget';
+
+const navigator = new DateNavigator({
+  chart: () => currentChart,                  // or a Chart; re-read after each load
+  // Prepend bars reaching `time` and say what happened. loadMore never rejects:
+  // it records a failure in the state, so read the state rather than assume progress.
+  loadHistory: async time => {
+    const first = controller.bars()[0]?.time;
+    await controller.loadMore(time);
+    const state = controller.getState();
+    if (state.historyStatus === 'error') throw state.historyError;
+    if (state.historyStatus === 'limited') return 'limited';
+    if ((controller.bars()[0]?.time ?? Infinity) < (first ?? Infinity)) return 'loaded';
+    return state.hasMore === false ? 'exhausted' : 'empty';
+  },
+});
+// A date typed on the chart's own clock (IST unless the host set another zone).
+const from = zonedStringToUtcSeconds('2024-01-15', currentChart.timezone());
+const result = await navigator.goTo({ from });
+openDateNavigation(ctx, anchor, {
+  navigate: target => navigator.goTo(target),
+  cancel: () => navigator.cancel(),           // the panel was closed while loading
+});
+```
+
+The navigator cannot tell the host's own view moves from the user's, so a custom
+host that wants a pan or zoom to drop a loading request watches for it around its
+loader, as the widget and the reference host do, and skips the moves it makes
+itself for arriving bars:
+
+```ts
+loadHistory: async time => {
+  const moved = () => { if (!keepingViewForData) navigator.cancel(); };
+  const offs = [chart.on('pan', moved), chart.on('zoom', moved)];
+  try { await controller.loadMore(time); } finally { for (const off of offs) off(); }
+  // ...then read the state as above
+},
+```
+
+| Export | Kind | Purpose |
+|---|---|---|
+| `DateNavigator` | class | `goTo(target)`, `cancel()`, `destroy()`. One request at a time; a new one cancels the previous. |
+| `DateNavigatorOptions` | type | `chart` (a `Chart` or a getter), optional `loadHistory(time, signal)`, optional `interval()` (default: the data context). |
+| `DateNavigationTarget` | type | `{ from, to? }`; `to` is inclusive (bars opening at or before it, a bar a day or longer counted from its local midnight). |
+| `DateNavigationResult` | type | `{ status, from?, to?, history?, clipped?, error? }`; `from`/`to` are the placed bars' open times. |
+| `DateNavigationStatus` | type | `placed`, `partial`, `no-data`, `unsupported`, `invalid`, `cancelled`, `error`. |
+| `HistoryReach` | type | What one loader call achieved: `loaded`, `empty`, `exhausted`, `limited`, `unavailable`. |
+| `openDateNavigation(ctx, anchor, options)` | function | The compact panel (Date or Range, date and optional time in the chart timezone). Returns `PanelHandle`; closes once placed and keeps any other outcome's reason in place. |
+| `DateNavigationDialogOptions` | type | `navigate(target)`, optional `cancel()` (the panel was dismissed, or closed by an interval or timezone change, while its request loaded; not called when its chart was destroyed), optional `pending: { target, result }` (show and report a request already under way, for a host whose load rebuilt the chart and closed the panel that started it), and `onClose()`. A closed panel reports nothing. |
+| `DATE_NAVIGATION_CSS` | const | The panel's styles; part of `WIDGET_COMPONENT_CSS`. |
+
+Rules the coordinator applies:
+
+- Bars of a day or longer count from the local midnight of their first day, so a
+  date lands on its own daily bar whether the feed stamps midnight or the session
+  open. They end at the local midnight after their last day, so a day of 23 or 25
+  hours around a clock change keeps its own bar. Shorter bars keep their stamp; an
+  instant in an overnight or weekend gap moves to the next session; a range with
+  no bar inside it is `no-data`.
+- A date names the bar the axis labels with that date. West of UTC a daily bar
+  stamped at UTC midnight is the previous evening on the chart's clock, so the
+  axis, crosshair and data window label it with the previous date, and that is
+  the date that names it. Set the chart timezone to `UTC` for such a feed when its
+  bars should read, and be found, by their UTC date.
+- Only time-bucketed intervals navigate (fixed and calendar); tick, volume and
+  unknown codes are `unsupported`. The view never moves for `no-data`,
+  `unsupported`, `invalid`, `cancelled` or `error`.
+- `partial` with `history` means the source stopped before the requested start:
+  `exhausted` (nothing older), `empty` (inspected windows held nothing; older
+  history may exist), `limited` (retention) or `unavailable` (no loader, replay,
+  a paused controller). `partial` with `clipped` means the range is wider than the
+  plot at its narrowest spacing; its start is in view.
+- History is never loaded during replay (`isReplaying(chart)`), and a date beyond
+  the replay cursor is `no-data`. A chart linked through `createLinkGroup` follows
+  the placement by time, like any other viewport change.
+- A loader that reports `loaded` without adding older bars stops the loop as
+  `empty`, so a misbehaving host cannot keep it spinning.
+
+## Chart grid (2.5.4)
+
+`createChartGrid(container, options)` returns a `ChartGrid`: one widget per cell on a
+rows by columns grid, with splitters, one active cell, linking through the base
+`LinkGroup`, and the portable `WorkspacePayload` of `openalgo-charts/workspace`. It is
+part of the widget tier, not a new one. Source of truth: `src/widget/grid.ts`.
+
+```ts
+import { createChartGrid } from 'openalgo-charts/widget';
+import { parseWorkspacePayload } from 'openalgo-charts/workspace';
+
+const grid = createChartGrid('#desk', { feed, symbol: 'RELIANCE', exchange: 'NSE', interval: '5m',
+  preset: '2x2', links: { crosshair: true, viewport: true }, persist: 'desk' });
+grid.setPreset('1x3');
+const report = grid.applyWorkspace(parseWorkspacePayload(fileText)); // { applied, reason? }
+```
+
+- `ChartGridOptions` is `WidgetOptions` (every cell's options) minus `keyboardRoute`,
+  with its own `feed` (below), plus `preset` (`ChartGridPreset`, default `1x1`), `links` (`LinkOptions`), `compactWidth`
+  (default 640 CSS px, 0 off), and grid-level `persist`/`storage`. `symbol`, `exchange`,
+  `interval` and `chartType` seed the first cell. Cells default to `mobile: 'never'`,
+  because a cell in a split is often narrower than the phone threshold.
+- `feed` is one `DataFeed` for every chart, or a function
+  `(chart: { id, historyPeriod? }) => DataFeed` called once per chart as it is built, for a
+  source that answers by period: the grid keeps each pane's `historyPeriod` (from an
+  applied payload, or copied from the active chart when a preset adds charts) and writes
+  it back in `getWorkspace()`, but only such a function honours it. Return the same feed
+  object for charts that should share one request pool.
+- `CHART_GRID_PRESETS`: `1x1`, `1x2`, `1x3`, `2x1`, `3x1`, `2x2` as `[rows, columns]`.
+  `setPreset` keeps surviving cells in reading order (same widget instances), builds new
+  ones on the active chart's instrument, destroys the rest and resets weights. No span
+  editing; spans from a saved payload are drawn and splitters stop where a span crosses.
+- `ChartGridCell` (`id`, `widget`, `element`, `row`, `column`, `rowSpan`, `columnSpan`,
+  `historyPeriod`);
+  `cells()`, `active()`, `setActive(id, { focus })`, `layout()` (`ChartGridLayout`),
+  `linkOptions()`, `setLinks(patch)` (switching symbol or interval on adopts the active
+  chart's), `theme()`, `setTheme()`, `compact()`, `restored()`, `destroy()`.
+- Events (`ChartGridEvents`, `ChartGridEventName`): `active` (from `setActive`, and when
+  a preset or an applied workspace moves the active chart), `layout` (`preset`,
+  `weights`, `workspace`, `compact`), `links`, `theme`.
+- Persistence (`persist`): preset, link, theme, active chart, instrument, keyboard
+  splitter and drawing add or remove changes are written before the task ends. Pans,
+  zooms and drags are debounced (`SAVE_DEBOUNCE_MS`) and flushed when the page hides
+  (`visibilitychange`), on `pagehide` and on `destroy`. A stored desk that fails to
+  restore (a study or chart type registered later, say) is not overwritten: the grid
+  falls back to `preset`, toasts the reason on the active chart, and `restored()`
+  returns `{ applied: false, reason }` (null when nothing was stored). The stored desk
+  stays until the user changes the grid; data loads and focus do not count.
+- Keyboard: only the active cell answers. Pointer down or focus inside a cell makes it
+  active. A key pressed with the focus on the page body, while the pointer is over the
+  grid, goes to the active chart; a focused splitter or tab keeps its arrow keys.
+- `WidgetOptions.keyboardRoute` is the hook behind that: `() => boolean | undefined`.
+  False silences the widget's chords and its chart's shortcuts, true routes them there,
+  undefined keeps the usual rule: pointer or focus, or always when the host's
+  `shortcuts` scope is `global`. A `ShortcutManager` instance is routed too; one
+  instance shared by several widgets (every grid cell gets the same options) is wrapped
+  per widget, so rebinding it still reaches them all. A host with several plain widgets
+  can use it.
+- `getWorkspace()` returns a JSON `WorkspacePayload` that `parseWorkspacePayload` accepts:
+  slots, weights, preset, active pane, sync, per-pane chart state, `settings['widget.theme']`,
+  rail magnet/stay and `historyPeriod` when the chart has one. `volume` is written false
+  and `comparisons` empty: a widget draws neither. `applyWorkspace` checks the whole
+  payload first (size, slots, overlap, weights, intervals, chart types, studies, text
+  history periods, no comparisons, linked symbols or intervals that agree),
+  builds and restores every new cell off screen, and on the first failure destroys them,
+  aborting their history requests, and returns `{ applied: false, reason }` with the old
+  cells untouched. Pass untrusted input through `parseWorkspacePayload` first.
+- Linked viewports ignore moves caused by freshly loaded bars, so a follower on another
+  interval is not squeezed; views converge on the next pan or zoom. The linked window is
+  kept as times, read from the chart last navigated, and moves with that chart's new
+  bars. After a linked navigation a resize keeps each chart on the window it showed: the
+  engine keeps the right edge, so a chart following new bars keeps following, and the
+  grid puts the span back rather than the bar width, so charts of different widths still
+  agree. A chart shown from behind the compact tabs takes the linked window. The window is
+  forgotten when its chart changes instrument or is removed, and when viewport linking
+  is switched on, which starts without one until the next pan or zoom. A linked symbol
+  is the symbol and exchange together, so a change of exchange alone (one ticker on NSE
+  and BSE) reaches the followers.
+- Below `compactWidth` only the active cell shows, with a tab strip to switch; splitters
+  hide. `CHART_GRID_CSS` is part of `WIDGET_COMPONENT_CSS`.

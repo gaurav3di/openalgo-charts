@@ -1,12 +1,13 @@
 import { parseWorkspacePayload, WorkspaceDocumentError } from '/dist/openalgo-charts.workspace.mjs';
+import { stripView } from '/dist/openalgo-charts.widget.mjs';
 import { primaryLayoutSelection, datasetKey, LAYOUT_SCHEMA } from './persist.js';
-import { clampPeriod } from './intervals.js';
+import { clampPeriod, PERIODS } from './intervals.js';
 import { VOLUME_DEFAULTS, volumeValues } from './volume.js';
 import { normalizeLegendIconSize } from './chart-settings.js';
 
 const CHART_FIELDS = ['version', 'timezone', 'navigation', 'canvas', 'statusLine', 'watermark',
   'trading', 'events', 'axisChrome', 'viewport', 'barSpacing', 'grid', 'crosshairMode',
-  'crosshairSnapToBar', 'indicators', 'alerts', 'drawings', 'panes', 'series'];
+  'crosshairSnapToBar', 'priceOnlyAutoScale', 'indicatorLegendCollapsed', 'indicators', 'alerts', 'drawings', 'panes', 'series'];
 const COMPARISON_MODES = ['percentage', 'indexed-to-100', 'none'];
 const SCALE_MODES = ['linear', 'logarithmic', 'percentage', 'indexed-to-100'];
 const HOST_SETTINGS = ['reference.pfmode', 'reference.compareMode', 'reference.compareBaseMode', 'reference.whenMissing', 'reference.legendIconSize',
@@ -68,13 +69,54 @@ function secondaryWidth(payload) {
   return 100 * weights[1] / (weights[0] + weights[1]);
 }
 
+/** One chart, or two side by side: the geometry this page draws itself. */
+const singleOrSplit = payload => {
+  const grid = payload.layout;
+  return grid.rows === 1 && grid.columns === payload.panes.length && grid.columns <= 2
+    && grid.slots.every(slot => slot.row === 0 && slot.rowSpan === 1 && slot.columnSpan === 1);
+};
+
+/** A valid layout whose geometry only the grid view (grid.html) can show. */
+export function needsGridView(input) {
+  try { return !singleOrSplit(parseWorkspacePayload(input)); }
+  catch { return false; }
+}
+
+// The grid view (grid.html) writes each chart's widget theme under this key.
+const GRID_THEME = 'widget.theme';
+// The periods the grid view's server knows and this page has no range for, as
+// the range nearest in length, by ratio: twice and half as long are equally
+// near, and the year to date counts as the year it can reach.
+const NEAREST_PERIOD = new Map([['1d', '1mo'], ['5d', '1mo'], ['3mo', '6mo'], ['ytd', '1y'], ['2y', '1y'], ['10y', '5y']]);
+
+/**
+ * A layout the grid view exported, in this page's terms. This page sets one
+ * theme for the whole page, so the per-chart widget theme is dropped; the
+ * widget's weekly code becomes the source's; and a saved period becomes this
+ * page's nearest range, clamped to what the chart's interval can serve the
+ * way this page clamps its own. The grid view loads its own periods, so a
+ * saved window, which counts bars, would land on other bars here: each chart
+ * opens fitted to its data instead, with its studies and drawings. Any
+ * document without the grid view's theme comes back unchanged, so this page's
+ * own files keep every strict check.
+ */
+export function fromGridView(input) {
+  const panes = Array.isArray(input?.panes) ? input.panes : [];
+  if (!panes.some(pane => Object.prototype.hasOwnProperty.call(pane?.settings ?? {}, GRID_THEME))) return input;
+  return { ...input, panes: panes.map(pane => {
+    const settings = { ...pane?.settings }, interval = pane?.interval === '1w' ? '1wk' : pane?.interval;
+    const period = PERIODS.includes(pane?.historyPeriod) ? pane.historyPeriod : NEAREST_PERIOD.get(pane?.historyPeriod);
+    delete settings[GRID_THEME];
+    return { ...pane, settings, interval, chart: pane?.chart && typeof pane.chart === 'object' ? stripView(pane.chart) : pane?.chart,
+      ...(period === undefined ? {} : { historyPeriod: clampPeriod(interval, period) }) };
+  }) };
+}
+
 /** Library validity does not imply the current host can honor every saved option. */
 export function validateReferenceWorkspace(input) {
   const payload = parseWorkspacePayload(input);
-  const grid = payload.layout;
-  if (grid.rows !== 1 || grid.columns !== payload.panes.length || grid.columns > 2
-    || grid.slots.some(slot => slot.row !== 0 || slot.rowSpan !== 1 || slot.columnSpan !== 1)) {
-    fail('This host supports one chart or two horizontal charts; unsupported workspace geometry');
+  if (!singleOrSplit(payload)) {
+    fail('This page shows one chart or two horizontal charts; open other workspace geometry in the grid view');
   }
   if (payload.panes.length === 2 && (secondaryWidth(payload) < 18 || secondaryWidth(payload) > 78)) {
     fail('The second chart width must be between 18 and 78 percent');

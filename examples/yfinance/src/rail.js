@@ -181,6 +181,7 @@ export function focusChart(pane) {
 }
 const eachDraw = (fn) => { for (const d of [app.draw, app.draw2]) if (d) fn(d); };
 const mobileObserved = new WeakSet();
+const navigationObserved = new WeakSet();
 const selectionOf = (d) => {
   if (!d) return [];
   if (typeof d.selection === 'function') return d.selection().slice();
@@ -497,8 +498,10 @@ function controlsBlock() {
     glyph: chromeGlyph('trash'),
     tip: () => {
       const sel = selectionOf(app.draw);
+      // The count is what the press deletes: read-only drawings stay.
+      const n = sel.filter((id) => isEditable(app.draw.get(id))).length;
       return sel.length
-        ? { title: sel.length > 1 ? `Delete ${sel.length} drawings` : 'Delete drawing', chord: 'Del', sub: 'Right-click to remove all', side: 'right' }
+        ? { title: n > 1 ? `Delete ${n} drawings` : 'Delete drawing', chord: 'Del', sub: 'Right-click to remove all', side: 'right' }
         : { title: 'Delete drawing', chord: 'Del', sub: 'Select one first. Right-click to remove all', side: 'right' };
     },
     onClick: () => {
@@ -507,10 +510,14 @@ function controlsBlock() {
     },
     onContext: () => {
       if (!app.draw) return;
-      const n = app.draw.drawings().length;
+      // Each count is what its row reaches: an unselectable drawing never
+      // joins a selection, and a read-only one survives a clear.
+      const all = app.draw.drawings();
+      const picked = all.filter((d) => d.policy?.selectable !== false).length;
+      const n = all.filter(isEditable).length;
       openRailMenu(ctl.trash, [
-        { label: `Select all (${n})`, icon: 'cursor', disabled: n === 0, onSelect: () => {
-          app.draw.select(app.draw.drawings().map((d) => d.id));
+        { label: `Select all (${picked})`, icon: 'cursor', disabled: picked === 0, onSelect: () => {
+          app.draw.select(all.map((d) => d.id));
           refreshControls();
         } },
         { label: `Remove all drawings (${n})`, icon: 'trash', danger: true, disabled: n === 0, onSelect: () => {
@@ -542,6 +549,8 @@ function controlsBlock() {
   return box;
 }
 
+/** Whether the user may edit `d`: a drawing whose policy says otherwise is the host's. */
+const isEditable = (d) => !!d && d.policy?.editable !== false;
 const allLocked = (ids) => ids.length > 0 && ids.every((id) => { const d = app.draw.get(id); return d && d.locked === true; });
 const allHidden = (ids) => ids.length > 0 && ids.every((id) => { const d = app.draw.get(id); return d && d.visible === false; });
 
@@ -566,7 +575,8 @@ export function refreshControls() {
   ctl.magnet.dataset.mode = prefs.magnet;
   setState(ctl.stay, { on: prefs.stay, pressed: prefs.stay });
   const sel = d ? selectionOf(d) : [];
-  const none = sel.length === 0;
+  // A read-only selection leaves these three nothing they could change.
+  const none = !sel.some((id) => isEditable(d.get(id)));
   const locked = !none && allLocked(sel);
   const hidden = !none && allHidden(sel);
   setState(ctl.lock, { off: none, on: locked, pressed: locked, glyph: locked ? 'unlock' : 'lock' });
@@ -855,6 +865,7 @@ export function initRail(a, opts = {}) {
 export function zoomVisibleRange(chart, factor) {
   if (!chart || typeof chart.getVisibleLogicalRange !== 'function'
       || typeof chart.setVisibleLogicalRange !== 'function'
+      || chart.navigationOptions?.().zoomEnabled === false
       || !Number.isFinite(factor) || factor <= 0) return false;
   const range = chart.getVisibleLogicalRange();
   if (!range || !Number.isFinite(range.from) || !Number.isFinite(range.to) || range.to <= range.from) return false;
@@ -869,8 +880,22 @@ export function zoomVisibleRange(chart, factor) {
   return true;
 }
 
+/** Update buttons in place so policy changes do not close an open toolbar dialog. */
+export function syncNavigationControls() {
+  if (!app) return;
+  const allowed = chart => Boolean(chart && chart.isDestroyed !== true && chart.navigationOptions?.().zoomEnabled !== false);
+  const selected = allowed(activeChart());
+  for (const id of ['mobile-zoom-in', 'mobile-zoom-out', 'mobile-fit', 'toolbar-fit', 'fit']) {
+    const control = el(id);
+    if (!control) continue;
+    control.disabled = !(id === 'fit' ? allowed(app.chart) : selected);
+    control.setAttribute('aria-disabled', String(control.disabled));
+  }
+}
+
 /** Keep the compact picker and stateful controls aligned with the shared host state. */
 export function syncMobileControls(tool) {
+  syncNavigationControls();
   const picker = el('mobile-draw');
   if (picker) picker.value = tool || '';
   const magnet = el('mobile-magnet');
@@ -888,7 +913,12 @@ export function syncMobileControls(tool) {
 
 /** Follow history changes regardless of whether they came from touch, keyboard or another host control. */
 export function observeMobileControls(chart, draw) {
-  if (!chart || !draw || typeof chart.on !== 'function' || mobileObserved.has(chart)) return;
+  if (!chart || typeof chart.on !== 'function') return;
+  if (!navigationObserved.has(chart)) {
+    navigationObserved.add(chart);
+    for (const event of ['objects:change', 'state:restore:end', 'destroy']) chart.on(event, syncNavigationControls);
+  }
+  if (!draw || mobileObserved.has(chart)) return;
   mobileObserved.add(chart);
   for (const event of ['drawing:select', 'draw:select', 'drawing:change', 'draw:add', 'draw:remove', 'draw:update', 'draw:paste', 'draw:cut']) {
     chart.on(event, () => {
@@ -930,7 +960,7 @@ export function initMobile(a) {
   el('mobile-magnet').addEventListener('click', () => { cycleMagnet(); syncMobileControls(activeDraw()?.activeTool()); });
   el('mobile-zoom-out').addEventListener('click', () => zoomVisibleRange(activeChart(), 1.25));
   el('mobile-zoom-in').addEventListener('click', () => zoomVisibleRange(activeChart(), 0.8));
-  el('mobile-fit').addEventListener('click', () => { const chart = activeChart(); if (chart) chart.resetScale(); });
+  el('mobile-fit').addEventListener('click', () => { const chart = activeChart(); if (chart && chart.navigationOptions?.().zoomEnabled !== false) chart.resetScale(); });
 
   el('mobilebar').addEventListener('pointerdown', (event) => event.stopPropagation());
   for (const [id, pane] of [['chart', 1], ['chart2', 2]]) {

@@ -1,7 +1,7 @@
 import { el } from './ui.js';
 import { ticon } from './toolbar.js';
 import { capturePaneTarget } from './pane-target.js';
-import { downloadChartData } from './chart-data.js';
+import { openChartDataControls } from './chart-data-controls.js';
 
 let app;
 let menuTarget = null;
@@ -80,7 +80,7 @@ export function openSnapMenu(anchor) {
     document.body.appendChild(menu);
     el('snap-save').addEventListener('click', () => downloadSnapshot());
     el('snap-copy').addEventListener('click', () => copySnapshot());
-    el('snap-data').addEventListener('click', () => { const target = menuTarget; closeSnapMenu(); downloadChartData(app, target); });
+    el('snap-data').addEventListener('click', () => { const target = menuTarget; closeSnapMenu(); openChartDataControls(app, target); });
   }
   const r = anchor.getBoundingClientRect();
   menu.hidden = false;

@@ -35,13 +35,10 @@ const src = (s: Readonly<Record<string, unknown>>, k = 'source'): IndicatorSourc
   (s[k] as IndicatorSource) ?? 'close';
 
 /**
- * `smaSeededEma` over a series that itself opens with a warmup gap. the reference `ema`
- * re-seeds from `sma(src, length)` for as long as its own previous value is
- * `na`, and that SMA stays `na` until the window holds `length` real values, so
- * an EMA chained onto a gapped series starts `length - 1` bars after the inner
- * series does, not at `length - 1`. `smaSeededEma` seeds unconditionally from index 0,
- * where a leading NaN would poison the recursion forever, so it is only ever
- * shown the live tail and the answer is re-padded back into place.
+ * Align a chained SMA-seeded EMA with its input's leading warmup gap.
+ * Smoothing starts at the first finite value and the result is padded back to
+ * the original bar positions. `smaSeededEma` supplies finite-window seeding and
+ * subsequent gap behavior; the wrapper keeps the composition's alignment explicit.
  */
 function emaOfGapped(values: readonly number[], period: number): number[] {
   const n = values.length;
@@ -93,10 +90,9 @@ export const KAMA: IndicatorDescriptor = {
     const out = new Array<number>(n).fill(NaN);
     if (n <= erLength) return { kama: nulls(out) };
 
-    // Bar 0 has no predecessor, so its step is unknown. A zero keeps the rolling
-    // sum finite (`rollingSum` cannot recover from a NaN entering the window),
-    // and the sum is never read before index `erLength`, by which point every
-    // term in it is a real bar-to-bar move.
+    // This path calculation treats nonfinite steps, including bar 0's missing
+    // predecessor, as zero contribution. By the first path read, the initial
+    // placeholder has left the rolling window.
     const steps = change(values, 1);
     for (let i = 0; i < n; i++) steps[i] = Number.isFinite(steps[i]) ? Math.abs(steps[i]) : 0;
     const path = rollingSum(steps, erLength);

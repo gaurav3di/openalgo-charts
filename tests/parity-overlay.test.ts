@@ -149,37 +149,28 @@ describe('DEMA', () => {
 
 describe('HMA', () => {
   /**
-   * A weighted average lags a straight line by `sum(k * w_k) / sum(w_k)`, which
-   * reduces to `(p - 1) / 3` only when the period is whole. The half period is
-   * not: at length 9 it is 4.5, spanning five bars weighted 4.5 down to 0.5, so
-   * the fast leg lags by `15 / 12.5` = 1.2 rather than 1.
-   *
-   * The composite is `2 * fast - slow` smoothed over `floor(sqrt(9))` = 3, so
-   * the total lag is `2 * 1.2 - (8/3) + (2/3)` = 0.4 of a bar. Flooring the half
-   * to 4 would make that zero and track the ramp exactly, which is precisely the
-   * wrong answer: it is a fifth of a bar early on the fast leg.
+   * A whole-window weighted average lags a straight line by `(period - 1) / 3`.
+   * Length 9 uses inner lengths 4 and 9 and smoothing length 3, so the combined
+   * lag is `2 * 1 - 8/3 + 2/3 = 0`.
    */
-  it('carries the fractional half period on an odd length', () => {
+  it('uses an integer half window on an odd length', () => {
     const data = ramp(30, 100, 1);
     const out = run(HMA, data, { length: 9 }).hma;
     expect(firstIndex(out)).toBe(10);
-    near(out[10], 110 - 0.4);
-    near(out[20], 120 - 0.4);
-    near(out[29], 129 - 0.4);
+    near(out[10], 110);
+    near(out[20], 120);
+    near(out[29], 129);
   });
 
-  it('floors the smoothing period rather than rounding it', () => {
-    // length 13 halves to 6.5, spanning seven bars weighted 6.5 down to 0.5, so
-    // the fast leg lags by 45.5 / 24.5 = 13/7. Smoothing over floor(sqrt(13)) = 3
-    // gives a total lag of 2 * (13/7) - 4 + (2/3) = 8/21. Rounding the square
-    // root to 4 instead would leave the line a further third of a slope behind.
+  it('rounds the smoothing length to the nearest whole window', () => {
+    // Lengths 6, 13 and 4 give combined lag 2 * 5/3 - 4 + 1 = 1/3.
     const out = run(HMA, ramp(30, 100, 1), { length: 13 }).hma;
-    expect(firstIndex(out)).toBe(14);
-    near(out[20], 120 - 8 / 21);
+    expect(firstIndex(out)).toBe(15);
+    near(out[20], 120 - 1 / 3);
   });
 
   it('carries the lag the same three windows imply at an even length', () => {
-    // length 16 halves to 8 and smooths over floor(sqrt(16)) = 4, so the lag is
+    // Length 16 halves to 8 and smooths over round(sqrt(16)) = 4, so the lag is
     // 2 * (7/3) - (15/3) + (3/3) = 2/3 of a bar rather than none.
     const out = run(HMA, ramp(40, 100, 1), { length: 16 }).hma;
     expect(firstIndex(out)).toBe(18);

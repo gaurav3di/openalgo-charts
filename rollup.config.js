@@ -139,7 +139,7 @@ const types = Object.entries(entries).map(([key, input]) => ({
   input,
   external: key === 'index' ? undefined : tierExternal,
   output: { file: `dist/${typesFile[key]}.d.ts`, format: 'es' },
-  plugins: [dts()],
+  plugins: [...(key === 'index' ? [aliasSelf] : []), dts()],
 }));
 
 export default [...js, iife, allBundle, ...types];

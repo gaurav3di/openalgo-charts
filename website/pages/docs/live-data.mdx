@@ -43,6 +43,33 @@ Other codes pass through unchanged, including `D`, `W`, `M` and the minute code 
 Non-OK HTTP responses reject the load. A JSON response with `status: 'error'` also
 rejects, using its `message` when present, even when the HTTP status is 200.
 
+## Explicit bar confirmation
+
+Native series accept optional confirmation metadata. Use it when your provider
+knows whether the latest bar is still forming, especially for tick-count or
+volume-driven bars whose close cannot be inferred from a clock.
+
+```ts
+series.setData(bars, { confirmation: 'forming' });
+series.update(latestBar, { confirmation: 'confirmed' });
+series.update(latestBar, { confirmation: 'auto' });
+series.update(correctedBar, { source: 'history' });
+```
+
+`forming` and `confirmed` override interval inference. A confirmation-only update
+is sufficient to recalculate indicators; OHLC values need not change. Same-time
+updates retain an explicit state unless replaced or cleared with `auto`. A new
+tail, replacement dataset, or changed instrument/timeframe clears old metadata.
+Prepending history retains confirmation for an unchanged tail. An older-bar
+correction cannot change the current tail's confirmation.
+
+`setData` is always a historical replacement, even if all timestamps match the
+previous dataset. `update` is live by default; use `source: 'history'` for a
+historical tail correction or append. Updates to older timestamps are historical
+automatically. Replay supplies its own forming/completed state and restores the
+saved data and confirmation when stopped. Historical loads and replay do not
+trigger native live indicator alerts.
+
 ## Realtime (WebSocket)
 
 LTP / Quote / Depth come from the WS adapter. Feed its LTP ticks through a `CandleBuilder`

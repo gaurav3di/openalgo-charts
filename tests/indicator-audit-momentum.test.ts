@@ -88,12 +88,12 @@ describe('ADX smooths a true range that has no bar-0 value', () => {
   // fabricated bar-0 true range would show up in every later average.
   //
   //   tr  = [na, 2, 2, 2, 3, 2]
-  //   +DM = [0, 1, 1, 0, 2, 0]      -DM = [0, 0, 0, 1, 0, 1]
+  //   +DM = [na, 1, 1, 0, 2, 0]     -DM = [na, 0, 0, 1, 0, 1]
   //
   // With DI length 2, the true-range average counts from bar 1 and seeds at
-  // bar 2 with (2+2)/2 = 2, then 2, 2.5, 2.25. The DM averages are unbroken
-  // series and seed at bar 1: +DM 0.5, 0.75, 0.375, 1.1875, 0.59375 and
-  // -DM 0, 0, 0.5, 0.25, 0.625.
+  // bar 2 with (2+2)/2 = 2, then 2, 2.5, 2.25. The DM averages cover the
+  // same transitions and seed at bar 2: +DM 1, 0.5, 1.25, 0.625 and
+  // -DM 0, 0.5, 0.25, 0.625.
   const data = ohlcBars([
     [10, 4, 9],
     [11, 9, 10],
@@ -113,31 +113,30 @@ describe('ADX smooths a true range that has no bar-0 value', () => {
 
   it('matches the hand-computed +DI and -DI', () => {
     const out = ADX.calc(data, settings, {});
-    expect(out.plusDi[2] as number).toBeCloseTo(37.5, 10);   // 0.75 / 2
+    expect(out.plusDi[2] as number).toBeCloseTo(50, 10);     // 1 / 2
     expect(out.minusDi[2] as number).toBeCloseTo(0, 10);
-    expect(out.plusDi[3] as number).toBeCloseTo(18.75, 10);  // 0.375 / 2
+    expect(out.plusDi[3] as number).toBeCloseTo(25, 10);     // 0.5 / 2
     expect(out.minusDi[3] as number).toBeCloseTo(25, 10);    // 0.5 / 2
-    expect(out.plusDi[4] as number).toBeCloseTo(47.5, 10);   // 1.1875 / 2.5
+    expect(out.plusDi[4] as number).toBeCloseTo(50, 10);     // 1.25 / 2.5
     expect(out.minusDi[4] as number).toBeCloseTo(10, 10);    // 0.25 / 2.5
-    expect(out.plusDi[5] as number).toBeCloseTo(26.38888888888889, 10);
-    expect(out.minusDi[5] as number).toBeCloseTo(27.77777777777778, 10);
+    expect(out.plusDi[5] as number).toBeCloseTo(250 / 9, 10);
+    expect(out.minusDi[5] as number).toBeCloseTo(250 / 9, 10);
   });
 
-  it('keeps the real zero that bar 0 contributes to both DM averages', () => {
-    // Bar 0 has no previous bar, so neither directional movement happened: the
-    // definition puts a genuine 0 there, not a gap. Dropping it would lift the
-    // +DM seed from (0 + 1)/2 to 1 and print 50 here instead of 37.5.
+  it('excludes the absent bar-0 transition from both movement averages', () => {
+    // Bar 0 has no previous bar. Both movement and true-range seeds therefore
+    // describe transitions 1 and 2, yielding +DM 1 over true range 2.
     const out = ADX.calc(data, settings, {});
-    expect(out.plusDi[2] as number).toBeCloseTo(37.5, 10);
+    expect(out.plusDi[2] as number).toBeCloseTo(50, 10);
   });
 
   it('matches the hand-computed ADX', () => {
     const out = ADX.calc(data, settings, {});
-    // dx = 100, 14.2857143, 65.2173913, 2.5641026 from bar 2, smoothed over 2.
+    // dx = 100, 0, 200/3, 0 from bar 2, smoothed over 2.
     expect(out.adx[2]).toBeNull();
-    expect(out.adx[3] as number).toBeCloseTo(57.142857142857146, 10);
-    expect(out.adx[4] as number).toBeCloseTo(61.18012422360248, 10);
-    expect(out.adx[5] as number).toBeCloseTo(31.87211339385, 10);
+    expect(out.adx[3] as number).toBeCloseTo(50, 10);
+    expect(out.adx[4] as number).toBeCloseTo(175 / 3, 10);
+    expect(out.adx[5] as number).toBeCloseTo(175 / 6, 10);
   });
 
   it('prints the default study from bar 14 and the ADX line from bar 27', () => {

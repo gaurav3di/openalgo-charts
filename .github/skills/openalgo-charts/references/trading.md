@@ -232,7 +232,7 @@ chartEl.addEventListener('contextmenu', (e) => {
 window.addEventListener('click', () => hideMenu());
 ```
 
-`chart.coordinateToPrice(y, paneIndex)` takes a **container-relative** Y in media px and returns `null` for a missing pane; `chart.priceToCoordinate(price, paneIndex)` is the inverse for positioning DOM panels over a line.
+`chart.coordinateToPrice(y, paneIndex)` takes a **container-relative** Y in media px and returns `null` for a missing pane or one collapsed to its header strip; `chart.priceToCoordinate(price, paneIndex)` is the inverse for positioning DOM panels over a line.
 
 ## Foot-guns
 

@@ -5,10 +5,27 @@ renders it with OpenAlgo Charts (candles plus volume), showing how to wire any
 OHLCV source through a custom `DataFeed`. It is the reference host: the place a
 feature is proved usable, not just present.
 
+Custom indicator settings support symbol lookup with a paired exchange,
+validated session strings, multiline notes, finite prices and absolute UTC
+timestamps. Price and time pick actions hide the settings dialog while the
+chart captures a value, then resume it. Invalid drafts remain visible with an
+error. Apply commits the draft; Cancel discards it. Mixed-scale studies must
+declare the pane and scale for a price pick. These input kinds use native
+descriptor settings and require no feed adapter.
+
 The custom host includes linked chart grids, named layouts and indicator templates
 stored through the optional workspace tier. Layout changes prepare history before
 publication, retain visible storage errors and guard simulated order entry during
-replay or a pending workspace switch. It does not use the packaged widget shell.
+replay or a pending workspace switch. The main page does not use the packaged
+widget shell; the grid view, `grid.html`, does (see Grid view below).
+
+Choose **Indicators > Examples > Routed signal sample** to add a momentum study in
+its own pane whose Buy and Sell plates and 30-bar range box are drawn on the
+candles. Those outputs name the price pane; the dots and the latest reading stay
+with the histogram. Turn off **Signals on price** in its settings to send the
+plates back to the study's pane. Moving the study to another pane leaves the plates
+on the candles, and moving the price axis to the left takes the plates and the box
+with the candles; hiding or removing it takes every routed layer with it.
 
 Choose **Indicators > Examples > Source signal sample** to add the host-owned
 2.4.6 demonstration to the focused chart. It alternates Up and Down labels every
@@ -205,7 +222,8 @@ tier files exactly as a page would.
 ```
 examples/yfinance/
   index.html          markup only: the shell, the dialogs, the menus
-  styles.css          every rule the page uses
+  grid.html           the grid view: the widget tier's chart grid over the same feed
+  styles.css          every rule the pages use
   server.py           static server, /api/history (yfinance or fixture), the self-test
   requirements.txt    yfinance, the one dependency, needed only outside --fixture
   src/
@@ -215,6 +233,7 @@ examples/yfinance/
     ui.js             el(), number and text formatting, the candle palette, toasts, the overlay stack (focus trap, one Escape per layer), the chart loading, empty and error card, the theme switch
     hover.js          the one hover label every icon-only control shares
     intervals.js      interval registry, the picker's codes, period clamping
+    goto.js           Go to a date or range: the shared navigator, loading a longer period
     feed.js           YFinanceDataFeed and its typed errors, the bar cache wrapper, the cache menu
     transforms.js     Heikin Ashi, Renko, Range, Line Break, P&F, Kagi
     expression.js     symbol arithmetic: the operator keypad, leg fetching, folding
@@ -225,6 +244,7 @@ examples/yfinance/
     bracket.js        the bracket panel: entry, target and stop pills
     orders.js         resting orders, market fills, the net position, trade state
     indicators.js     the indicator picker and the generated settings form
+    indicator-input-controls.js typed field validation, symbol search and chart picking
     indicator-source.js the opt-in sample and chart-owned read-only source dialog
     chart-settings.js the chart settings dialog, built from chartSettingsSchema()
     compare.js        multi-symbol comparison
@@ -235,7 +255,8 @@ examples/yfinance/
     split.js          the linked second chart and its divider
     link.js           the link-group switches
     clipboard.js      the drawing clipboard and its chords
-    menus.js          the right-click menu, the price-axis menu, the popup menu
+    menus.js          the right-click menu (including Collapse pane), the price-axis menu, the popup menu
+    session-marks.js  host-owned price marks: read-only, never saved, not listed
     toolbar.js        the shell bar, chart types, chart-only full screen
     rail.js           the drawing rail: groups, pins, magnet, stay mode, selection controls, keyboard
     rail-flyout.js    the rail's flyout, context menu and dwell tooltip
@@ -249,6 +270,8 @@ examples/yfinance/
     workspace-host.js  reference chart ownership, pending guards and transition wiring
     workspace-catalog.js  named saves, revision conflicts, autosave ownership and storage recovery
     workspaces.js     named-layout dialog, startup selection, autosave and portable files
+    grid.js           the grid view's start-up: presets, links, import and export
+    grid-view.js      the grid view's feed adapter, layout hand-off and document helpers
   tests/              vitest specs for the modules that can run without a browser
   vitest.config.ts    the config those specs run under (see Tests)
 ```
@@ -270,6 +293,54 @@ without any module reading another's binding before it exists.
 Opening the page with `?test=1` puts `window.__oac = { chart, draw, app }` on
 the window for the end-to-end suite; `chart` and `draw` are getters, so they
 follow a rebuild.
+
+## Grid view
+
+`grid.html` is the second page of the reference host. It builds the widget
+tier's chart grid (`createChartGrid`) over the same `/api/history` feed, so each
+chart is a complete widget with its own top bar, loading status and retry.
+
+- The bar picks a preset (one chart, two or three columns, two or three rows, two
+  by two), switches crosshair, viewport, symbol and interval links, and imports or
+  exports a layout file.
+- Click or focus a chart to make it active: it gets the outline and the keyboard.
+  Drag a gap to resize, or focus it and use the arrow keys; double click evens it.
+- Below 640 CSS px only the active chart shows, with tabs to switch.
+- The grid keeps its layout in `localStorage` under the `yfinance-grid` namespace.
+  A first visit opens AAPL, MSFT, RELIANCE.NS and ^NSEI in a two by two grid. A
+  saved layout the page cannot restore is kept, and the status line says why.
+- Each chart loads the history period its layout saved (`historyPeriod`, the
+  main page's range) through the grid's `feed` function, when its interval can
+  serve it. Otherwise, and for a chart with no saved period, it loads its
+  interval's usual one (1m 5d; 5m, 15m and 30m 1mo; 1h 6mo; 1d 2y; 1w 10y). A chart
+  keeps its period when its interval changes, for when it changes back, and a
+  preset copies the active chart's period to the charts it adds. The grid writes
+  the periods back into its saved layout and exports. No older history is paged,
+  since the server answers by period.
+- Import accepts a portable workspace document or payload whose charts use those
+  intervals (`1wk` from the main page opens as `1w`) and periods the server knows.
+  It is validated in full, then applied all at once; on failure nothing on screen
+  changes and the status line says why. Comparison symbols are refused, since a
+  widget draws none, and so are the main page's folded calendar frames (`1mo`,
+  `1q`).
+
+The main page draws one chart or two side by side. Importing a layout with more
+charts, or with rows, into its Layouts dialog offers **Open in grid view**, which
+hands the document over through `sessionStorage` (`oac-grid-handoff`). The main
+page checks first that the grid view can open it, and refuses there otherwise. The
+link menu on the main page also opens the grid view. Open `grid.html?test=1` to
+expose the grid as `window.__grid` for the end-to-end suite.
+
+A one or two chart layout exported from the grid view opens on the main page
+through the same Layouts import. The widget's `1w` becomes the page's `1wk`, the
+per-chart theme is dropped because the main page has one theme for the page, and
+each chart opens fitted to its data with its studies and drawings, because the
+saved window counts the grid view's bars. A saved history period the main page
+has no range for opens as the nearest range it has (`1d` and `5d` as `1mo`, `3mo`
+as `6mo`, `ytd` and `2y` as `1y`, `10y` as `5y`), and every saved period is then
+clamped to what the chart's interval can serve, as the main page clamps its own.
+The main page still refuses what it cannot show, such as a `1m` chart or two
+charts with different drawing magnet or stay settings.
 
 ## How it connects
 
@@ -321,6 +392,11 @@ or `chart.setNavigationOptions(...)`; `chart.fitContent()` explicitly fits all l
 history. Navigation settings are included in the schema's read/apply helpers and chart
 state. A host that reapplies an explicit viewport after loading data controls that view.
 
+Fresh charts use `navigation.defaultBarSpacing: 8` for consistent candle density
+across desktop and mobile. The Axes setting **Default bar spacing (0 = use bar count)**
+stores CSS pixels per bar and applies to initial loads and reset. Editing the visible-bar
+count switches back to count mode. Existing saved navigation preferences are retained.
+
 This example is a custom host around the DOM-free engine and draw tier. Its responsive
 controls belong to `examples/yfinance`; it does not use the packaged widget's
 `WidgetOptions.mobile`. At 900 CSS pixels or less, or with a coarse primary pointer, the
@@ -330,6 +406,25 @@ the registered tools, followed by Cursor, Undo, Redo, Magnet, Zoom out, Zoom in 
 Drawing actions use the existing controller and navigation uses the chart's public logical
 range and reset APIs. In split view the controls act on the last plot touched. Rotating or
 resizing changes only the CSS layout, so loaded bars and drawings stay in place.
+
+### Go to a date or range
+
+**Go to** beside the history range opens the widget tier's go-to panel for the
+selected chart. **Date** centres one date at the current zoom; **Range** fits two
+dates or date and time pairs. Times are read in the chart timezone. When the date
+is older than the loaded period, the page loads the shortest longer period that
+reaches it (the range menu shows the result), then places the date once that load
+has been accepted. That load rebuilds the chart, and the panel with it, so the page
+opens the panel again on the new chart to carry the request through: an interval
+that cannot serve an older period reports there where history starts. Daily and
+longer frames take a date alone, since a time could not change the bar it names.
+Closing the panel while history loads drops the request, and the view stays where
+it was; so does a pan or zoom on the chart while the longer period loads. Replay
+never loads history, a symbol or interval change cancels a pending request, and
+the linked second chart follows the placement by time. The navigation rules are
+the widget tier's `DateNavigator`; only the period loader and the pan and zoom
+watch in `src/goto.js` belong to this page, since only the page knows which view
+moves are its own.
 
 ## What each module proves
 
@@ -342,7 +437,9 @@ exists to show one engine surface carrying real use, not just being present.
 | `feed.js` | A `DataFeed` is one method. The bar cache wrapper (`withBarCache`) keys on symbol, exchange and interval, snaps `from` to the bar grid so a reload inside the same bar hits, stops `to` at the last seen bar while the venue is shut, and refetches only the forming bar. A 404, 429 or 5xx becomes a typed error (`NotFoundError`, `RateLimitedError`, `NetworkError`) with a deadline and one retry, so the readout can say "check the symbol" or "try again in a minute" rather than printing whatever the server wrote. A staleness badge says when the newest bar is older than the venue's clock allows. |
 | `intervals.js` | The interval registry accepts codes the built-in grammar does not (`1wk`, a calendar month, a quarter). Monthly and quarterly bars are folded from daily ones through `bucketStartOf`, so a month runs first-to-first in the chart's zone and February is 29 days long in 2024. Ranges are clamped to what the interval can serve. |
 | `indicators.js` | The picker is built from `registeredIndicators()`, so built-ins and the host's opt-in example appear grouped by category. The gear opens a form generated from the descriptor's `inputs`; the same code renders MACD, Bollinger or your own indicator. |
+| `indicator-input-controls.js` | Validates typed drafts and connects shared symbol lookup and chart picking to the reference modal, preserving its Apply and Cancel behavior. |
 | `indicator-source.js` | Registers the Source signal sample and resolves source requests against the emitting chart and live instance. The read-only dialog shows the actual host factory and closes when its owner is removed or destroyed. |
+| `routed-study.js` | Registers the Routed signal sample: a momentum histogram in its own pane whose Buy and Sell plates and range box name the price pane (`overlay: true`), while its crossing dots and "Now" label (`plot: 'momentum'`) stay with the histogram. The Signals on price input sends the plates back to the study's pane. |
 | `chart-settings.js` | The settings dialog is generated from `chartSettingsSchema()`, including the paired up and down colour control on one row, and a control the current context cannot back is drawn disabled with its state visible. |
 | `transforms.js` | Heikin Ashi, Renko, Range Bars, Line Break, Point and Figure and Kagi from the transform tier; P&F reveals its box-sizing mode (ATR, percent, fixed). |
 | `volume.js` | Volume rides an overlay price scale (`priceScaleId: ''`) inside the price pane, pinned to the bottom fifth, so the right-hand axis stays a clean price ladder. It hides and shows from the legend eye and the right-click menu, and the choice survives a reload and a chart-type switch. |
@@ -350,20 +447,22 @@ exists to show one engine surface carrying real use, not just being present.
 | `orders.js`, `bracket.js` | Chart trading: right-click for single orders, Buy and Sell brackets with OCO target and stop, drag any line to re-price it, and per-symbol trade state that survives a symbol switch. |
 | `replay.js`, `replay-timing.js` | One replay transport drives the captured chart or all captured charts from a shared availability clock. Scope controls appear in the picker and transport. Finer history uses separate request slots and each chart's captured instrument, interval and timezone. Cancellation discards late responses; exit restores data and viewports. A coarse candle appears only when complete, or forms from a contiguous prefix of finer observations. Missing finer history has a visible completed-candle fallback. |
 | `compare.js`, `split.js`, `link.js` | Each selected chart owns its comparison symbols, scale mode, hidden rows and history requests. Each source has an independent scale, rebased at the first visible timestamp shared by all visible sources. Missing overlap shows "No common starting bar" and draws gaps. Replay readouts withhold forming comparison closes. The dialog retains its owner across focus changes; changing or closing a chart cancels stale loads. Source failures remain visible with Retry. The linked second chart has independent switches for crosshair, viewport, symbol and interval. Interval sync is off by default. |
-| `drawing.js`, `rail.js`, `rail-flyout.js` | The 2.0 drawing model from the host's side: the controller, the tool picker built from `BUILTIN_DRAWING_TOOLS` with the tier's own icon sprite and cursors, keyboard chords from `drawingShortcuts()`, and a rail whose flyouts and tooltips are host chrome built from the shipped glyphs. |
-| `properties.js` | The floating properties bar is generated from `drawingSettingsSchema`, which declares only the fields a tool's `draw` reads: a field in the schema is a control with something behind it, a field absent from it is a control not shown. With several drawings selected it edits the fields their schemas share, as one undo entry. |
+| `drawing.js`, `rail.js`, `rail-flyout.js` | The 2.0 drawing model from the host's side: the controller, the tool picker built from `BUILTIN_DRAWING_TOOLS` with the tier's own icon sprite and cursors, keyboard chords from `drawingShortcuts()`, and a rail whose flyouts and tooltips are host chrome built from the shipped glyphs. The toolbar's Del, Clear, Undo and Redo are off whenever pressing them would do nothing: Del and Clear leave read-only drawings alone, and Undo and Redo follow the controller's `canUndo()` and `canRedo()`. |
+| `properties.js` | The floating properties bar is generated from `drawingSettingsSchema`, which declares only the fields a tool's `draw` reads: a field in the schema is a control with something behind it, a field absent from it is a control not shown. With several drawings selected it edits the fields their schemas share, as one undo entry. A read-only selection shows "Read-only" and a Duplicate button instead of controls the controller would refuse. |
+| `session-marks.js` | Drawing policies from the host's side. **Mark ... for This Session** in the right-click menu places a dashed price line with `policy: { editable: false, persistent: false, listed: false }`. Select it to read it, copy it, duplicate it into your own drawing or raise an alert from it; it cannot be dragged, nudged, restyled, cut or deleted, undo does not remove it, it is left out of saved layouts and it is absent from the Objects dock. The host keeps the marks per symbol for the life of the page and puts them back, with their ids, after every chart-type switch, reload and layout restore. **Clear Session Marks** removes them with `removeMany(ids, { force: true })`, the one call in the host that overrides the policy. |
 | `clipboard.js` | One in-memory clipboard shared by both charts' controllers, so copy here and paste there works even when the browser refuses the OS clipboard; the OS read is bounded so a paste never hangs on a permission popup. |
 | `level-editor.js` | A ladder tool's levels (retracement, extension, channel, fan, time zones, the Gann pair) edited one row each: enable, ratio, colour, label, add, remove, reset. Every edit is one undo entry through the controller. |
 | `text-editor.js` | Inline text editing over the painted text, sized by the same rules the text tool paints with, with every pointer and key event stopped at the box so the chart under it does not pan. |
-| `menus.js`, `toolbar.js`, `hover.js` | Host chrome to the standard in `CLAUDE.md`: styled scrollbars, no native form controls on a dark panel, real tooltips that flip inside the window, and dialog furniture in one arrangement. |
+| `menus.js`, `toolbar.js`, `hover.js` | Host chrome to the standard in `CLAUDE.md`: styled scrollbars, no native form controls on a dark panel, real tooltips that flip inside the window, and dialog furniture in one arrangement. The right-click menu over a lower pane offers **Collapse pane** and **Expand pane** (`chart.setPaneCollapsed`), on either chart of a split. |
 | `snapshot.js` | `chart.takeScreenshot()` saved as a PNG or copied to the clipboard, with chart branding, an enabled watermark and the replay mark in the image because they are on the canvas. |
 | `pane-target.js` | Captures the selected chart and request for host actions. A menu cannot act on a rebuilt chart or changed instrument, and asynchronous image export retains its original filename. |
-| `persist.js` | A versioned layout document with migrations, quarantine instead of deletion, memory-only degradation when storage refuses a write, and export and import as a file. See the next section. |
+| `persist.js` | A versioned layout document with migrations, quarantine instead of deletion, memory-only degradation when storage refuses a write, and export and import as a file. An imported file, here or in the Layouts dialog, loses every drawing `policy`: a policy is a host's restriction on its own drawings, and one arriving in a shared file would plant a drawing no control here could remove. See the next section. |
 | `workspace-document.js` | Converts the full reference snapshot to the optional workspace tier and back. Preserves source settings, study identities, anchored alert state, comparison settings and split geometry. Rejects settings or geometry this host cannot represent before any live restore. Named catalog controls are a separate host layer. |
 | `workspace-transition.js`, `workspace-host.js` | Prepare every chart's raw history before changing the displayed workspace. Source changes, cancellation and failed writes leave the current charts intact. Synchronous installation failures restore the previous raw histories and configuration, including transformed charts. Pending switches pause alerts, replay entry, autosave and simulated order entry. |
 | `workspace-catalog.js`, `workspaces.js` | Bind the workspace repository to prepared chart publication and the Layouts dialog. Serialize named saves, retain recent ordering, coalesce active-layout autosaves, and reject unacknowledged revisions from another session. Selection failures compensate storage with a new atomic revision. Startup restores the saved named document; recovery does not overwrite it with autosave disabled. |
 | `indicator-templates.js`, `templates.js` | Capture repeated studies with parameters, styles, visibility and pane grouping. Apply shared replace/append planning to the captured chart while preserving drawings and valid alert anchors. Save named templates in the same revision-aware catalog as layouts, with explicit application after import. |
 | `chart-data.js` | Download the captured chart's loaded OHLC/volume/OI, study plots and eligible comparison closes through the shared CSV serializer. Reject obsolete/loading owners and release file resources on success or failure. |
+| `chart-data-controls.js` | Capture a study checklist and visible time bounds, validate custom UTC bounds, and choose source or display alignment before download. |
 | `alerts.js` | The Alerts toolbar button opens the focused chart's lifecycle list and source editor. Price, study plots, supported drawing levels and registered candle conditions use the same controls as the packaged widget. Local notices display fired events; the demo does not send notifications or orders for an alert. |
 | `timeline.js` | The Events menu enables labelled sample events, clustering and group visibility. Click a marker to read its details. These are demonstration events, not a company calendar feed. |
 
@@ -509,12 +608,22 @@ Loading, failed history and pending replay selection block export. The filename
 identifies the source, interval and chart type, with a replay marker for a chart
 participating in active replay.
 
-The file contains all installed bars, including only the revealed replay prefix,
+The dialog starts with all installed bars and studies. Select individual study
+instances, enter inclusive UTC-second bounds, or use the visible bounds captured
+when the dialog opened. Hidden studies remain selectable; adding another study
+later does not silently include it. Removed selected studies report an error.
+Comparison closes can be omitted separately.
+
+The default file contains all installed bars, including only the revealed replay prefix,
 with UTC seconds and unrounded numeric values. OI and volume gaps remain blank,
 while zero remains zero. Configured study plots include repeated and hidden
 studies, before visual offsets. Comparison columns use eligible aligned closes in
 their original price units. There is no extra history fetch, aggregation or
-trading/account data in the file. See [the CSV format](../../docs/chart-data-export.md).
+trading/account data in the file. Display alignment follows current study plot
+offsets and labels each time as loaded, interpolated, projected or unknown.
+Projected rows contain known study values with blank future primary/comparison
+fields. They do not promise a future market session. See
+[the CSV format](../../docs/chart-data-export.md).
 
 ## Indicator templates
 
@@ -711,3 +820,25 @@ For a prepared, editable sample of every tool, open
 prices near 23800; it does not request a live feed. Choose a tool and Show sample,
 or press Draw and place its anchors. Undo, redo and body/handle dragging use the
 packaged widget and public controller.
+
+### Primary price fitting and compact study legends
+
+Chart settings > Axes > **Fit primary prices only** excludes overlays from the
+primary scale's auto-fit. The same choice appears on that scale's context menu.
+It preserves manual ranges; enable auto-fit separately when needed.
+
+Chart settings > Readout > **Collapse indicator legends** hides study rows while
+retaining the plots and live readings. The **Indicators N** canvas control toggles
+the rows directly, including on touch screens. Both choices are per chart and
+survive ordinary reloads and named-workspace restoration.
+
+### Collapsed panes
+
+Right-click a study pane and choose **Collapse pane** to fold it to its legend
+row; the row's collapse button, or **Expand pane** from the same menu, opens it
+again at the height it had. The study keeps calculating and its drawings stay
+put while it is folded, and nothing on the strip can be picked or drawn on.
+The price pane is never offered the row, and collapsing the bottom pane leaves
+the time axis at the foot of the chart. The choice is per chart and survives
+reloads and named-workspace restoration. This is not the compact study legend
+above, which hides legend rows and leaves every pane open.

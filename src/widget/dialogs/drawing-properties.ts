@@ -16,7 +16,7 @@ import { widgetText } from '../localization';
  */
 import { applyDrawingSettings, drawingSettingsSchema, getDrawingTool, readDrawingSettings } from 'openalgo-charts/draw';
 import type { Drawing, DrawingTool, SettingsSchema } from 'openalgo-charts/draw';
-import type { WidgetContext } from '../context';
+import { editableIds, type WidgetContext } from '../context';
 import {
   button, controlsFromFields, dialogFrame, el, glyphSvg, openPanel, placePanel, renderForm, selectionPoint,
   type ButtonSpec, type FormHandle, type PanelHandle,
@@ -118,8 +118,12 @@ export function mountDrawingProperties(ctx: WidgetContext, anchor?: HTMLElement,
   let schema = commonSchema(live.map((d) => d.tool));
   let tool = toolOf(live[0].tool);
   let form: FormHandle | null = null;
+  let shownWhy: string | null = null;
 
   const titleOf = (): string => (live.length === 1 ? widgetText(ctx, `schema.drawing.${live[0].tool}.name`, {}, tool?.name ?? live[0].tool) : widgetText(ctx, '{count} drawings', { count: live.length }));
+  // A selection the user may not edit opens read-only: every value stays
+  // readable, and every control that would change one is greyed with why.
+  const lockedOut = (): string | null => editableIds(draw, ids).length === 0 ? widgetText(ctx, 'read-only') : null;
   const values = (): Record<string, unknown> => resolvedDrawingValues(live[0], schema, tool, ctx.chartTheme.lineColor);
 
   /** Write `{ path: value }` to every selected drawing as one undo entry. */
@@ -148,17 +152,19 @@ export function mountDrawingProperties(ctx: WidgetContext, anchor?: HTMLElement,
     const locked = primary.locked === true;
     const hidden = primary.visible === false;
     const behind = primary.zIndex < 0;
-    const add = (spec: ButtonSpec, act: string, pressed?: boolean): void => {
+    const why = lockedOut();
+    const add = (spec: ButtonSpec, act: string, pressed?: boolean, edits = false): void => {
       const b = button(doc, { ...spec, iconOnly: true });
       b.dataset.act = act;
       if (pressed !== undefined) b.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+      if (edits && why !== null) { b.disabled = true; b.title += ` (${why})`; }
       tools.appendChild(b);
     };
     const sep = (): void => { tools.appendChild(el(doc, 'span', 'oac-sep')); };
     add({ label: locked ? widgetText(ctx, 'Unlock') : widgetText(ctx, 'Lock'), icon: locked ? 'lock' : 'unlock',
-      onClick: () => { draw.updateMany(ids.map((id) => ({ id, patch: { locked: !locked } }))); } }, 'lock', locked);
+      onClick: () => { draw.updateMany(ids.map((id) => ({ id, patch: { locked: !locked } }))); } }, 'lock', locked, true);
     add({ label: hidden ? widgetText(ctx, 'Show') : widgetText(ctx, 'Hide'), icon: hidden ? 'eye-off' : 'eye',
-      onClick: () => { draw.updateMany(ids.map((id) => ({ id, patch: { visible: hidden } }))); } }, 'visible', hidden);
+      onClick: () => { draw.updateMany(ids.map((id) => ({ id, patch: { visible: hidden } }))); } }, 'visible', hidden, true);
     sep();
     // The controller reorders one drawing at a time (the list position is part
     // of the order), so a multi-selection is several calls.
@@ -170,7 +176,8 @@ export function mountDrawingProperties(ctx: WidgetContext, anchor?: HTMLElement,
       onClick: () => { for (const id of ids) draw.sendBehindSeries(id); } }, 'behind', behind);
     sep();
     add({ label: widgetText(ctx, 'Duplicate'), icon: 'duplicate', chord: 'Ctrl+D', onClick: () => { draw.duplicate(ids); } }, 'duplicate');
-    add({ label: widgetText(ctx, 'Delete'), icon: 'trash', chord: 'Del', variant: 'danger', onClick: () => { draw.removeMany(ids); } }, 'delete');
+    add({ label: widgetText(ctx, 'Delete'), icon: 'trash', chord: 'Del', variant: 'danger', onClick: () => { draw.removeMany(ids); } }, 'delete', undefined, true);
+    restore.disabled = why !== null;
   }
 
   function renderPane(): void {
@@ -182,14 +189,17 @@ export function mountDrawingProperties(ctx: WidgetContext, anchor?: HTMLElement,
       form = null;
       return;
     }
+    const why = shownWhy = lockedOut();
     form = renderForm(pane, controls, {
       values: values(), translate: ctx.translate, openOverlay: ctx.openOverlay,
       idPrefix: 'oac-props',
+      unavailable: () => why,
       onChange: (key, value) => { apply({ [key]: value }); form?.sync(values()); },
       custom: (c) => {
         if (c.custom !== 'levels') return null;
         const b = button(doc, { label: widgetText(ctx, 'Edit levels...'), onClick: (e) => { mountLevelEditor(ctx, e.currentTarget as HTMLElement, { ids }); } });
         b.dataset.act = 'edit-levels';
+        b.disabled = why !== null;
         return b;
       },
     });
@@ -200,15 +210,13 @@ export function mountDrawingProperties(ctx: WidgetContext, anchor?: HTMLElement,
       if (row !== null) {
         const b = button(doc, { label: widgetText(ctx, 'Edit on chart'), icon: 'text', onClick: () => { mountTextEditor(ctx, undefined, { id: live[0].id }); } });
         b.dataset.act = 'edit-text';
+        b.disabled = why !== null;
         row.appendChild(b);
       }
     }
   }
 
-  renderTools();
-  renderPane();
-
-  frame.lead.appendChild(button(doc, {
+  const restore = frame.lead.appendChild(button(doc, {
     label: widgetText(ctx, 'Restore defaults'),
     onClick: () => {
       // The tool's own defaults where it has them; a field it leaves unset is
@@ -227,6 +235,8 @@ export function mountDrawingProperties(ctx: WidgetContext, anchor?: HTMLElement,
     },
   }));
   frame.actions.appendChild(button(doc, { label: widgetText(ctx, 'Done'), variant: 'primary', onClick: () => handle.close() }));
+  renderTools();
+  renderPane();
 
   /** Follow the selection: the same one refreshes in place, a new one rebuilds, none closes. */
   function refresh(): void {
@@ -236,7 +246,10 @@ export function mountDrawingProperties(ctx: WidgetContext, anchor?: HTMLElement,
     if (sameIds(next, ids)) {
       live = drawingsOf();
       if (live.length === 0) { handle.close(); return; }
-      form?.sync(values());
+      // A host that makes the selection read-only, or lifts that, mid-dialog
+      // gets the form redrawn to match rather than controls that lie.
+      if (lockedOut() !== shownWhy) renderPane();
+      else form?.sync(values());
       renderTools();
       return;
     }

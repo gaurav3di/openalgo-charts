@@ -188,8 +188,10 @@ controller when replacing that drawing controller or rebuilding its chart.
 `AlertDrawingLevel` entries (id and title). `draw.alertInfo(id)` reports which
 levels the tool supports. `draw.valueAt(id, time, level?)` uses its actual pane
 projection and logical time axis. Lines respect finite spans and extensions,
-logarithmic projections and collapsed session gaps. A missing/out-of-span value
-is unavailable, never zero.
+logarithmic projections and collapsed session gaps. A drawing on a pane collapsed
+to its header strip, where the chart maps no price, is read through that pane's
+own scale, so its alert keeps firing. A missing/out-of-span value is unavailable,
+never zero.
 
 Channel bands support enteringRange/leavingRange. For a crossing or greater/less
 condition, explicitly select base, boundary or middle. Fib tools require an

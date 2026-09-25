@@ -87,7 +87,8 @@ describe('open-interest studies', () => {
     );
     const oldSeries = study.series(key);
     study.setSettings({ [`${key}:type`]: 'area', [`${key}:width`]: 3 });
-    expect(study.series(key)).not.toBe(oldSeries);
+    expect(study.series(key)).toBe(oldSeries);
+    expect(chart.seriesType(study.series(key)!)).toBe('area');
     expect(study.series(key)!.getData().map(b => b.close)).toEqual(id === 'open-interest' ? [100, 120] : [NaN, 20]);
     expect(chart.getState().indicators?.[0].settings[`${key}:width`]).toBe(3);
   });

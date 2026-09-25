@@ -55,7 +55,9 @@ export class TimeScale {
   }
 
   public setBarSpacing(value: number): void {
+    const before = this.visibleRange();
     this._barSpacing = this.constrainBarSpacing(value);
+    this._notifyChange(before);
   }
 
   /** Bound a pending zoom target without changing the displayed viewport. */
@@ -68,7 +70,9 @@ export class TimeScale {
   }
 
   public setRightOffset(value: number): void {
+    const before = this.visibleRange();
     this._rightOffset = value;
+    this._notifyChange(before);
   }
 
   /** Logical index of the latest bar; the right edge anchors to baseIndex+rightOffset. */
@@ -112,23 +116,30 @@ export class TimeScale {
     if (this._width <= 0) return;
     const span = range.to - range.from;
     if (!(span > 0)) return;
-    this.setBarSpacing(this._width / span);
+    const before = this.visibleRange();
+    this._barSpacing = this.constrainBarSpacing(this._width / span);
     this._rightOffset = range.to - this._baseIndex;
-    this._onChange?.();
+    // An explicit replacement also cancels host navigation that has not settled yet.
+    this._onChange?.(before);
   }
 
-  /** Repaint hook injected by the host chart, fired after `setVisibleLogicalRange`. */
-  public setChangeHandler(fn: (() => void) | null): void {
+  /** Fired after changed navigation or any valid explicit range request; layout/data setters stay silent. */
+  public setChangeHandler(fn: ((before: LogicalRange) => void) | null): void {
     this._onChange = fn;
   }
-  private _onChange: (() => void) | null = null;
+  private _onChange: ((before: LogicalRange) => void) | null = null;
+
+  private _notifyChange(before: LogicalRange): void {
+    const after = this.visibleRange();
+    if (before.from !== after.from || before.to !== after.to) this._onChange?.(before);
+  }
 
   /**
    * Pan by a pixel delta. Positive `dx` drags chart content to the right
    * (revealing older bars), matching a natural left-button drag.
    */
   public scrollByPixels(dx: number): void {
-    this._rightOffset -= dx / this._barSpacing;
+    this.setRightOffset(this._rightOffset - dx / this._barSpacing);
   }
 
   /**
@@ -137,22 +148,26 @@ export class TimeScale {
    * `factor` > 1 zooms in (wider bars).
    */
   public zoomAtX(focusX: number, factor: number): void {
+    const range = this.visibleRange();
     const focusIndex = this.xToIndex(focusX);
     const before = this._barSpacing;
-    this.setBarSpacing(before * factor);
+    this._barSpacing = this.constrainBarSpacing(before * factor);
     if (this._barSpacing === before) return; // clamped — nothing moved
     // Re-anchor: indexToX(focusIndex) must still equal focusX.
     // width - (rightEdge - focusIndex) * bs = focusX
     const rightEdge = focusIndex + (this._width - focusX) / this._barSpacing;
     this._rightOffset = rightEdge - this._baseIndex;
+    this._notifyChange(range);
   }
 
   /** Choose bar spacing so `barCount` bars fit the width, anchored at the right edge. */
   public fitContent(barCount: number): void {
     if (barCount <= 0 || this._width <= 0) return;
+    const before = this.visibleRange();
     this._baseIndex = barCount - 1;
     this._rightOffset = DEFAULT_TIME_SCALE_OPTIONS.rightOffset;
     const usable = this._width / (barCount + this._rightOffset);
-    this.setBarSpacing(usable);
+    this._barSpacing = this.constrainBarSpacing(usable);
+    this._notifyChange(before);
   }
 }

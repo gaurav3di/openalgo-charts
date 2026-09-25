@@ -16,7 +16,7 @@
  * written: the dialog hands in the values and gets `onChange(key, value)` back
  * with the value already in the type the schema declared.
  */
-import { INDICATOR_SOURCES, registeredIntervals } from 'openalgo-charts';
+import { INDICATOR_SOURCES, registeredIntervals, parseSessionSpec } from 'openalgo-charts';
 import type { ChartSettingsInput } from 'openalgo-charts';
 import { chromeIconSvg } from 'openalgo-charts/draw';
 import type { SettingsField } from 'openalgo-charts/draw';
@@ -27,7 +27,8 @@ import { createColorPicker, type ColorPickerOptions } from './color-picker';
 // ── the unified control model ─────────────────────────────────────────────
 
 export type FormKind =
-  | 'boolean' | 'number' | 'color' | 'text' | 'multiline' | 'select' | 'opacity' | 'colorPair' | 'custom';
+  | 'boolean' | 'number' | 'color' | 'text' | 'multiline' | 'select' | 'opacity' | 'colorPair' | 'custom'
+  | 'symbol' | 'session' | 'price' | 'timestamp';
 
 /** One row of a generated form, whatever schema it came from. */
 export interface FormControl {
@@ -88,6 +89,10 @@ export interface FormHandle {
   sync(values: FormValues): void;
   /** Every control's current value, keyed the way `onChange` reports it. */
   values(): Record<string, unknown>;
+  /** Validate typed drafts without replacing them or committing settings. */
+  validate(): boolean;
+  /** Attach a rejected native write to its field; null clears that error. */
+  setError(key: string, message: string | null): void;
   /** Focus the first enabled control. */
   focusFirst(): boolean;
   /** Dispose nested controls and any open overlays before removing the form. */
@@ -140,6 +145,11 @@ export function controlsFromInputs(inputs: readonly ChartSettingsInput[], transl
           min: input.min, max: input.max, step: input.step,
         });
         break;
+      case 'price':
+      case 'timestamp':
+        out.push({ key: input.key, kind: input.type, label: input.label, group: input.group,
+          min: input.min, max: input.max, step: input.step });
+        break;
       case 'select':
         out.push({ key: input.key, kind: 'select', label: input.label, group: input.group, options: input.options });
         break;
@@ -162,6 +172,9 @@ export function controlsFromInputs(inputs: readonly ChartSettingsInput[], transl
       case 'boolean':
       case 'color':
       case 'text':
+      case 'symbol':
+      case 'session':
+      case 'multiline':
         out.push({ key: input.key, kind: input.type, label: input.label, group: input.group });
         break;
     }
@@ -676,8 +689,34 @@ export function renderForm(host: HTMLElement, controls: readonly FormControl[], 
   // The last value each control reported, so a `change` after a live `input`
   // of the same value is not a second edit.
   const last = new Map<string, unknown>();
+  const errors = new Map<string, string>();
+  const rows = new Map<string, { control: HTMLElement; error: HTMLElement }>();
+  const setError = (key: string, message: string | null): void => {
+    const row = rows.get(key);
+    if (message === null) errors.delete(key);
+    else { errors.set(key, message); last.delete(key); }
+    if (!row) return;
+    row.control.setAttribute('aria-invalid', String(message !== null));
+    row.error.textContent = message ?? '';
+    row.error.hidden = message === null;
+  };
+  const validate = (key: string, value: unknown): string | null => {
+    const spec = controls.find(control => control.key === key);
+    if (spec?.kind === 'price' || spec?.kind === 'timestamp') {
+      if (typeof value !== 'number' || !Number.isFinite(value)) return widgetText(opts, 'Enter a finite number');
+      if (spec.min !== undefined && value < spec.min) return widgetText(opts, 'Minimum: {value}', { value: spec.min });
+      if (spec.max !== undefined && value > spec.max) return widgetText(opts, 'Maximum: {value}', { value: spec.max });
+    }
+    if (spec?.kind === 'session' && (typeof value !== 'string' || parseSessionSpec(value) === null)) {
+      return widgetText(opts, 'Use HHMM-HHMM with optional :days (1 to 7)');
+    }
+    return null;
+  };
   const emit = (key: string, value: unknown): void => {
     if (destroyed) return;
+    const error = validate(key, value);
+    setError(key, error);
+    if (error !== null) return;
     if (last.has(key) && Object.is(last.get(key), value)) return;
     last.set(key, value);
     opts.onChange(key, value);
@@ -695,6 +734,22 @@ export function renderForm(host: HTMLElement, controls: readonly FormControl[], 
     let ctl: HTMLElement;
     let b: Bound;
     switch (kind) {
+      case 'price':
+      case 'timestamp': {
+        const input = el(doc, 'input', 'oac-input--num');
+        // Text retains incomplete exponents and out-of-range drafts. String
+        // round-trips the number without the legacy number control's rounding.
+        input.type = 'text'; input.inputMode = 'decimal';
+        if (spec.min !== undefined) input.min = String(spec.min);
+        if (spec.max !== undefined) input.max = String(spec.max);
+        if (spec.step !== undefined) input.step = String(spec.step);
+        const show = (v: unknown): void => { input.value = typeof v === 'number' ? String(v) : ''; };
+        const read = (): number | undefined => input.value.trim() === '' ? undefined : Number(input.value);
+        show(value);
+        input.addEventListener('change', () => emit(key, read()));
+        ctl = input; b = { key, control: input, read, write: show };
+        break;
+      }
       case 'boolean': {
         const input = el(doc, 'input');
         input.type = 'checkbox';
@@ -829,7 +884,8 @@ export function renderForm(host: HTMLElement, controls: readonly FormControl[], 
 
     const row = el(doc, 'div', 'oac-row');
     row.dataset.key = c.key;
-    const label = el(doc, 'label', 'oac-row__label', c.label);
+    const label = el(doc, 'label', 'oac-row__label', c.kind === 'timestamp'
+      ? widgetText(opts, '{label} (UTC seconds)', { label: c.label }) : c.label);
     // The mark rides inside the label so it lands the same way in all three row
     // shapes below, and so a pointer-less device can still reach it by tab.
     if (c.tooltip !== undefined && c.tooltip !== '') {
@@ -897,6 +953,11 @@ export function renderForm(host: HTMLElement, controls: readonly FormControl[], 
     f.b.control.id = idFor(c.key);
     label.htmlFor = (f.b.focus ?? f.b.control).id;
     bound.push(f.b);
+    const error = el(doc, 'div', 'oac-input-error');
+    error.id = `${idFor(c.key)}-error`; error.hidden = true;
+    error.setAttribute('role', 'status');
+    f.b.control.setAttribute('aria-describedby', error.id);
+    rows.set(c.key, { control: f.b.control, error });
     if (c.kind === 'boolean') {
       f.ctl.classList.add('oac-row__sw');
       row.appendChild(f.ctl);
@@ -912,6 +973,7 @@ export function renderForm(host: HTMLElement, controls: readonly FormControl[], 
       ctl.appendChild(f.ctl);
       row.appendChild(ctl);
     }
+    row.appendChild(error);
     host.appendChild(row);
   }
 
@@ -923,12 +985,20 @@ export function renderForm(host: HTMLElement, controls: readonly FormControl[], 
   };
   activeForms.set(host, destroy);
   return {
-    el: host, destroy,
+    el: host, destroy, setError,
+    validate: () => {
+      for (const b of bound) {
+        const error = validate(b.key, b.read());
+        if (error !== null || !errors.has(b.key)) setError(b.key, error);
+      }
+      return errors.size === 0;
+    },
     sync: (values) => {
       if (destroyed) return;
       const active = doc.activeElement;
       for (const b of bound) {
         if (b.control === active) continue;
+        if (errors.has(b.key)) continue;
         if (!(b.key in values)) continue;
         b.write(values[b.key]);
       }

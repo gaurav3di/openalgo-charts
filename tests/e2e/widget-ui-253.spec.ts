@@ -27,6 +27,64 @@ async function chartInk(page: Page): Promise<number> {
   });
 }
 
+test('changing chart type keeps the primary series, manual scale and marker drawing', async ({ page }, info) => {
+  const errors = await mount(page);
+  const result = await page.evaluate(() => {
+    const { widget, bars } = window.__ui253;
+    const source = widget.series;
+    const markers = source.createMarkers();
+    markers.setMarkers([{ time: bars[150].time, position: 'aboveBar', shape: 'circle', size: 'big', color: '#ffaa00', text: 'Retained' }]);
+    source.applyOptions({ color: '#cc22cc', lineWidth: 4 });
+    widget.chart.movePriceAxis(0, 'right', 'left');
+    const scale = source.priceScale();
+    const range = { min: Math.min(...bars.map(bar => bar.low)) - 10, max: Math.max(...bars.map(bar => bar.high)) + 10 };
+    scale.setAutoScale(false);
+    scale.setPriceRange(range);
+    widget.setChartType('line');
+    return {
+      retained: widget.series === source && widget.series.priceScale() === scale,
+      manual: !scale.autoScale,
+      range: scale.priceRange(), expectedRange: range,
+      style: widget.chart.primarySeriesInfo()?.style,
+      saved: widget.getState().chart.series?.[0],
+    };
+  });
+  expect(result.retained).toBe(true);
+  expect(result.manual).toBe(true);
+  expect(result.range).toEqual(result.expectedRange);
+  expect(result.style).toMatchObject({ color: '#cc22cc', lineWidth: 4 });
+  expect(result.saved).toMatchObject({ type: 'line', priceScaleId: 'left' });
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await page.screenshot({ path: info.outputPath('retained-type-state.png') });
+  const ink = await page.locator('.oac-chart canvas').evaluateAll(elements => {
+    let orange = 0, purple = 0;
+    for (const element of elements) {
+      const canvas = element as HTMLCanvasElement;
+      const context = canvas.getContext('2d');
+      if (!context) continue;
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      for (let i = 0; i < pixels.length; i += 4) {
+        if (pixels[i] === 255 && pixels[i + 1] === 170 && pixels[i + 2] === 0) orange++;
+        if (pixels[i] === 204 && pixels[i + 1] === 34 && pixels[i + 2] === 204) purple++;
+      }
+    }
+    return { orange, purple };
+  });
+  expect(ink.orange).toBeGreaterThan(20);
+  expect(ink.purple).toBeGreaterThan(300);
+  await page.evaluate(() => {
+    const { widget } = window.__ui253;
+    widget.chart.setSeriesType(widget.series, 'area');
+  });
+  await expect(page.locator('.oac-topbar__type')).toContainText('Area');
+  expect(await page.evaluate(() => window.__ui253.widget.getState().chartType)).toBe('area');
+  await page.evaluate(() => window.__ui253.widget.setChartType('candlestick'));
+  await expect(page.locator('.oac-topbar__type')).toContainText('Candles');
+  await expect.poll(() => chartInk(page)).toBeGreaterThan(500);
+  expect(await page.evaluate(() => window.__ui253.widget.chart.priceAxisState(0, 'left')?.autoFit)).toBe(false);
+  expect(errors).toEqual([]);
+});
+
 test('data dock follows candles, resizes the chart, and restores saved panel state', async ({ page }, info) => {
   const errors = await mount(page);
   const before = await page.locator('.oac-chart').boundingBox();

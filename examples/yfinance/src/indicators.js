@@ -1,8 +1,9 @@
-import { registeredIndicators, getIndicator, indicatorStyleInputs, INDICATOR_SOURCES } from '/dist/openalgo-charts.mjs';
-import { el, esc, currentTheme, chartTheme } from './ui.js';
+import { registeredIndicators, getIndicator, indicatorDefaults, indicatorStyleInputs, INDICATOR_SOURCES } from '/dist/openalgo-charts.mjs';
+import { el, esc, currentTheme, chartTheme, toast, closeOverlay } from './ui.js';
 import { autosave } from './persist.js';
 import { capturePaneTarget } from './pane-target.js';
 import { createColorPicker, applyTokens, widgetTokens } from '/dist/openalgo-charts.widget.mjs';
+import { bindTypedField, typedFieldValue, typedFieldError, validateTypedRows, mountReferenceInputControls } from './indicator-input-controls.js';
 
 let app;
 
@@ -81,6 +82,13 @@ let settingsFor = null; // the IndicatorApi handle being edited
 let settingsTarget = null;
 let disposeSettings = null;
 const formPickers = new WeakMap();
+const sourceReferences = new WeakMap();
+const formDrafts = new WeakMap();
+
+function studySource(value) {
+  return value !== null && typeof value === 'object' && value.kind === 'indicator'
+    && typeof value.instanceId === 'string' && typeof value.plotKey === 'string';
+}
 
 let settingsTab = 'inputs';
 export function openSettings(instanceId, target = capturePaneTarget(app)) {
@@ -90,7 +98,11 @@ export function openSettings(instanceId, target = capturePaneTarget(app)) {
   disposeSettings?.();
   settingsTarget = target;
   settingsFor = inst;
-  disposeSettings = target.chart.on('destroy', closeSettings);
+  const offDestroy = target.chart.on('destroy', closeSettings);
+  const offRemoved = target.chart.on('indicatorRemoved', () => {
+    if (currentSettings() && validateTypedRows(el('set-body'))) renderSettingsTab(collectInputRows(el('set-body')));
+  });
+  disposeSettings = () => { offDestroy(); offRemoved(); };
   el('set-title').textContent = getIndicator(inst.indicatorId).name + ' settings';
   renderSettingsTab();
   el('setmodal').hidden = false;
@@ -112,6 +124,7 @@ export function openSettings(instanceId, target = capturePaneTarget(app)) {
 export function renderInputRows(host, inputs, values, onChange, unavailable) {
   destroyInputRows(host);
   formPickers.set(host, []);
+  formDrafts.set(host, {});
   host.classList.add('oac-widget', 'host-form-widget');
   applyTokens(host, widgetTokens(chartTheme(), currentTheme()));
   host.innerHTML = '';
@@ -133,6 +146,7 @@ export function renderInputRows(host, inputs, values, onChange, unavailable) {
 export function destroyInputRows(host) {
   for (const picker of formPickers.get(host) || []) picker.destroy();
   formPickers.delete(host);
+  formDrafts.delete(host);
 }
 
 /**
@@ -148,7 +162,26 @@ function inputField(host, key, kind, spec, value, onChange, unavailable) {
   let field;
   if (kind === 'select' || kind === 'source') {
     field = document.createElement('select');
-    for (const o of (kind === 'source' ? INDICATOR_SOURCES : spec.options)) {
+    const options = [...(kind === 'source' ? INDICATOR_SOURCES : spec.options)];
+    const references = new Map();
+    if (kind === 'source') {
+      for (const output of spec.studyOutputs ?? []) {
+        const token = `study-output:${references.size}`;
+        references.set(token, { ...output.reference });
+        options.push({ value: token, label: output.label });
+      }
+      if (studySource(value)) {
+        let token = [...references].find(([, reference]) => reference.instanceId === value.instanceId && reference.plotKey === value.plotKey)?.[0];
+        if (token === undefined) {
+          token = `study-output:${references.size}`;
+          references.set(token, { ...value });
+          options.push({ value: token, label: `Unavailable study output: ${value.instanceId} / ${value.plotKey}` });
+        }
+        value = token;
+      }
+      sourceReferences.set(field, references);
+    }
+    for (const o of options) {
       const opt = document.createElement('option');
       opt.value = o.value; opt.textContent = o.label;
       // One option of a select can be the part with nothing behind it: the
@@ -174,8 +207,10 @@ function inputField(host, key, kind, spec, value, onChange, unavailable) {
     field = picker.input;
     field._colorPicker = picker;
   } else {
-    field = document.createElement('input');
-    field.type = kind === 'number' ? 'number' : 'text';
+    field = document.createElement(kind === 'multiline' ? 'textarea' : 'input');
+    if (kind !== 'multiline') field.type = kind === 'number' ? 'number' : 'text';
+    if (kind === 'price' || kind === 'timestamp') field.inputMode = 'decimal';
+    if (kind === 'multiline') field.rows = 4;
     if (kind === 'number') {
       if (spec.min !== undefined) field.min = spec.min;
       if (spec.max !== undefined) field.max = spec.max;
@@ -221,7 +256,7 @@ function simpleRow(host, input, values, onChange, unavailable) {
   const off = unavailable ? unavailable(input.key) : null;
   if (off) { row.classList.add('set-row--off'); row.title = off; }
   const label = document.createElement('label');
-  label.textContent = input.label;
+  label.textContent = input.type === 'timestamp' ? input.label + ' (UTC seconds)' : input.label;
   label.htmlFor = host.id + '_' + input.key;
   if (input.tooltip) label.appendChild(helpMark(input.tooltip));
   const field = inputField(host, input.key, input.type, input, values[input.key], onChange, unavailable);
@@ -234,6 +269,7 @@ function simpleRow(host, input, values, onChange, unavailable) {
     ctl.appendChild(field._colorPicker?.el || field);
     row.append(label, ctl);
   }
+  bindTypedField(field, input, row);
   return row;
 }
 
@@ -278,38 +314,71 @@ function colorPairRow(host, input, values, onChange, unavailable) {
 
 /** A field's value in the type its input declared. */
 export function fieldValue(field) {
+  const reference = sourceReferences.get(field)?.get(field.value);
+  if (reference) return { ...reference };
   const kind = field.dataset.kind;
   return kind === 'number' ? Number(field.value) : kind === 'boolean' ? field.checked
-    : kind === 'color' && field._colorPicker ? field._colorPicker.read() : field.value;
+    : kind === 'color' && field._colorPicker ? field._colorPicker.read() : typedFieldValue(field);
 }
 
 /** Every field in a generated form, as a flat patch keyed by input key. */
 export function collectInputRows(host) {
-  const patch = {};
-  for (const field of host.querySelectorAll('[data-key]')) patch[field.dataset.key] = fieldValue(field);
-  return patch;
+  return { ...formDrafts.get(host), ...Object.fromEntries(
+    [...host.querySelectorAll('[data-key]')].map(field => [field.dataset.key, fieldValue(field)]),
+  ) };
 }
 
 // Inputs = the descriptor's own `inputs`. Style = `indicatorStyleInputs()`,
 // generated per plot (colour, opacity, thickness, line style) so every
 // indicator gets the same controls without declaring them.
-export function renderSettingsTab() {
+export function renderSettingsTab(draft) {
   const inst = settingsFor;
   if (!inst) return;
   const descriptor = getIndicator(inst.indicatorId);
-  const inputs = settingsTab === 'style' ? indicatorStyleInputs(descriptor) : descriptor.inputs;
-  renderInputRows(el('set-body'), inputs, inst.settings());
+  const inputs = settingsTab === 'style' ? indicatorStyleInputs(descriptor) : descriptor.inputs.map(input => {
+    if (input.type !== 'source' || !input.allowStudyOutputs) return input;
+    const studyOutputs = settingsTarget.chart.indicators().flatMap(producer => producer.id === inst.id ? []
+      : getIndicator(producer.indicatorId).plots.filter(plot => !plot.ohlc).map(plot => ({
+        reference: { kind: 'indicator', instanceId: producer.id, plotKey: plot.key },
+        label: `${producer.name} [${producer.id}] / ${plot.title ?? plot.key}`,
+      })));
+    return { ...input, studyOutputs };
+  });
+  renderInputRows(el('set-body'), inputs, draft ?? inst.settings());
+  const target = settingsTarget, host = el('set-body');
+  const current = () => settingsFor === inst && settingsTarget === target && target.current()
+    && target.chart.indicators().includes(inst);
+  const controls = mountReferenceInputControls(app, target, inst, inputs, host, el('setmodal'), patch => {
+    if (!current()) return false;
+    formDrafts.set(host, { ...formDrafts.get(host), ...patch });
+    for (const field of host.querySelectorAll('[data-key]')) {
+      if (!Object.prototype.hasOwnProperty.call(patch, field.dataset.key)) continue;
+      field.value = String(patch[field.dataset.key]); typedFieldError(field, null);
+    }
+    return true;
+  }, current);
+  if (controls) formPickers.get(host).push(controls);
 }
 
 export function collectSettings() {
   if (!currentSettings()) return false;
-  settingsFor.setSettings(collectInputRows(el('set-body')));  // recomputes + restyles
+  if (!validateTypedRows(el('set-body'))) return false;
+  try { settingsFor.setSettings(collectInputRows(el('set-body'))); }
+  catch (error) {
+    const message = error instanceof Error ? error.message : 'The study settings could not be applied';
+    el('status').textContent = message;
+    toast('error', message);
+    for (const field of el('set-body').querySelectorAll('[data-key]')) {
+      if (message.includes(`"${field.dataset.key}"`)) typedFieldError(field, message);
+    }
+    return false;
+  }
   rememberSettings();
   return true;
 }
 
 function currentSettings() {
-  if (settingsTarget?.current() && settingsTarget.chart.indicators().some(inst => inst.id === settingsFor?.id)) return true;
+  if (settingsTarget?.current() && settingsTarget.chart.indicators().includes(settingsFor)) return true;
   closeSettings();
   el('status').textContent = 'study changed; open its settings again';
   return false;
@@ -335,12 +404,13 @@ export function applySettings() {
 }
 
 export function closeSettings() {
+  settingsFor = null;
+  settingsTarget = null;
   destroyInputRows(el('set-body'));
   disposeSettings?.();
   disposeSettings = null;
   el('setmodal').hidden = true;
-  settingsFor = null;
-  settingsTarget = null;
+  closeOverlay(el('setmodal'));
   settingsTab = 'inputs';
   for (const t of document.querySelectorAll('.set-tab')) t.classList.toggle('is-on', t.dataset.tab === 'inputs');
 }
@@ -373,8 +443,7 @@ export function initIndicators(a) {
   el('set-reset').addEventListener('click', () => {
     if (!currentSettings()) return;
     const d = getIndicator(settingsFor.indicatorId);
-    const defaults = {};
-    for (const i of d.inputs) defaults[i.key] = i.default;
+    const defaults = indicatorDefaults(d);
     settingsFor.setSettings(defaults);
     rememberSettings();
     renderIndicatorChips();

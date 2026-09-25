@@ -267,6 +267,7 @@ export function buildChart2({ keepView = true, typeChanged = false, state } = {}
   el('chart2').innerHTML = '';
   app.chart2 = createChart(el('chart2'), {
     theme: chartTheme(),
+    navigation: { defaultBarSpacing: 8 },
     priceAxisWidth: 62,
     legendIconSize: normalizeLegendIconSize(app.p2.legendIconSize),
     grid: { vertLines: el('vgrid').checked, horzLines: el('hgrid').checked },
@@ -321,7 +322,7 @@ export function buildChart2({ keepView = true, typeChanged = false, state } = {}
     if (app.focusPane === 2) syncMobileControls(tool);
   });
   app.chart2.on('draw:add', () => { el('status').textContent = 'chart 2: ' + app.draw2.drawings().length + ' drawings'; });
-  for (const event of ['draw:add', 'draw:remove', 'draw:update', 'indicatorAdded', 'indicatorRemoved', 'indicatorUpdated']) app.chart2.on(event, autosave);
+  for (const event of ['draw:add', 'draw:remove', 'draw:update', 'indicatorAdded', 'indicatorRemoved', 'indicatorUpdated', 'paneCollapsed']) app.chart2.on(event, autosave);
   // No properties widget over here (it is glued to the main chart's box),
   // but the chords apply to the selected plot, so the
   // selection has to say so on this side too.
@@ -404,7 +405,7 @@ export async function loadPane2() {
 }
 
 /**
- * A freshly loaded follower fits its own content, and does so with sync
+ * A freshly loaded follower restores its own default view, with sync
  * suspended, because a fit is not a pan. Two things went wrong without
  * this. Letting the fit broadcast threw the main chart off whatever window
  * the user had it on and replaced it with a month of the follower's
@@ -416,7 +417,7 @@ export async function loadPane2() {
  * or zoom, which is exactly what the group documents viewport sync to do.
  */
 export function placePane2View() {
-  withoutViewportSync(() => app.chart2.fitContent());
+  withoutViewportSync(() => app.chart2.resetScale());
 }
 
 /** Run `fn` with viewport mirroring off, then put it back as it was. */

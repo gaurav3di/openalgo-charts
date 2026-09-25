@@ -16,7 +16,7 @@ export type {
 export { SvgContext, SvgLinearGradient } from './render/svg-export';
 export type { SvgContextOptions } from './render/svg-export';
 export { exportChartDataCsv } from './model/chart-data-export';
-export type { ChartDataCsvOptions } from './model/chart-data-export';
+export type { ChartDataCsvOptions, ChartDataCsvRange, ChartDataColumn, ChartDataProjectionContext, ChartDataCsvFormatters } from './model/chart-data-export';
 export { Pane } from './core/pane';
 export { ChartObjects } from './model/chart-objects';
 export type {
@@ -41,6 +41,7 @@ export type { LogicalRange, TimeScaleOptions } from './scale/time-scale';
 export { niceTicks, precisionForStep } from './scale/ticks';
 // `AxisStyle` is what `resolveScaleStyle` returns, so it belongs with it.
 export type { TickMarkType, AxisStyle } from './render/axis';
+export type { PriceAxisSide, PriceAxisPlacement, PriceAxisSlot } from './model/price-axis-layout';
 
 // canvas option block (grid, crosshair, scales, margins). The resolvers are
 // values because a host building its own settings dialog previews with them.
@@ -97,26 +98,37 @@ export type {
   PlotBarColor,
   IndicatorBarsRequest,
   IndicatorBarsProvider,
+  IndicatorBarsProviderAccess,
+  IndicatorSnapshotRequest,
+  IndicatorRequestState,
+  RequestedBarsSnapshot,
   IndicatorFillSpec,
+  IndicatorTableSpec,
   IndicatorLevel,
   IndicatorLevelContext,
   IndicatorLineStyle,
   IndicatorSettings,
   IndicatorSource,
+  IndicatorStudySource,
+  IndicatorStudyOutput,
   IndicatorStore,
   IndicatorValues,
   IndicatorAttachContext,
   IndicatorCalcContext,
+  IndicatorExecutionContext,
   IndicatorAlertSpec,
+  IndicatorAlertFrequency,
   IndicatorAlertContext,
   IndicatorAlertPayload,
   IndicatorDrawing,
+  IndicatorMarker,
+  IndicatorOutputTarget,
   DrawAnchor,
 } from './model/indicator-registry';
 export type { IndicatorApi, IndicatorHost } from './model/indicator-instance';
 
 // serialisable chart state (saved layouts / templates / drawings passthrough)
-export { CHART_STATE_VERSION } from './model/chart-state';
+export { CHART_STATE_VERSION, parsePaneState } from './model/chart-state';
 export type {
   ChartState,
   PaneState,
@@ -124,6 +136,7 @@ export type {
   SeriesState,
   IndicatorState,
   RestoreReport,
+  ChartRestoreOptions,
 } from './model/chart-state';
 
 // settings dialog: a declarative schema in the same control vocabulary the
@@ -168,7 +181,7 @@ export type {
 export { CandleBuilder, DEFAULT_CANDLE_BUILDER_OPTIONS } from './feed/candle-builder';
 export type { CandleBuilderOptions, Tick, CandleUpdate, VolumeMode, LateTickPolicy } from './feed/candle-builder';
 
-export type { SeriesApi, PriceScaleId, PriceFormat } from './model/series';
+export type { SeriesApi, PriceScaleId, PriceFormat, BarConfirmationOptions, SeriesUpdateOptions, SeriesDataState } from './model/series';
 
 // primitives / plugin API
 export { bestHit } from './primitives/primitive';
@@ -359,7 +372,7 @@ export type {
 } from './input/shortcuts';
 
 export { beginPick } from './input/pick';
-export type { PickKind, PickHost } from './input/pick';
+export type { PickKind, PickHost, PickOptions, PickHandle } from './input/pick';
 
 export { AlertController } from './alerts/controller';
 export { alertSettingsSchema } from './alerts/schema';

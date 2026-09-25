@@ -138,7 +138,7 @@ describe('pane legend rows', () => {
     chart.addIndicator('ema'); // onchart → same pane
     expect(symbol.options().row).toBe(0);
     const ema = chart.indicators()[0].legend();
-    expect(ema?.options().row).toBe(1);
+    expect(ema?.options().row).toBe(2); // the persistent study count reserves one row
   });
 
   it('starts indicator legends below a host overlay when legendOffset says so', () => {
@@ -158,7 +158,7 @@ describe('pane legend rows', () => {
     const opts = chart.indicators()[0].legend()?.options();
     expect(opts?.top).toBe(40);
     expect(opts?.left).toBe(14);
-    expect(opts?.row).toBe(0); // still the first row, just lower down
+    expect(opts?.row).toBe(1); // below the count, with the same host overlay offset
   });
 
   it('offsets only the overlaid pane, leaving lower panes at the corner', () => {

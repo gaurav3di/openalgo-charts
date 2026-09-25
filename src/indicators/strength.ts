@@ -6,14 +6,10 @@
  * These are reproductions, not inspirations: overlaying one of these on the same
  * symbol upstream has to give the same numbers, including the warmup gap.
  *
- * Almost every study here is *chained smoothing*, and that is what makes the
- * warmup the hard part rather than an afterthought. The upstream `ema` re-seeds
- * from `sma(src, length)` for as long as its own previous value is `na`, so an
- * EMA stacked on a series that already starts late begins `length - 1` bars
- * after its input does, not at `length - 1`. `smaSeededEma` seeds
- * unconditionally from index 0, where a single leading NaN poisons the recursion
- * for the whole series, so it is never fed a gapped series directly:
- * `emaOfGapped` below is the only entry point used for chaining.
+ * Almost every study here chains smoothers, so each stage's warmup must stay
+ * aligned with the preceding stage. `emaOfGapped` slices off the leading gap
+ * and pads the result back into place, while `smaSeededEma` handles finite-window
+ * seeding and subsequent input gaps.
  *
  * The base bundle's own `ema` is deliberately absent from this file. It seeds
  * from bar 0 rather than from an SMA, so it disagrees with the upstream
@@ -36,13 +32,9 @@ const text = (s: Readonly<Record<string, unknown>>, k: string, d: string): strin
   typeof s[k] === 'string' ? (s[k] as string) : d;
 
 /**
- * The upstream `ema` over a series that itself opens with a warmup gap.
- *
- * The leading NaN run is sliced off, `smaSeededEma` runs on the live tail, and
- * the answer is re-padded into place. That reproduces the upstream re-seeding
- * rule and, more importantly, keeps a NaN out of the recursion: `prev * (1 - k)`
- * never recovers once `prev` is NaN, so a chained study would otherwise be blank
- * end to end instead of merely starting late.
+ * Align a chained SMA-seeded EMA with its input's leading warmup gap.
+ * Smoothing starts at the first finite value and the result is padded back to
+ * the original bar positions. Seeding and later gaps follow `smaSeededEma`.
  */
 function emaOfGapped(values: readonly number[], period: number): number[] {
   const n = values.length;

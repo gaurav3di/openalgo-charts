@@ -2,6 +2,32 @@ import { test, expect } from '@playwright/test';
 
 test.use({ hasTouch: true });
 
+test('candle density survives desktop and mobile resizing, reset and data changes', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  for (const width of [1200, 390]) {
+    await page.setViewportSize({ width, height: 740 });
+    await page.goto('/tests/e2e/widget-mobile-fixture.html');
+    await page.waitForFunction(() => (window as any).__loaded > 0);
+    const spacing = () => page.evaluate(() => (window as any).__widget.chart.timeScale.barSpacing);
+    await expect.poll(spacing).toBe(8);
+    await page.evaluate(() => {
+      const widget = (window as any).__widget;
+      widget.chart.setVisibleLogicalRange({ from: 0, to: 30 });
+      widget.chart.resetScale();
+    });
+    await expect.poll(spacing).toBe(8);
+    await page.evaluate(() => (window as any).__widget.setSymbol('NEXT'));
+    await expect.poll(spacing).toBe(8);
+    await page.evaluate(() => (window as any).__widget.setInterval('15m'));
+    await expect.poll(spacing).toBe(8);
+    await info.attach(`candle density at width ${width}`, {
+      body: await page.screenshot({ path: info.outputPath(`density-${width}.png`) }), contentType: 'image/png',
+    });
+  }
+  expect(errors).toEqual([]);
+});
+
 test('touch drawing controls work in portrait and remain available in landscape', async ({ page }, info) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await page.setViewportSize({ width: 390, height: 740 });

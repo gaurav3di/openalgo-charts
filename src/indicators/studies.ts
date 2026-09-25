@@ -17,7 +17,8 @@ import {
 import type {
   Bar, IndicatorDescriptor, IndicatorInput, IndicatorPlot, IndicatorSource,
 } from 'openalgo-charts';
-import { sma, nulls, barsSince, rollingSum } from './calc';
+import { sma, nulls, barsSince } from './calc';
+import { windowMean, windowSum } from './window-mean';
 
 const num = (s: Readonly<Record<string, unknown>>, k: string, d: number): number => {
   const v = s[k];
@@ -261,12 +262,14 @@ function pivotColumns(
         prevHigh = curHigh;
         prevLow = curLow;
         prevClose = curClose;
-        curHigh = NaN;
-        curLow = NaN;
       }
       const bar = bars[i];
-      curHigh = Number.isFinite(curHigh) ? Math.max(curHigh, bar.high) : bar.high;
-      curLow = Number.isFinite(curLow) ? Math.min(curLow, bar.low) : bar.low;
+      const high = Number.isFinite(bar.high) ? bar.high : NaN;
+      const low = Number.isFinite(bar.low) ? bar.low : NaN;
+      // An unknown extreme invalidates this period; only a boundary can seed again.
+      const starts = i === 0 || opensFrame[i];
+      curHigh = starts ? high : Math.max(curHigh, high);
+      curLow = starts ? low : Math.min(curLow, low);
       curClose = bar.close;
       if (!Number.isFinite(prevHigh) || !Number.isFinite(prevLow) || !Number.isFinite(prevClose)) continue;
 
@@ -400,9 +403,10 @@ function moneyFlowIndex(
     if (typical[i] > typical[i - 1]) positive[i] = flow;
     else if (typical[i] < typical[i - 1]) negative[i] = flow;
   }
-  const up = rollingSum(positive, period);
-  const down = rollingSum(negative, period);
+  const up = windowSum(positive, period);
+  const down = windowSum(negative, period);
   for (let i = period; i < n; i++) {
+    if (!Number.isFinite(up[i]) || !Number.isFinite(down[i])) continue;
     // A window with no down-flow has nothing to divide by, so the index pins at
     // 100. That also covers a feed with no volume at all, where both sides are
     // zero and the ratio is undefined rather than merely extreme.
@@ -498,7 +502,7 @@ export const ALPHATREND: IndicatorDescriptor = {
     const closes = bars.map((b) => b.close);
     // A plain average of true range, not Wilder's: the published formula uses
     // the simple mean, and the two diverge by enough to move the band visibly.
-    const band = sma(trueRange(highs, lows, closes), period);
+    const band = windowMean(trueRange(highs, lows, closes), period);
     const gauge = noVolume
       ? rsi(sourceValues(bars, src(s)), period)
       : moneyFlowIndex(bars.map((b) => (b.high + b.low + b.close) / 3), bars.map((b) => b.volume ?? 0), period);

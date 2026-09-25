@@ -2,6 +2,225 @@
 
 All notable changes to OpenAlgo Charts.
 
+## 2.5.4
+
+2026-09-25
+
+### Added
+
+- Go to a date or an explicit range. `widget.goTo({ from, to? })` loads the older
+  history the request needs through the widget's feed, then places it after that
+  load, so later live bars and refreshes keep the view. Daily and longer bars are
+  matched by calendar day in the chart timezone, weekend and overnight dates move
+  to the next session, and a range with no bars is reported without moving the
+  view. Results distinguish exhausted history, empty pages, retention limits,
+  replay and unsupported intervals; a newer request, a context change or
+  destruction cancels one in flight. The DOM-free `DateNavigator`, the
+  `openDateNavigation` panel and `DATE_NAVIGATION_CSS` are exported for custom
+  hosts. The widget toolbar and mobile More sheet open the panel (greyed with the
+  reason on tick and volume intervals, and with date fields alone on daily and
+  longer ones); closing it while it loads cancels the request, and so does a pan
+  or zoom while older history loads (the widget's own move that holds the view
+  through a refresh does not count). The panel closes when the interval or the
+  chart timezone changes under it. Daily and weekly bars end on the calendar, so
+  a day of 23 or 25 hours keeps its own bar, and a date names the bar the axis
+  labels with it, including a UTC-midnight daily bar west of UTC. The reference
+  host offers the panel by loading a longer period, reopens it on the rebuilt
+  chart to report the outcome there, and drops the request on a pan or zoom
+  while that period loads.
+- `DataLoadingController.loadMore(until?)` widens a date feed's window to reach
+  `until` in one request instead of one request per default window. The window
+  stops at `maxBars` bars of a fixed interval, and a `getBarsPage` feed keeps its
+  ordinary window.
+- A lower pane collapses to a header strip and opens again at exactly the height
+  it had, through `chart.setPaneCollapsed(index, collapsed)`,
+  `chart.paneCollapsed(index)`, a collapse button on the pane's first study row
+  (open or folded, whichever study that is) and the `paneCollapsed` event. A
+  collapsed pane keeps its data, studies, drawings, scales and weight, and draws
+  and hit-tests only one legend row, its first study row, which leads the strip
+  above any row the host placed there, so no drawing, price alert or pick lands on
+  it; `priceToCoordinate` and `coordinateToPrice` return `null` for it, while
+  alerts on its studies and drawings keep firing. Pane 0 stays open, the time axis
+  stays at the foot of the chart under a collapsed bottom pane, maximize shows a
+  collapsed pane whole, and `collapsed` is saved in pane state and workspace
+  documents. A restore that lists panes or rebuilds studies opens every pane its
+  layout does not fold, so a study never lands in a stale strip. The widget and
+  the reference host, including its split chart, offer the control in their
+  right-click menus. This is separate from collapsing study legend rows; with both
+  on, a strip keeps its first study row and the control that opens it.
+- Study drawings and markers can name where they go. `overlay: true` sends a
+  shape to the price pane, measured on the scale that pane quotes prices on
+  (the candles' own, on whichever axis they sit), or anchors a marker to the
+  candles, even from a study in its own pane; neither holds an axis, so the
+  price axis stays free to move. `plot: key` draws a shape on that plot's pane
+  and scale, or anchors a marker to that plot's series, which falls back to
+  the candle where the plot has no value exactly when that plot is on the
+  price pane and the candles' scale, whichever plot it is. Each target is its
+  own layer that follows scale reassignment and study moves, hides with the
+  study, reports hits where it is drawn, and is released when no longer
+  returned or when the study or its pane goes. Marks sent to the series the
+  study's own marks already use join that layer, so marks at one bar stack,
+  except marks naming an overlay first plot of a study in its own pane. A
+  study's layers stack in a fixed order, and a targeted layer made on a later
+  pass takes its study's place among the targeted layers on its pane, moving
+  no other layer and recomputing or recolouring no study. An invalid target or
+  style throws before any layer of that kind changes; the rest of that pass is
+  not rolled back, and its bar colours are not published. Outputs that name no
+  target render and stack exactly as before, even beside a study that routes
+  on the same pass. `IndicatorOutputTarget` and `IndicatorMarker` are
+  exported, and `IndicatorDrawings` takes an optional callback that picks the
+  price scale from each frame's context.
+- Drawings accept an independent `policy`: `selectable`, `editable`, `persistent`
+  and `listed`, each defaulting to true. A read-only drawing still selects and
+  copies, but no drag, handle, key, menu, dialog, rail, mobile, objects or grouping
+  action changes, regroups or deletes it, and undo never touches it; the owning host
+  passes `{ force: true }` to `update`, `updateMany`, `remove`, `removeMany`,
+  `clear`, `createGroup`, `renameGroup` or `removeGroup`. Placing a restricted
+  drawing, a patch that carries `policy` and every forced call are the host's acts
+  and record no undo step, and every recorded step takes them too, so undoing the
+  user's own steps never reverses a forced move, delete, regroup or rename. History
+  never restores an older policy, never regroups a read-only drawing or renames or
+  dissolves its group, and drops a step a new restriction or a forced call leaves with
+  nothing to do, so `canUndo` and `canRedo` stay accurate. `createGroup` never reuses a
+  group id an undo or redo step still holds. A forced patch to a read-only drawing that
+  carries neither `policy` nor `zIndex` costs no pass over the history, so a host can
+  trail a level on every tick; any other forced call, and any patch that carries
+  `policy`, rewrites every recorded step. An unselectable drawing never joins the
+  selection and a click passes through it. A transient drawing is
+  left out of `toJSON`, the chart state and saved layouts. An unlisted drawing is
+  left out of `ChartObjects`, every objects panel, every group-wide action there and
+  the widget's alert source picker. Copies carry no policy, and `locked` behaves as
+  before. `ChartObjectDrawingSource` gains an
+  optional `removeMany`. The yfinance host adds session price marks that use all
+  three host policies and return after every rebuild, strips policies from imported
+  layout files, and keeps its toolbar's Del, Clear, Undo and Redo to what they would do.
+- The widget tier adds `createChartGrid`: one widget per cell in `1x1`, `1x2`,
+  `1x3`, `2x1`, `3x1` or `2x2` presets, with draggable and keyboard splitters, one
+  active chart that owns the keyboard, crosshair, viewport, symbol, interval and
+  appearance links without echo, a compact tabbed view on narrow screens, and
+  persistence. It writes and applies the portable workspace payload, including
+  saved spans and weights; a failed apply destroys the half-built charts, cancels
+  their requests and leaves the old ones untouched. A linked symbol includes its
+  exchange, charts shown again after the compact view take the linked window,
+  discrete changes are saved before the task ends, and a stored desk that fails
+  to restore is kept and reported through `restored()` and a toast instead of
+  being overwritten. After a linked pan or zoom a resize keeps each chart on
+  the window it showed, so charts following new bars keep following them and
+  stay in step; the linked window moves with the navigated chart's new bars and
+  is dropped when viewport linking is switched on again. `feed` may be a
+  function that builds each chart's feed from its pane id and saved
+  `historyPeriod`, which the grid keeps, copies to charts a preset adds and
+  writes back. `WidgetOptions.keyboardRoute` lets any multi-widget host
+  decide which widget answers a key, including through a shared
+  `ShortcutManager`, and keeps a `global` shortcut scope. The yfinance reference
+  host gains a grid view that loads each layout's saved history period; its
+  main page hands over layouts it cannot draw after checking the grid view can
+  open them, and opens the one or two chart layouts the grid view exports.
+- CSV export supports explicit study instances, inclusive UTC ranges and
+  display-aligned plot values with effective runtime offsets. Candle plots expand
+  into OHLC fields; projected times are identified without exposing future replay
+  observations. Optional formatting preserves raw time identity and protects
+  spreadsheet text. Both hosts provide guarded CSV selection dialogs.
+- Series styles can be read as frozen snapshots, including renderer defaults
+  and current plot offsets, through `chart.seriesStyle(series)`.
+- User panning and zooming can be enabled independently at runtime. The policy
+  covers plot and axis gestures, wheel, touch, keys, navigation buttons and user
+  reset/fit actions, and cancels active motion. Both hosts expose and persist the
+  settings. Programmatic view changes, drawing edits and chart picks remain usable.
+- Study labels, box captions and marker text support independent size, font,
+  emphasis and multiline alignment. Marker text can use its own color. Omitted
+  styles preserve existing rendering; styled annotations stay inside the plot.
+- Study polylines support smooth interpolation through their time and price
+  anchors. Curves follow the selected scale, preserve open or closed paths and
+  stay clipped to the plot in canvas and SVG output.
+- Table cells can show plain-text hover details, including merged cells.
+  Measured cell targets keep existing table click IDs, and updates, removal and
+  resizing discard stale targets. Exported SVG omits transient hover details.
+- Native study inputs now support symbols with paired exchanges, session
+  strings, multiline notes, prices and absolute UTC timestamps. Both hosts
+  validate drafts, retain fractional timestamps and support chart picking in
+  the study's actual pane and scale. Dialog cancellation restores prior values;
+  context changes, pane changes and destruction cancel stale captures.
+- Primary-only auto-fit follows the actual primary series across panes and scales,
+  keeping distant overlays from compressing price candles when enabled. The
+  setting preserves manual ranges and ratio locks, and is available in both hosts.
+- Study legends can collapse to a persistent count while plots, calculations and
+  alerts continue. Touch can expand the count without a prior hover; Readout
+  settings provide keyboard access. Both preferences persist independently for
+  each chart in saved layouts and portable workspaces.
+
+### Fixed
+
+- The move and maximize buttons of a lower pane follow its first study row, as
+  the collapse button does. Closing the first study on a pane, or adding one below
+  a row the host placed there, used to leave the new first study row without them.
+- Pane dividers no longer rewrite the weights of panes hidden behind a maximized
+  pane, and removing a pane above the time navigator no longer attaches the
+  navigator twice.
+- Closing a widget dialog or menu returns focus to the control that opened it
+  on WebKit, which covers Safari and every iOS browser. WebKit does not focus a
+  button when it is tapped, so after Escape focus previously went nowhere,
+  stranding keyboard and screen reader users. A control that really held focus
+  when the overlay opened still receives it back.
+- Hover navigation buttons finish fading when the pointer stops moving, so an
+  idle chart does not leave them too faint to click. Native image capture pauses
+  the fade, and detachment or destruction stops its frame requests.
+- Navigation and annotation examples keep button focus from scrolling the page
+  during a click after chart interaction, while retaining keyboard activation.
+- SVG export preserves very large finite coordinates when decimal rounding
+  would otherwise overflow. Ordinary coordinate formatting is unchanged.
+
+### Calculations
+
+- Default scalar SMA and rolling sums use fresh chronological windows. Expired
+  gaps and overflow no longer poison later sums, and rounded contributions from
+  old bars cannot create false crossover signals. This requires work proportional
+  to bars times period; explicit missing-value and varying-length SMA policies
+  retain their separate compensated arithmetic.
+- Default scalar weighted averages, population deviations and absolute deviations
+  also accumulate oldest first and omit nonfinite results. This aligns their
+  rounding and composed band calculations with the companion engines.
+- Default scalar SMA-seeded exponential and Wilder averages recover from missing
+  or overflowing seed windows. After seeding, an absent input leaves a plot gap
+  while preserving the running state; a nonfinite running update stays unavailable.
+  Public first-value EMA and explicit missing-value policies keep their behavior.
+- Directional movement omits unavailable changes instead of counting them as
+  zero. Its averages retain their state across gaps, and strength calculation
+  waits for current directional readings rather than advancing from stale values.
+  Zero smoothed range produces a gap instead of repeating an undefined ratio.
+- CPR keeps a period unavailable if any high or low is nonfinite. It recovers
+  after the next complete period, preserving the existing session and calendar
+  boundaries and final-close convention.
+- Money Flow Index omits overflowing price flows and window totals, then
+  recovers after those observations expire. Chronological sums align finite
+  rounding with the companion engines; missing volume still defaults to zero.
+- WaveTrend uses fresh chronological signal windows, avoiding rounding drift
+  that could create a false crossing. AlphaTrend windows recover when extreme
+  observations expire. These windows require work proportional to the selected
+  period rather than a constant-time rolling update.
+- Balance of Power omits nonfinite ratios. Seasonality omits nonfinite monthly
+  returns and leaves unavailable aggregate statistics blank.
+- RSI now treats missing or overflowing changes as unavailable observations
+  while retaining seeded averages. Its gain and loss legs recover independently
+  from an unavailable seed, and nonfinite running averages no longer emit false
+  zero or 100 readings. Ordinary finite results and the public signature remain
+  unchanged; built-in studies using RSI inherit the correction.
+- ADX now seeds directional movement and true range over the same first complete
+  change window. This removes an initial bias in both directional readings and
+  the strength calculation. The first available bars are unchanged.
+- HMA uses an integer half window and a rounded square-root smoothing window,
+  matching Hull Suite's Hma mode and the companion engines. Odd lengths now
+  produce different values; lengths such as 13 also require one more warmup bar.
+  Length 1 is supported and returns the selected source.
+
+Saved layouts, workspace documents and drawing files from 2.5.3 load unchanged:
+pane `collapsed`, drawing `policy` and a pane's `historyPeriod` are optional
+fields. Studies whose drawings and markers name no target render and stack as
+before. The calculation corrections change values where an input was missing,
+nonfinite or overflowing, and otherwise only in the last digits of rounding,
+except HMA at odd lengths and the early ADX readings, which now follow the
+definitions above. No runtime dependencies or package tiers were added.
+
 ## 2.5.3
 
 2026-09-23

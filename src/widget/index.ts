@@ -5,6 +5,7 @@
  * indicators, capture, settings, theme), the drawing rail, a status line, a
  * keymap and the dialogs, in one call. It is the one tier that ships DOM,
  * because a toolbar is DOM; the engine underneath still ships none.
+ * `createChartGrid` lays several widgets out as one linked workspace.
  *
  * ```ts
  * import { createWidget } from 'openalgo-charts/widget';
@@ -28,6 +29,9 @@ export type { WidgetBuiltinMessage, WidgetMessageKey, WidgetMessageValues, Widge
 
 export { createWidget, stripView, resolveTheme, loadWindow, DEFAULT_INTERVALS, DEFAULT_LOOKBACK_BARS, SAVE_DEBOUNCE_MS, STATE_KEY, WIDGET_STATE_VERSION } from './widget';
 export type { Widget, WidgetOptions, WidgetState, WidgetChartState, WidgetRestoreReport, WidgetEventName } from './widget';
+export { createChartGrid, CHART_GRID_PRESETS } from './grid';
+export type { ChartGrid, ChartGridOptions, ChartGridCell, ChartGridLayout, ChartGridPreset, ChartGridApplyReport, ChartGridEvents, ChartGridEventName } from './grid';
+export { CHART_GRID_CSS } from './grid-styles';
 export { mountObjectsPanel, createObjectsPanelContent, OBJECTS_PANEL_CSS } from './objects-panel';
 export type { ObjectsPanelOptions, ObjectsPanelContent } from './objects-panel';
 export { readDataWindow, mountDataWindow, DATA_WINDOW_CSS } from './data-window';
@@ -40,6 +44,10 @@ export { mountQuickEntry, QUICK_ENTRY_CSS } from './quick-entry';
 export type { QuickEntryOptions, QuickEntryHandle } from './quick-entry';
 export { createColorPicker, COLOR_PICKER_CSS } from './color-picker';
 export type { ColorPickerOptions, ColorPickerHandle } from './color-picker';
+export { DateNavigator } from './date-navigator';
+export type { DateNavigatorOptions, DateNavigationTarget, DateNavigationResult, DateNavigationStatus, HistoryReach } from './date-navigator';
+export { openDateNavigation, DATE_NAVIGATION_CSS } from './date-navigation-dialog';
+export type { DateNavigationDialogOptions } from './date-navigation-dialog';
 
 export {
   WidgetBus, WidgetStorage, STORAGE_PREFIX, defaultStorage,
@@ -99,6 +107,8 @@ export type {
 } from './dialogs/index';
 export { renderForm, controlsFromInputs, controlsFromFields } from './form';
 export type { FormControl, FormKind, FormOptions, FormHandle, FormTranslationOptions } from './form';
+export { mountIndicatorInputControls } from './indicator-input-controls';
+export type { IndicatorInputControlsOptions, IndicatorInputControlsHandle } from './indicator-input-controls';
 export { createAlertUi } from './alert-ui';
 export type { AlertUi, AlertUiOptions } from './alert-ui';
 export { EventDetailsPopup, EVENT_DETAILS_CSS } from './event-details';

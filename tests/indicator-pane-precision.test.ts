@@ -230,6 +230,10 @@ describe('a saved layout does not carry the defect back in', () => {
     const vix = source.addIndicator('pane-precision-vix');
     source.setPriceScaleOptions({ minMove: TICK });
     const state = source.getState();
+    for (const pane of state.panes ?? []) {
+      delete pane.priceScale.minPrecision;
+      delete pane.priceScale.fixedRange;
+    }
     const saved = state.panes?.[vix.paneIndex];
     expect(saved).toBeDefined();
     if (saved) saved.priceScale.minMove = TICK; // what the old build wrote

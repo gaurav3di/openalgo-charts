@@ -1,7 +1,7 @@
 /**
  * Horizontal price line primitive (ARCHITECTURE.md §8). The reusable base for
  * order/SL/TP/alert/indicator-level lines: a line across the plot plus a fixed
- * right-axis price tag and an optional broker-style segmented pill group on the
+ * price-axis tag and an optional broker-style segmented pill group on the
  * line — [badge][qty][label][✕] — with hover / dragging states (the chart
  * passes `hoverId`/`dragId` on the render context) and a drag ghost at the
  * pre-drag price via `setDragGhost`. Interaction semantics are unchanged from
@@ -24,7 +24,7 @@ export interface PriceLineOptions {
    * exactly as it did.
    */
   lineStyle?: CanvasLineStyle;
-  /** Right-axis tag text. Defaults to the formatted price. */
+  /** Price-axis tag text. Defaults to the formatted price. Hidden scales omit the tag. */
   label?: string;
   /** Solid colored badge segment at the start of the pill group (e.g. 'BUY', 'TP', 'SL'). */
   badge?: string;
@@ -35,7 +35,7 @@ export interface PriceLineOptions {
   /**
    * Fraction of the plot width the line spans, measured from the right (price)
    * axis. 1 = full width (default); 0.3 = only the rightmost 30%, like a
-   * partial-width order line. The right-axis tag is always drawn.
+   * partial-width order line. Visible scales also carry a price tag.
    */
   extentFromRight?: number;
   /** Draw a cancel (✕) segment at the end of the pill group; hit-tests as `${id}::close`. */
@@ -124,7 +124,9 @@ export class PriceLine implements IPrimitive {
   public draw(ctx: CanvasRenderingContext2D, rc: PrimitiveRenderContext): void {
     this._group = null;
     const y = Math.round(rc.priceScale.priceToY(this._opts.price) * rc.dpr) + 0.5;
-    if (y < 0 || y > rc.plotHeight * rc.dpr) return;
+    // The stroke's half-pixel offset must not discard a left tag at the lower edge.
+    const tagY = rc.priceAxisSide === 'left' ? y - 0.5 : y;
+    if (!Number.isFinite(y) || tagY < 0 || tagY > rc.plotHeight * rc.dpr) return;
     const dpr = rc.dpr;
     const lineWidth = this._opts.lineWidth ?? 1;
     const xEnd = Math.round(rc.plotWidth * dpr);
@@ -184,13 +186,44 @@ export class PriceLine implements IPrimitive {
     const padX = 6 * dpr;
     const r = 3 * dpr;
 
-    // right-axis price tag (kept rectangular like the axis/crosshair tags)
+    // Explicit columns confine only the axis tag; plot furniture stays put.
     const axisFill = dragging || hovered ? shade(color, 0.12) : color;
     const label = this._opts.label ?? rc.priceScale.format(this._opts.price);
-    ctx.fillStyle = axisFill;
-    ctx.fillRect(xEnd + 1, y - boxH / 2, ctx.measureText(label).width + padX * 2, boxH);
-    ctx.fillStyle = contrastText(color);
-    ctx.fillText(label, xEnd + 1 + padX, y);
+    if (rc.priceAxisSide !== 'hidden' && rc.priceAxisWidth > 0) {
+      const left = rc.priceAxisSide === 'left';
+      if (left || rc.priceAxisOffset !== undefined) {
+        const offset = rc.priceAxisOffset ?? 0;
+        const edge = Math.round(offset * dpr);
+        const outer = Math.round((offset + (left ? -rc.priceAxisWidth : rc.priceAxisWidth)) * dpr);
+        const available = (rc.priceAxisOffset === undefined
+          ? Math.round(rc.priceAxisWidth * dpr) : Math.abs(outer - edge)) - 1;
+        if (Number.isFinite(edge) && Number.isFinite(outer) && available > 0 && rc.plotHeight * dpr >= boxH) {
+          ctx.save();
+          if (rc.priceAxisOffset !== undefined) {
+            ctx.beginPath();
+            ctx.rect(Math.min(edge, outer), 0, available + 1, rc.plotHeight * dpr);
+            ctx.clip();
+          }
+          const padding = Math.min(padX, available / 4), textWidth = ctx.measureText(label).width;
+          const width = Math.min(available, textWidth + padding * 2);
+          const x = left ? edge - 1 - width : edge + 1;
+          const tagY = Math.max(boxH / 2, Math.min(rc.plotHeight * dpr - boxH / 2, y));
+          ctx.fillStyle = axisFill;
+          ctx.fillRect(x, tagY - boxH / 2, width, boxH);
+          ctx.fillStyle = contrastText(color);
+          ctx.font = `500 ${11 * dpr * (textWidth > 0 ? Math.min(1, (width - padding * 2) / textWidth) : 1)}px system-ui, sans-serif`;
+          ctx.fillText(label, x + padding, tagY);
+          ctx.restore();
+          ctx.font = `500 ${11 * dpr}px system-ui, sans-serif`;
+        }
+      } else {
+        // Omitted placement retains the original synthetic-context geometry.
+        ctx.fillStyle = axisFill;
+        ctx.fillRect(xEnd + 1, y - boxH / 2, ctx.measureText(label).width + padX * 2, boxH);
+        ctx.fillStyle = contrastText(color);
+        ctx.fillText(label, xEnd + 1 + padX, y);
+      }
+    }
 
     // segmented pill group on the line: [badge][qty][label][✕]
     const hasGroup = this._opts.badge !== undefined || this._opts.qty !== undefined ||

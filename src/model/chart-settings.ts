@@ -467,6 +467,11 @@ function readoutControls(chart: Chart): Control[] {
     ),
     statusSwitch('lastDayChange', 'Change since previous close', 'Show'),
     statusSwitch('lastValueLabel', 'Indicator values', 'Show'),
+    boolCtl(
+      'statusLine.indicatorsCollapsed', 'Collapse indicator legends', 'Show', false,
+      (c) => c.indicatorLegendCollapsed(),
+      (c, v) => c.setIndicatorLegendCollapsed(v),
+    ),
     // The plate is the one switch that is off by default: the row has never had
     // one, so turning it on has to be a deliberate choice.
     boolCtl(
@@ -545,6 +550,12 @@ function hasLastPriceTag(chart: Chart): boolean {
 
 function axesControls(chart: Chart): Control[] {
   const controls: Control[] = [
+    boolCtl('navigation.panEnabled', 'Enable panning', 'Navigation', true,
+      c => c.navigationOptions().panEnabled !== false,
+      (c, v) => c.setNavigationOptions({ panEnabled: v })),
+    boolCtl('navigation.zoomEnabled', 'Enable zooming', 'Navigation', true,
+      c => c.navigationOptions().zoomEnabled !== false,
+      (c, v) => c.setNavigationOptions({ zoomEnabled: v })),
     selectCtl(
       'navigation.mousePan', 'Mouse drag', 'Navigation', 'both',
       [{ label: 'Horizontal only', value: 'horizontal' }, { label: 'Time and price', value: 'both' }],
@@ -556,6 +567,12 @@ function axesControls(chart: Chart): Control[] {
       { min: 0, max: 100000, step: 1 },
       (c) => c.navigationOptions().defaultVisibleBars,
       (c, v) => c.setNavigationOptions({ defaultVisibleBars: v }),
+    ),
+    numCtl(
+      'navigation.defaultBarSpacing', 'Default bar spacing (0 = use bar count)', 'Navigation', 0,
+      { min: 0, max: 10000, step: 0.5 },
+      (c) => c.navigationOptions().defaultBarSpacing ?? 0,
+      (c, v) => c.setNavigationOptions({ defaultBarSpacing: v }),
     ),
     selectCtl(
       'scales.mode', 'Scale', 'Price scale', 'linear', SCALE_MODES,
@@ -569,6 +586,11 @@ function axesControls(chart: Chart): Control[] {
       'scales.autoScale', 'Auto (fits data to screen)', 'Price scale', true,
       (c) => c.panes()[0].priceScale.autoScale,
       (c, v) => c.setAutoScale(v),
+    ),
+    boolCtl(
+      'scales.priceOnly', 'Fit primary prices only', 'Price scale', false,
+      (c) => c.priceOnlyAutoScale(),
+      (c, v) => c.setPriceOnlyAutoScale(v),
     ),
     boolCtl(
       'scales.inverted', 'Invert scale', 'Price scale', false,

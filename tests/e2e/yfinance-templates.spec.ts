@@ -16,14 +16,18 @@ async function openTemplates(page: Page) {
 }
 
 test('template controls preserve repeated styles visibility and grouping on the selected chart through rebuild and reload', async ({ page }, info) => {
-  const original = await page.evaluate(() => {
+  const original = await page.evaluate(async () => {
+    const bundle = '/dist/openalgo-charts.mjs', { getIndicator } = await import(bundle);
     const app = (window as any).__oac.app;
     app.chart.restoreState({ version: 1, indicators: [] });
     app.chart.addIndicator('ema', { length: 9, color: '#ff3366', 'ma:width': 3 });
     app.chart.addIndicator('ema', { length: 21, color: '#33ccff' }).setVisible(false);
     const first = app.chart.addIndicator('rsi', { length: 7 });
     app.chart.addIndicator('rsi', { length: 14 }, { paneIndex: first.paneIndex });
-    return app.chart.getState().indicators.map(({ instanceId: _id, ...study }: any) => study);
+    const source = app.chart.getState().indicators.map(({ instanceId: _id, ...study }: any) => study);
+    const copy = source.map((study: any, index: number) => ({ ...study, plotPriceScaleIds:
+      Object.fromEntries(getIndicator(study.indicatorId).plots.map((plot: any) => [plot.key, app.chart.indicators()[index].plotPriceScaleId(plot.key)])) }));
+    return { source, copy };
   });
   let dialog = await openTemplates(page);
   await dialog.getByLabel('Template name', { exact: true }).fill('Trend and momentum');
@@ -36,8 +40,8 @@ test('template controls preserve repeated styles visibility and grouping on the 
   await expect(dialog.locator('#tp-owner')).toContainText('Chart 2:');
   await dialog.getByRole('button', { name: 'Replace studies', exact: true }).click();
   await expect(dialog.locator('#tp-notice')).toContainText('applied');
-  expect(await page.evaluate(() => (window as any).__oac.app.chart2.getState().indicators.map(({ instanceId: _id, ...study }: any) => study))).toEqual(original);
-  expect(await page.evaluate(() => (window as any).__oac.app.chart.getState().indicators.map(({ instanceId: _id, ...study }: any) => study))).toEqual(original);
+  expect(await page.evaluate(() => (window as any).__oac.app.chart2.getState().indicators.map(({ instanceId: _id, ...study }: any) => study))).toEqual(original.copy);
+  expect(await page.evaluate(() => (window as any).__oac.app.chart.getState().indicators.map(({ instanceId: _id, ...study }: any) => study))).toEqual(original.source);
   await page.screenshot({ path: info.outputPath('templates-selected-chart.png') });
   await dialog.getByRole('button', { name: 'Close', exact: true }).click();
   await page.evaluate(async () => {
@@ -51,7 +55,7 @@ test('template controls preserve repeated styles visibility and grouping on the 
     const app = (window as any).__oac.app;
     return { symbol: app.p2.symbol, type: app.chart2.primarySeriesInfo().type,
       indicators: app.chart2.getState().indicators.map(({ instanceId: _id, ...study }: any) => study) };
-  })).toEqual({ symbol: 'MSFT', type: 'line', indicators: original });
+  })).toEqual({ symbol: 'MSFT', type: 'line', indicators: original.copy });
 });
 
 test('template append retains drawing and alert ownership and empty replacement removes studies without firing history', async ({ page }) => {
@@ -89,6 +93,54 @@ test('template append retains drawing and alert ownership and empty replacement 
   expect(await page.evaluate(() => (window as any).__oac.app.templateEvents)).toEqual([]);
   expect(await page.evaluate(() => (window as any).__oac.app.chart.getState().alerts.alerts.map((item: any) => item.id).sort()))
     .toEqual(['template-anchor', 'template-fired']);
+});
+
+test('template controls choose independent or shared scales and retain saved manual views', async ({ page }, info) => {
+  await page.evaluate(() => {
+    const app = (window as any).__oac.app;
+    app.chart.restoreState({ version: 1, indicators: [] });
+    const metric = app.chart.addIndicator('ema', { length: 9 }, { priceScaleId: 'overlay:template-metric' });
+    const signal = app.chart.addIndicator('rsi', { length: 7 });
+    app.chart.setPaneWeight(signal.paneIndex, 0.6);
+    app.chart.setPriceAxisPlacement(0, 'overlay:template-metric', 'left');
+    const scale = metric.series('ma').priceScale();
+    scale.setOptions({ inverted: true, minMove: 0.25 });
+    scale.setPriceRange({ min: 0, max: 500 }); scale.setAutoScale(false);
+    app.templateLayoutBefore = app.chart.getState();
+    app.templateLayoutSource = app.chart.primarySeries();
+    app.templateLayoutBars = app.chart.primaryBars();
+  });
+  const dialog = await openTemplates(page);
+  await dialog.getByLabel('Template name', { exact: true }).fill('Axis layout');
+  await dialog.getByRole('button', { name: 'Save new template', exact: true }).click();
+  await expect(dialog.locator('#tp-select option')).toHaveCount(1);
+  const layout = await page.evaluate(() => (window as any).__oac.app.workspaceCatalog.catalog.templates[0].layout);
+  expect(layout.panes[1].weight).toBe(0.6);
+  expect(layout.plots).toHaveLength(2);
+  expect(layout.panes[0].scales['overlay:template-metric']).toMatchObject({ inverted: true, minMove: 0.25, range: { min: 0, max: 500 } });
+  for (const policy of ['share', 'copy']) {
+    await page.evaluate(() => {
+      const app = (window as any).__oac.app;
+      if (!app.chart.restoreState(app.templateLayoutBefore).applied) throw new Error('Fixture reset failed');
+    });
+    await dialog.getByLabel('Scale ownership', { exact: true }).selectOption(policy);
+    await dialog.getByLabel('Saved view', { exact: true }).selectOption('preserve');
+    await dialog.getByRole('button', { name: 'Append studies', exact: true }).click();
+    await expect(dialog.locator('#tp-notice')).toContainText('applied');
+    const state = await page.evaluate(() => {
+      const app = (window as any).__oac.app, studies = app.chart.indicators();
+      const original = studies[0].series('ma').priceScale(), copy = studies[2].series('ma').priceScale();
+      return { count: studies.length, shared: original === copy, range: copy.priceRange(), auto: copy.autoScale,
+        inverted: copy.options.inverted, tick: copy.options.minMove,
+        weights: app.chart.getState().panes.map((pane: any) => pane.weight),
+        sameSource: app.chart.primarySeries() === app.templateLayoutSource,
+        sameBars: JSON.stringify(app.chart.primaryBars()) === JSON.stringify(app.templateLayoutBars) };
+    });
+    expect(state).toMatchObject({ count: 4, shared: policy === 'share', range: { min: 0, max: 500 }, auto: false,
+      inverted: true, tick: 0.25, sameSource: true, sameBars: true });
+    expect(state.weights.slice(1)).toEqual([0.6, 0.6]);
+    await page.screenshot({ path: info.outputPath(`template-${policy}-scales.png`) });
+  }
 });
 
 test('template metadata and files share storage with visible errors and captured chart guards', async ({ page }, info) => {

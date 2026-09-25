@@ -122,42 +122,26 @@ describe('DEMA', () => {
 });
 
 describe('HMA', () => {
-  // A weighted average lags a unit ramp by sum(k * w_k) / sum(w_k). The half
-  // period is 4.5, not 4, so the fast leg lags by 15 / 12.5 = 1.2 and the three
-  // passes leave 2 * 1.2 - (8/3) + (2/3) = 0.4 of a bar rather than cancelling.
-  it('lags a linear series by the fractional half period', () => {
+  // Whole weighted windows lag a unit ramp by (period - 1) / 3.
+  // At length 9 the combined lag is 2 * 1 - 8/3 + 2/3 = 0.
+  it('tracks a linear series at the default length', () => {
     const out = run(HMA, ramp());
-    expect(out.hma[15] as number).toBeCloseTo(15 - 0.4, 10);
-    expect(out.hma[39] as number).toBeCloseTo(39 - 0.4, 10);
+    expect(out.hma[15] as number).toBeCloseTo(15, 10);
+    expect(out.hma[39] as number).toBeCloseTo(39, 10);
   });
 
   it('is the weighted composition the published definition writes', () => {
-    // Written out independently of the implementation, including its own
-    // fractional-period weighted average, so agreement is evidence rather than a
-    // restatement. The half period is 9 / 2 in full precision: the reference
-    // halves in floating point and only the outer period takes a floor.
-    const fracWma = (v: readonly number[], p: number): number[] => {
-      const span = Math.ceil(p);
-      let denom = 0;
-      for (let k = 0; k < span; k++) denom += p - k;
-      return v.map((_, i) => {
-        if (i < span - 1) return NaN;
-        let acc = 0;
-        for (let k = 0; k < span; k++) acc += v[i - k] * (p - k);
-        return acc / denom;
-      });
-    };
     const data = wave();
     const closes = data.map((b) => b.close);
-    const fast = fracWma(closes, 4.5);
+    const fast = wma(closes, 4);
     const slow = wma(closes, 9);
-    const expected = wma(fast.map((v, i) => 2 * v - slow[i]), 3); // floor(sqrt(9))
+    const expected = wma(fast.map((v, i) => 2 * v - slow[i]), 3);
     const out = run(HMA, data);
     const i = data.length - 1;
     expect(out.hma[i] as number).toBeCloseTo(expected[i], 10);
   });
 
-  it('first prints at length + floor(sqrt(length)) - 2', () => {
+  it('first prints at length + round(sqrt(length)) - 2', () => {
     expect(firstLive(run(HMA, wave()).hma)).toBe(10);          // 9 + 3 - 2
     expect(firstLive(run(HMA, wave(), { length: 16 }).hma)).toBe(18); // 16 + 4 - 2
   });

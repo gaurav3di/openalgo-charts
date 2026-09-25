@@ -27,11 +27,30 @@ returns all installed primary bars as `time,open,high,low,close,volume,oi`, foll
 by declared study plots and registered comparison closes. Time is UTC seconds;
 missing/nonfinite readings are blank, zero remains zero and OI is never summed.
 Repeated study columns include instance identity; hidden studies are included.
-`indicators: false` omits studies. `comparisons` overrides the registered handles,
+`indicators: false` or `[]` omits studies. An array of study instance IDs selects
+those studies in the requested order. Duplicate, unknown or removed IDs throw;
+use `IndicatorApi.id`, not a descriptor ID or displayed name. `range: { from, to }`
+filters rows by inclusive UTC seconds after full-history calculation; either
+finite boundary may be omitted. `ChartDataCsvRange` names these bounds; fractions
+and negative timestamps are retained.
+`comparisons` overrides the registered handles,
 for example with an explicitly managed controller's `list()` or `[]` to omit them.
 Comparisons retain original price units and their existing calendar/replay gaps.
 Only the installed replay prefix is read; transforms retain installed OHLC and
-study values precede visual plot offsets. This helper is DOM-free and does not
+study values precede visual plot offsets by default. `alignment: 'display'`
+uses effective runtime study offsets on the shared axis, expands candle plots
+into OHLC fields and adds `logical_index,time_origin` beside raw time. Primary
+and comparison values stay on primary positions. Sparse projected rows contain
+known study values, never future source observations. `projectTime` can override
+outside-axis time labels using the frozen `ChartDataProjectionContext`; null
+keeps a time unknown. Invalid or colliding positions/times throw. Time bounds
+apply after shifting.
+`ChartDataCsvFormatters` provides time, value and header callbacks. Time labels
+add a column without replacing numeric time; only finite data values reach the
+value callback. `ChartDataColumn` exposes frozen canonical key/source metadata.
+All callbacks return strings; text is CSV-escaped and formula-protected. Snapshot
+data is detached before callbacks, and callback exceptions abort the export.
+This helper is DOM-free and does not
 download, fetch or serialize trading state. See `docs/chart-data-export.md` for
 the complete format and captured-source host guards.
 
@@ -55,13 +74,15 @@ does not need to be loaded again.
 | `timeAxisHeight` | `number` | `22` | Media px, bottom pane only. |
 | `timeScale` | `Partial<TimeScaleOptions>` | `DEFAULT_TIME_SCALE_OPTIONS` | Initial spacing, offset, and spacing limits. Added in 2.1.1; use live scale setters for spacing/offset changes. |
 | `legendOffset` | `{ top?, left? }` | `{ top: 6, left: 8 }` | Where indicator legend rows start in the top-most pane. |
+| `priceOnlyAutoScale` | `boolean` | `false` | Fit the primary series' actual scale using only that series. Does not enable auto-fit. |
+| `indicatorLegendCollapsed` | `boolean` | `false` | Suppress study legend rows while retaining plots and a count toggle. |
 | `crosshairMode` | `'normal' \| 'magnet'` | `'normal'` | `magnet` snaps to O/H/L/C, price pane only. |
 | `now` | `() => number` | `performance.now` | Time source for kinetic pan / navigator fade. |
 | `animZoom` | `boolean` | `true` | Ease a wheel zoom over a few frames (`ZoomGlide`, in log space) instead of landing the whole step on one. The first frame's step is applied on the event itself, so `barSpacing` has moved by the time anything reads it synchronously, and the glide lands on exactly the single-frame result. **On by default**, which a 1.9.x host sees as a change; `false` restores the single-frame step. Not re-appliable. |
 | `animAutoscale` | `boolean` | value of `animZoom` | Ease automatic price-range changes while navigation reveals new extrema. Manual and fixed scales remain authoritative. Programmatic viewport replacement, primary data replacement, reset and destruction cancel pending navigation motion. Not re-appliable. |
 | `zoomAnchor` | `'cursor' \| 'right'` | `'cursor'` | What a wheel zoom holds still: the bar under the cursor, or the right edge (the latest bar), which a live chart usually wants. Not re-appliable. |
 | `doubleClick` | `'reset' \| 'maximize' \| 'none'` | `'reset'` | Restore the configured default view and autoscale, toggle that pane to the whole stack, or only emit `dblclick`. A listener that sets `handled` on the event suppresses the action for that press. |
-| `navigation` | `Partial<ChartNavigationOptions>` | `{ mousePan: 'both', defaultVisibleBars: 0 }` | Mouse/pen plot-pan direction and the initial/reset view. Touch retains two-axis panning. Use `setNavigationOptions` at runtime. |
+| `navigation` | `Partial<ChartNavigationOptions>` | `{ panEnabled: true, zoomEnabled: true, mousePan: 'both', defaultVisibleBars: 0 }` | Independent native user navigation, mouse/pen plot-pan direction and the initial/reset view. Touch retains two-axis panning. Use `setNavigationOptions` at runtime. |
 | `conflate` | `boolean` | `false` | OHLC-preserving downsampling when bars fall under ~0.5 device px. |
 | `conflationFactor` | `number` | `1` | Conflation aggressiveness. |
 | `renderer` | `'canvas2d' \| 'webgl2' \| 'auto'` | `'canvas2d'` | Which backend paints the series. `'webgl2'` throws until `openalgo-charts/webgl` has been imported, and on a device without WebGL2 falls back to `canvas2d` with one console warning; `'auto'` takes `webgl2` when it is registered and works on this device, else `canvas2d`, silently. Decided once, at construction; read the result from `chart.rendererKind`. See [Render backends](#render-backends). |
@@ -99,7 +120,7 @@ const vol = chart.addSeries('histogram', {
 |---|---|---|---|
 | `paneIndex` | `number` | `0` | Panes are created on demand; pane 0 gets weight 1, later panes 0.32. |
 | `style` | `SeriesStyle` | `{}` | Merged over the chart type's `defaultStyle`. See [chart-types](chart-types.md). |
-| `priceScaleId` | `PriceScaleId` | `'right'` | `'right'` and `'left'` draw axes. `''` is the legacy hidden overlay; `overlay:name` names an independent hidden scale. |
+| `priceScaleId` | `PriceScaleId` | `'right'` | Selects scale identity. `'right'` and `'left'` default to their named side; `''` and `overlay:name` default to hidden. `setPriceAxisPlacement` can expose or move any scale's column. |
 | `priceFormat` | `PriceFormat`: `{ type: 'price', precision?, minMove? } \| { type: 'volume' } \| { type: 'percent', precision? } \| { type: 'custom', formatter }` | none | Applied to the series' *price scale*, not the series. `percent` suffixes the value at `precision` decimals (default 2) and does **not** scale it, so 0.62 reads `0.62%`. The type is exported as `PriceFormat`, and `IndicatorPlot.priceFormat` takes the same union. |
 
 The first `addSeries` call whose type has `isPriceSeries: true` becomes the primary series: it drives the magnet crosshair, `CrosshairMoveEvent.bar`, the last-price line/tag, and the bars indicators compute from. Indicator-created series never claim it.
@@ -110,9 +131,9 @@ Returned by `addSeries`. Full surface (`src/model/series.ts`):
 
 | Method | Signature | Notes |
 |---|---|---|
-| `setData` | `(items: readonly SeriesDataItem[]) => void` | Replaces all data. The first non-empty `setData` on the chart applies the configured default view once. |
+| `setData` | `(items: readonly SeriesDataItem[], options?: BarConfirmationOptions) => void` | Historical replacement; forces full indicator calculation. The first non-empty call applies the configured default view once. |
 | `prependData` | `(items: readonly SeriesDataItem[]) => void` | History paging; viewport is preserved. |
-| `update` | `(item: SeriesDataItem) => void` | Updates the last item or appends. |
+| `update` | `(item: SeriesDataItem, options?: SeriesUpdateOptions) => void` | Updates or appends. Older timestamps are historical corrections. |
 | `getData` | `() => Bar[]` | Normalized OHLC, oldest first. |
 | `applyOptions` | `(style: Partial<SeriesStyle>) => void` | Merge + repaint. **Not** `setStyle`. |
 | `remove` | `() => void` | Detaches from the pane and frees its data rows. |
@@ -120,6 +141,157 @@ Returned by `addSeries`. Full surface (`src/model/series.ts`):
 | `createMarkers` | `() => SeriesMarkers` | Markers layer bound to this series. |
 
 Items are `{ time, open, high, low, close, volume?, color? }`, `{ time, value, color? }`, or `{ time }` (whitespace gap). See [data-and-time](data-and-time.md).
+
+`BarConfirmationOptions.confirmation` is `'auto' | 'forming' | 'confirmed'`.
+Explicit states override clock inference for the current tail. An omitted value
+on a same-time update retains that state; `'auto'` clears it. Replacement data,
+a new tail, or a changed instrument/timeframe clears the old state. Prepending
+history retains an unchanged tail's state. Confirmation on an older correction
+does not change the current tail. `SeriesUpdateOptions.source` is `'live'`
+(default) or `'history'`; older corrections always count as history.
+
+Native `SeriesDataState` contains readonly `sourceId`, `revision`, `historyRevision`,
+`provenance`, `change`, and optional `confirmation`/`confirmationSource`. Custom
+`IndicatorHost.sourceState()` implementations may supply this snapshot; hosts
+without it retain their legacy inference. Source revisions count mutations,
+while history revisions invalidate cached prefixes across coalesced updates.
+`sourceId` identifies the source series within its chart/host, so replacing the
+primary cannot reuse another series' calculation cache when revisions overlap.
+
+`chart.setSeriesPriceScale(series, scaleId): boolean` reassigns a host-created
+series to `'right'`, `'left'`, `''` or `overlay:name` on its current pane. Its
+handle, data, styles, primary ownership and bound markers remain intact. Both
+scale objects keep their settings, including manual ranges and ratio locks.
+Explicit series `priceFormat` and style precision apply to the target as with
+`addSeries`, affecting any other series sharing that target; the source scale's
+formatting remains unchanged. The change updates axis columns, repaints and emits
+one `objects:change` without replacing data or recalculating studies. It returns
+false for an unchanged assignment, invalid ID, foreign or removed handle,
+destroyed chart, or indicator-owned plot. Use the study's `setPriceScale` to move
+its local resources together, or `setPlotPriceScales` for declared plots. See
+[scales-and-panes](scales-and-panes.md#reassign-individual-study-plots).
+
+`chart.setSeriesType(series, type): boolean` switches a registered renderer on a
+live series. The handle, data, pane, price scale, primary ownership, explicit
+styles and bound markers remain intact. Outgoing inherited renderer defaults are
+removed and missing target defaults are applied, so switching a default step
+series to a line removes the stepping while an explicit step style survives.
+It repaints and emits `objects:change` without replacing data or recalculating
+indicators. It returns false for the same type, foreign or removed handles, and
+destroyed charts. An unknown type on a live owned series throws without mutation.
+Transform renderers still require host-prepared bars; changing type performs no
+data transformation.
+
+`chart.seriesType(series): SeriesType | null` reads the current renderer for a
+live owned series, including one that is not primary. It returns null for foreign
+or removed handles and destroyed charts. Use it when a host tracks series types
+that may also change through native chart calls.
+
+`chart.seriesStyle(series): Readonly<SeriesStyle> | null` returns a frozen,
+detached snapshot including current renderer defaults and direct style changes.
+Read `barOffset` from this snapshot when aligning data with the rendered plot;
+the descriptor's original offset may have been overridden. An omitted offset
+means zero. Old snapshots do not change after `applyOptions`. Foreign or removed
+handles and destroyed charts return null.
+
+## Requested bar providers
+
+`ChartOptions.barsProvider` and `chart.setBarsProvider(provider | null)` accept
+the existing `IndicatorBarsProvider` function or an `IndicatorBarsProviderAccess`
+object with `requestBars` and optional `requestSnapshot`. The chart owns no
+transport. `hasBarsProvider()` tests registration; `hasSnapshotProvider()` tests
+the explicit snapshot capability. Replacing or removing a provider cancels its
+outstanding requests and announces the new provider revision. Setting the same
+provider object again is a no-op; call `invalidateRequestedData()` when that
+provider has new observations, value versions or confirmation metadata.
+
+```ts
+chart.setBarsProvider({
+  requestBars: request => history.loadBars(request),
+  requestSnapshot: request => history.loadSnapshot(request),
+});
+chart.invalidateRequestedData();
+```
+
+`IndicatorBarsRequest` contains `symbol`, optional `exchange`, `interval`,
+opening-time bounds `from`/`to` in UTC seconds, and optional `signal`.
+`IndicatorSnapshotRequest` adds optional `asOf`, the inclusive historical
+knowledge cutoff. `RequestedBarsSnapshot`, exported from both base and indicators,
+contains equally sized `bars`, `availableAt: (number | null)[]` and
+`confirmed: boolean[]`. Openings must be finite and strictly increasing;
+availability is null for unknown or a finite time at or after opening.
+Confirmation is explicit, independent of the interval or the next observation.
+
+An attach context exposes `requestBars`, `requestSnapshot`, `requestState()` and
+`subscribeRequestChanges(listener)`. `IndicatorRequestState` includes optional
+native source provenance, `providerRevision`, `dataRevision`, `supportsSnapshots`
+and optional `replay: { time, asOf?, forming }`. Read it at request time. The
+subscription observes source changes, provider replacement, requested-data
+invalidation and replay clock movement even within one source observation; its
+return value unsubscribes. These revisions identify data generations, not a
+count of calculation executions.
+
+Requests compose caller, instance-lifetime and chart-provider cancellation.
+Consumers must also prevent a late completion from publishing into a newer
+generation; the indicators tier's `createRequestedIndicator` manages that
+lifecycle. A provider should honor the signal to release its own work.
+
+Availability-aware replay clamps a snapshot request's `asOf` to the replay clock.
+The provider must return point-in-time value versions or reject an unsupported
+cutoff; filtering today's final bars by timestamp cannot recover those versions.
+Strict snapshot requests reject legacy replay without an `asOf` clock. Existing
+raw `requestBars` behavior is unchanged. See [indicators](indicators.md#managed-requested-snapshots).
+
+## Whole-study scale assignment
+
+```ts
+const study = chart.addIndicator('rsi', { period: 14 }, { priceScaleId: 'left' });
+study.priceScaleId();                    // 'left', or null for descriptor defaults
+study.setPriceScale('overlay:momentum');  // true when the assignment changes
+study.setPriceScale(null);               // restore each descriptor assignment
+```
+
+`chart.addIndicator(id, settings?, { paneIndex?, priceScaleId?, plotPriceScaleIds? })` returns
+`IndicatorApi`. Its scale override moves local plots, fills, levels, drawings and
+attached price primitives together. Plot-bound markers follow their series;
+explicit price-pane overlays keep their effective scales. Screen-space tables and
+background shading retain their placement. Invalid, unchanged or removed requests
+return false; incompatible fill endpoints also reject the whole move.
+
+The move preserves plot handles, data and lifecycle attachments, updates legend
+formatting and axis columns, and emits one `objects:change` without recalculation.
+Native plot renderer changes through `setSettings({ 'plotKey:type': 'area' })`
+also retain the plot handle, scale and marker binding. Transform data stays
+host-owned. A successful `setPriceScale`, including null, clears local per-plot
+overrides and retains explicit price-overlay overrides. `IndicatorState.priceScaleId`
+stores the whole-study override and `plotPriceScaleIds` stores explicit plot
+overrides. Omission restores descriptor defaults. See [scales-and-panes](scales-and-panes.md#reassign-a-whole-study)
+for shared formatting, fixed-range ownership and saved scales.
+`movePriceAxis` refuses mixed local study assignments and explicit price overlays;
+its `priceAxisState().movable` result reflects that conservative legacy-operation
+limit, even though saved state can represent mixed plot assignments. Uniform local and
+primitive-only studies adopt a successful whole-axis move. `setPriceScale` remains
+the operation for moving all local study resources while keeping overlays fixed.
+
+### Per-plot scale assignment
+
+`study.plotPriceScaleId(plotKey)` reads a declared plot's effective `PriceScaleId`,
+or null for an unknown key. `study.plotPriceScaleIds()` returns a detached map of
+explicit overrides. `study.setPlotPriceScales(patch)` applies a partial
+`Readonly<Record<string, PriceScaleId | null>>` atomically; null clears one
+override. Unknown keys, invalid IDs, accessor properties, empty/unchanged patches
+and incompatible fill endpoints return false without moving resources.
+
+Precedence is per-plot override, local whole-study override, descriptor scale,
+then `right`. Explicit `overlay: true` plots ignore the whole-study override but
+accept per-plot assignments on the price pane. Move both endpoints of a fill in
+one patch so they retain the same pane and scale. Levels and unbound price
+drawings follow the first local plot; plot-bound markers follow their series.
+
+Creation's `plotPriceScaleIds` map accepts scale IDs, with omission meaning no
+overrides. Invalid maps or conflicting fills throw before chart resources are
+allocated. Chart restore validates known descriptors before mutation; workspace
+and legacy template parsing retain structurally valid maps for later validation.
 
 ## Lifecycle and sizing
 
@@ -151,9 +323,15 @@ objects.destroy(); // releases observers, not the chart or its objects
 
 `ChartObjectsOptions` contains optional `drawings: ChartObjectDrawingSource` and
 `onSettings(object: ChartObjectSnapshot)`. `ChartObjectDrawingSource` describes
-`drawings`, `get`, `selection`, `select`, `update` and `remove`; the draw tier's
+`drawings`, `get`, `selection`, `select`, `update`, `remove` and an optional `removeMany`; the draw tier's
 `DrawingController` satisfies it. `ChartObjectDrawing` is the structural record
-with `id`, `tool`, `paneIndex`, `points: { time, price }[]`, optional `visible` and `locked`.
+with `id`, `tool`, `paneIndex`, `points: { time, price }[]`, optional `visible`, `locked`
+and `policy`. The inventory honours the drawing policy (see
+[drawing policies](drawing-tools.md#drawing-policies)): `listed: false` leaves the
+drawing out of the list and out of its group's row, `selectable: false` withholds
+`select`, and `editable: false` withholds `visibility`, `lock` and `remove`, for the
+drawing and for any group holding it. A group that holds an unlisted drawing removes
+only its listed members (through `removeMany`, one undo step), and `ungroup` refuses it.
 
 `ChartObjectSnapshot` is immutable: `{ id, sourceId, kind, name, paneIndex, visible,
 selected, locked?, dataStatus?, capabilities }`. `ChartObjectKind` is
@@ -235,8 +413,11 @@ Exported from `openalgo-charts`:
 
 ```ts
 interface ChartNavigationOptions {
+  panEnabled?: boolean;
+  zoomEnabled?: boolean;
   mousePan: 'horizontal' | 'both';
   defaultVisibleBars: number;
+  defaultBarSpacing?: number;
 }
 
 const chart = createChart(el, {
@@ -250,6 +431,20 @@ chart.setNavigationOptions({ defaultVisibleBars: 80 });  // Partial<ChartNavigat
 Choose `'horizontal'` to move only time while preserving price autoscale.
 Touch retains two-axis panning for either value.
 
+`panEnabled` and `zoomEnabled` default to `true` independently. Pan controls plot
+translation, horizontal/shift wheel, pinch translation, keyboard steps and
+momentum. Zoom controls ordinary/control wheel, axis drags and wheels, pinch
+scaling, zoom keys and user reset/fit actions. Disabled native navigator actions
+are hidden. Turning an action off cancels its active motion; enabling it again
+does not resume the cancelled pointer sequence. Rejected wheel input remains
+available to the page. Crosshair, selections, drawings and chart picks remain
+usable. Programmatic scale setters, `fitContent`, `resetScale`, linked charts,
+data updates and state restoration remain available.
+
+Both fields accept own boolean data properties. Missing, inherited, accessor
+or malformed values are ignored without invoking a getter; unchanged patches
+do not interrupt motion. Old state without these keys retains the current policy.
+
 `defaultVisibleBars` defaults to `0`, fitting all loaded bars. A positive count targets
 the newest N loaded bars plus four empty slots on the right, bounded by available data
 and the time scale's spacing limits. Initial data loads and `resetScale()` honour this
@@ -258,9 +453,16 @@ fits all loaded bars. The count does not change history requests or discard load
 Apply a host's custom viewport after loading data when it should take precedence. The
 widget's ordinary load views use the configured count.
 
-The Axes / Navigation settings fields are `navigation.mousePan` and
-`navigation.defaultVisibleBars`. They round-trip through `readChartSettings` /
+The Axes / Navigation settings fields include `navigation.panEnabled`,
+`navigation.zoomEnabled`, `navigation.mousePan` and
+`navigation.defaultVisibleBars`, plus `navigation.defaultBarSpacing`. They round-trip through `readChartSettings` /
 `applyChartSettings` and the optional `navigation` block in `getState` / `restoreState`.
+
+Set `defaultBarSpacing` to a positive CSS pixel value for consistent candle density
+across screen widths. It takes precedence over the count for initial loads and reset.
+Zero disables the spacing preference. A count-only edit selects count mode again.
+Resizing preserves the current zoom, and explicit `fitContent()` still fits all history.
+The widget defaults to 8 CSS pixels per bar unless a count or spacing is supplied.
 
 ## Coordinates
 
@@ -268,8 +470,8 @@ The Axes / Navigation settings fields are `navigation.mousePan` and
 |---|---|---|
 | `timeToCoordinate(time)` | UTC seconds -> container x, media px | Interpolates and extrapolates past the right edge. |
 | `coordinateToTime(x)` | container x -> UTC seconds | |
-| `priceToCoordinate(price, paneIndex = 0)` | price -> container y, media px \| `null` | `null` when the pane does not exist. Uses the pane's **readout** scale, which is the one its first visible price series maps to, so it is right on a pane whose axis was moved to the left strip. |
-| `coordinateToPrice(y, paneIndex = 0)` | container y -> price \| `null` | Same scale as above. |
+| `priceToCoordinate(price, paneIndex = 0)` | price -> container y, media px \| `null` | `null` when the pane does not exist or is collapsed to its header strip (`setPaneCollapsed`), which plots no price. Uses the pane's **readout** scale, which is the one its first visible price series maps to, so it is right on a pane whose axis was moved to the left strip. |
+| `coordinateToPrice(y, paneIndex = 0)` | container y -> price \| `null` | Same scale, and `null` on the same panes. |
 
 Both price conversions force an autoscale pass first, so they are correct before the first paint.
 
@@ -311,7 +513,7 @@ chart.subscribeDrag(
 
 **The `subscribe*` helpers store exactly one callback each and return `void`.** A second call replaces the first and there is no unsubscribe. For multiple listeners or teardown use the bus: `chart.on(name, cb)` returns an unsubscribe function; `chart.once`, `chart.off(name, cb?)` and `chart.emit(name, payload)` are also public.
 
-Core event names: `ready`, `crosshair:move`, `click`, `hover`, `drag`, `drag:end`, `pan`, `zoom`, `resize`, `dblclick`, `contextmenu`, `lazy-load`, `paneResized`, `paneMoved`, `paneMaximized`, `paneRemoved`, `indicatorRemoved`, `indicatorSettings`. `ReplayController` adds `replay:start|frame|play|pause|end|stop`, and the trading tier routes `trading:*` through the same bus. See [events-and-state](events-and-state.md).
+Core event names: `ready`, `crosshair:move`, `click`, `hover`, `drag`, `drag:end`, `pan`, `zoom`, `resize`, `dblclick`, `contextmenu`, `lazy-load`, `paneResized`, `paneMoved`, `paneMaximized`, `paneCollapsed`, `paneRemoved`, `indicatorRemoved`, `indicatorSettings`. `ReplayController` adds `replay:start|frame|play|pause|end|stop`, and the trading tier routes `trading:*` through the same bus. See [events-and-state](events-and-state.md).
 
 `CrosshairMoveEvent`: `time: number | null`, `index: number | null`, `price: number | null`, `bar: Bar | null`, `point: { x, y } | null`, `paneIndex?: number | null`, and on a move (not the all-null leave payload) `pressed: boolean`, `modifiers: PointerModifiers` (`{ shift, alt, ctrl, meta }`), `pointerType: PointerKind` (`'mouse' | 'touch' | 'pen'`), `pressure` (0..1 as the pointer events spec defines it: measured, else 0.5 while a button is held, else 0) and, only while pressed, `samples: PointerSample[]` (`{ x, y, pressure }` per coalesced position, container x and pane-local y). The same three pointer facts (`PointerInfo`) ride on `ChartClickEvent`, `ChartDragEvent` (which adds `point` and `samples`) and `ChartDragEndEvent` (which adds `point` and also describes `drag:start`); all seven types are exported from the base entry.
 
@@ -338,9 +540,51 @@ request checks; see [host-integration](host-integration.md).
 
 `chart.getState()` / `chart.restoreState(state)` serialise viewport, grid, crosshair mode, timezone, pane weights and price scales, indicators, the settings block (canvas, navigation, status line, trading colours, event filters), and an opaque `drawings` slot. **Series data is never captured**: `restoreState` returns a `RestoreReport` listing series descriptors for the host to rebuild. Navigation options restore before the saved viewport, so its explicit range wins; an older state without `navigation` keeps the chart's current navigation options.
 
+### Multiple price-axis columns
+
+Scale identity and placement are independent. Keep a source on `overlay:spread`
+while exposing its axis beside the main price axis:
+
+```ts
+const spread = chart.addSeries('line', { priceScaleId: 'overlay:spread' });
+spread.setData(spreadPoints);
+chart.setPriceAxisPlacement(0, 'overlay:spread', 'right');
+chart.setPriceAxisPlacement(0, 'overlay:spread', 'left', 0);
+chart.setPriceAxisPlacement(0, 'overlay:spread', 'hidden');
+```
+
+| Method | Result | Contract |
+|---|---|---|
+| `priceAxisPlacement(paneIndex, scaleId)` | `PriceAxisPlacement \| null` | Detached `{ side, order }`; reads placement even when the scale has no active column. |
+| `setPriceAxisPlacement(paneIndex, scaleId, side, order?)` | `boolean` | Places an axis on `'left'`, `'right'` or `'hidden'`. Invalid and unchanged requests return false before mutation. |
+| `priceAxisLayout(paneIndex = 0)` | `readonly PriceAxisSlot[]` | Active columns with `{ scaleId, side, order, x, width }`. `x` is the column's left edge in absolute pane CSS pixels; width is one column. |
+
+Order zero is nearest the plot. An explicit order is a nonnegative safe integer,
+clamped to the side's available ranks. Omitting it retains the rank on the same
+side and appends when changing sides. Placement preserves the scale object,
+range, formatter, ratio lock, series and study IDs, markers and alert anchors.
+The getter returns null for an invalid ID, missing pane or destroyed chart;
+layout returns an empty array for a missing pane or destroyed chart. Successful
+changes emit `priceAxisPlacementChanged` with `{ paneIndex, scaleId, side, order }`
+and `objects:change`.
+`movePriceAxis` retains its legacy resource reassignment behavior; use placement
+to move a column while preserving IDs.
+
+Attached series, including hidden series, and explicitly bound primitives occupy
+columns. An unused configured scale retains placement but reserves no width.
+Hidden scales draw no column or axis tags. Panes share the maximum column count
+on each side, pack their own columns inward, and leave unused outer cells without
+price input targets. Narrow charts reduce column widths equally to retain plot
+space. The primary crosshair price remains on the primary source's scale.
+
+`PriceAxisSide`, `PriceAxisPlacement` and `PriceAxisSlot` are base exports.
+Full chart/workspace snapshots retain optional `PriceScaleState.placement`;
+omission restores default placement. Indicator templates retain scale IDs but
+do not yet preserve pane column placement.
+
 ## Option accessors
 
-Beyond `applyOptions`, the chart reads and writes its own option blocks so a settings dialog has something to bind to: `setCanvasOptions` / `canvasOptions`, `setNavigationOptions` / `navigationOptions`, `setGridOptions` / `gridOptions`, `setStatusLineOptions` / `statusLineOptions`, `setPriceScaleOptions` / `priceScaleOptions`, `setAutoScale`, `setAxisChromeOptions` / `axisChromeOptions`, `setEvents` / `setEventOptions` / `eventOptions`, `tradingSettings` / `setTradingSettings`, `primarySeries` / `primarySeriesInfo`, `theme`, `crosshairMode`, `setTimezone` / `timezone`. One axis at a time there is `priceAxisState`, `setPriceAxisOptions`, `setPriceAxisAutoFit`, `setPriceAxisLockRatio` and `movePriceAxis`. The declarative schema over all of them is in [settings-and-menus](settings-and-menus.md).
+Beyond `applyOptions`, the chart reads and writes its own option blocks so a settings dialog has something to bind to: `setCanvasOptions` / `canvasOptions`, `setNavigationOptions` / `navigationOptions`, `setGridOptions` / `gridOptions`, `setStatusLineOptions` / `statusLineOptions`, `setPriceScaleOptions` / `priceScaleOptions`, `setAutoScale`, `setAxisChromeOptions` / `axisChromeOptions`, `setEvents` / `setEventOptions` / `eventOptions`, `tradingSettings` / `setTradingSettings`, `primarySeries` / `primarySeriesInfo`, `theme`, `crosshairMode`, `setTimezone` / `timezone`. One axis at a time there is `priceAxisState`, `setPriceAxisOptions`, `setPriceAxisAutoFit`, `setPriceAxisLockRatio`, `priceAxisPlacement`, `setPriceAxisPlacement`, `priceAxisLayout` and the legacy `movePriceAxis`. The declarative schema over the settings is in [settings-and-menus](settings-and-menus.md).
 
 ## Render model
 
@@ -442,9 +686,16 @@ the rules in [primitives-and-plugins](./primitives-and-plugins.md).
   column to its widest rendered cell; fixed widths and per-column arrays remain
   supported. Every cell clips its own text. What an indicator's `table` hook
   builds for you; attach it yourself when the table is not tied to a study.
+  `TableCell` supports multiline text, `italic`, CSS `fontFamily`, `verticalAlign`,
+  `rowSpan` and `colSpan`. `ChartTableOptions.frameColor`/`frameWidth` draw an
+  independent outer frame. Span validation is atomic in `setRows`; see the
+  table contract in `primitives-and-plugins.md`.
 - `IndicatorDrawings` - the primitive behind a descriptor's `draws` hook. One
   primitive holds the whole shape list, because a descriptor rebuilds its shapes on
   every recompute and per-shape primitives would re-sort z-order on every live tick.
+  `new IndicatorDrawings(priceScale?)` optionally measures prices on the scale the
+  callback returns each frame, given that frame's `PrimitiveRenderContext`, instead
+  of the pane's binding for the layer.
 
 **Calendar boundaries, zone-aware.** The `zone` argument defaults to
 `DEFAULT_TIMEZONE`; never let it fall through to the browser's local zone.
@@ -479,9 +730,19 @@ unrecognised status stays visible instead of being silently dropped.
   `tableOrigin(position, margin, w, h, plotW, plotH)` - corner placement
 
 **Interaction.** `beginPick(host, kind, cb)` starts a price or time pick and returns
-its cancel function; call it to tear the pick down. `isRebasing(mode)` reports whether
+its callable `PickHandle`; call it to tear the pick down. `handle.active()` is
+true only while this invocation owns the capture, including after synchronous
+cancellation or replacement during a start notification. `isRebasing(mode)` reports whether
 a `PriceScaleMode` re-bases the series, which is true for `percentage` and
 `indexed-to-100` and is why a rebased pane cannot share an axis with an absolute one.
+
+`chart.beginPick(kind, cb, options?: PickOptions)` also checks actual plot bounds
+and accepts `paneIndex` and a price-only `priceScaleId`. Explicit scales must
+already exist. A scale without a pane targets the primary series' pane. The
+selected scale converts pane-local coordinates, including hidden overlays.
+Panning and primitive controls do not select values. Active drawing placement
+refuses the pick; starting placement, data replacement, context changes, restore
+and destruction cancel it. Cancelled picks emit `pick:end` with a null value.
 
 ## Types that name a public signature
 

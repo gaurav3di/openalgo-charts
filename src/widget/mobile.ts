@@ -1,12 +1,13 @@
 import { widgetText } from './localization';
 import { registeredDrawingTools } from 'openalgo-charts/draw';
-import { h, type WidgetContext } from './context';
+import { h, editableIds, type WidgetContext } from './context';
 import type { RailHandle } from './rail';
 import {
   chartTypeChoices, chartTypeLabel, intervalLabel,
   brandingLink, type SymbolSearch, type TopbarState,
 } from './topbar';
 import { mountSymbolPicker, type SymbolPickerHandle } from './symbol-picker';
+import { timeBuckets } from './date-navigator';
 
 export type MobileMode = 'auto' | 'always' | 'never';
 
@@ -29,6 +30,8 @@ export interface MobileOptions {
   onObjects(anchor: HTMLElement): boolean;
   onDataWindow?(anchor: HTMLElement): void | boolean;
   onAlerts?(anchor: HTMLElement): boolean;
+  onCapture?(anchor: HTMLElement): void;
+  onGoTo?(anchor: HTMLElement): void | boolean;
   onProperties(anchor: HTMLElement): boolean;
   settingsAvailable(): boolean;
   indicatorsAvailable(): boolean;
@@ -264,10 +267,22 @@ export function mountMobile(ctx: WidgetContext, opts: MobileOptions): MobileHand
     if (opts.onDataWindow) bar.appendChild(makeAction('data-window', widgetText(ctx, 'schema.ui.dataWindow', {}, 'Data'), (anchor) => { opts.onDataWindow?.(anchor); }));
     bar.appendChild(makeAction('more', widgetText(ctx, 'More'), (anchor) => {
       openSheet(widgetText(ctx, 'More'), anchor, (body, close) => {
+        if (opts.onCapture) body.appendChild(makeAction('capture', widgetText(ctx, 'Capture'), () => {
+          close();
+          opts.onCapture?.(anchor);
+        }));
         if (opts.onAlerts) body.appendChild(makeAction('alerts', widgetText(ctx, 'Alerts'), () => {
           close();
           opts.onAlerts?.(anchor);
         }));
+        if (opts.onGoTo) {
+          const goTo = makeAction('go-to', widgetText(ctx, 'Go to'), () => {
+            close();
+            opts.onGoTo?.(anchor);
+          });
+          goTo.setAttribute('aria-disabled', String(timeBuckets(opts.state().interval) === null));
+          body.appendChild(goTo);
+        }
         const theme = makeAction('theme', opts.state().theme === 'dark' ? widgetText(ctx, 'Light theme') : widgetText(ctx, 'Dark theme'), () => {
           opts.onTheme();
           close();
@@ -316,13 +331,16 @@ export function mountMobile(ctx: WidgetContext, opts: MobileOptions): MobileHand
     if (selection.parentNode !== null) {
       const ids = ctx.draw.selection();
       selection.hidden = ids.length === 0;
+      // Lock and delete have nothing to act on in a read-only selection.
+      const fixed = String(editableIds(ctx.draw, ids).length === 0);
       if (ids.length > 0 && lockButton !== null) {
         const locked = ids.every((id) => ctx.draw.get(id)?.locked === true);
         lockButton.textContent = locked ? widgetText(ctx, 'Unlock') : widgetText(ctx, 'Lock');
         lockButton.setAttribute('aria-pressed', String(locked));
+        lockButton.setAttribute('aria-disabled', fixed);
       }
       if (propertiesButton !== null) propertiesButton.setAttribute('aria-disabled', String(ids.length === 0));
-      if (deleteButton !== null) deleteButton.setAttribute('aria-disabled', String(ids.length === 0));
+      if (deleteButton !== null) deleteButton.setAttribute('aria-disabled', fixed);
     }
     sheet?.repaint();
   }

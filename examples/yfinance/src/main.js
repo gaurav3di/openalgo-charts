@@ -28,6 +28,7 @@ import { initBracket, attachBracketLines, setBracketPrice, updateBracket, remove
 import { initIndicators, fillIndicatorPicker, renderIndicatorChips, openSettings, rememberIndicators } from './indicators.js';
 import { chartDecorationsForRebuild, initChartSettings, normalizeLegendIconSize, restorePrimaryStyle } from './chart-settings.js';
 import { bindIndicatorSource, initIndicatorSource } from './indicator-source.js';
+import { initRoutedStudy } from './routed-study.js';
 import { initCompare, attachComparison, invalidateComparisons, syncComparisons, restoreComparisons } from './compare.js';
 import { initSnapshot } from './snapshot.js';
 import { initReplay, exitReplay, attachReplay, syncReplayAlertPause } from './replay.js';
@@ -47,6 +48,7 @@ import { mountPropertiesBar } from './properties.js';
 import { initDrawing, attachDrawing } from './drawing.js';
 import { capturePaneTarget } from './pane-target.js';
 import { attachTimeline } from './timeline.js';
+import { initGoTo } from './goto.js';
 
 // Price-level family (previous close, session extremes, extended hours,
 // bid/ask). Read off the namespace rather than named above on purpose: a
@@ -181,6 +183,7 @@ function render({ keepView = true, state } = {}) {
   app.chart = createChart(el('chart'), {
     // DEFAULT_THEME is the light palette; the shell's switch decides which.
     theme: chartTheme(),
+    navigation: { defaultBarSpacing: 8 },
     priceAxisWidth: 72, // free crosshair (follows pointer)
     legendIconSize: 16,
     grid: { vertLines: el('vgrid').checked, horzLines: el('hgrid').checked },
@@ -513,6 +516,7 @@ initOrders(app);
 initBracket(app);
 initIndicators(app);
 initIndicatorSource();
+initRoutedStudy();
 
 // The operator keypad lives beside the symbol field. Mounted once: it writes
 // into the field and the ordinary Enter handler does the loading, so nothing
@@ -523,6 +527,7 @@ initCompare(app);
 initSnapshot(app);
 initReplay(app);
 initSplit(app);
+initGoTo(app);
 initLink(app);
 initClipboard(app);
 initMenus(app);
@@ -530,7 +535,7 @@ initMenus(app);
 // Wrapped, not passed: `load` now takes options, and handing it straight to
 // addEventListener would pass a MouseEvent as the options bag.
 el('load').addEventListener('click', () => load());
-el('fit').addEventListener('click', () => { if (app.chart) app.chart.resetScale(); });
+el('fit').addEventListener('click', () => { if (app.chart && app.chart.navigationOptions?.().zoomEnabled !== false) app.chart.resetScale(); });
 el('symbol').addEventListener('keydown', (e) => { if (e.key === 'Enter') load(); });
 // Export the full chart (all layers composited) - native right-click "Save image"
 // only grabs the canvas under the pointer (the transparent crosshair overlay).

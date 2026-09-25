@@ -299,6 +299,9 @@ owns DOM of its own and re-rendering around it is wasted work.
 
 ## Navigation preferences
 
+The widget defaults to 8 CSS pixels per bar. Wider containers show more bars while
+preserving candle width. Set `navigation.defaultBarSpacing` to customize the density;
+the preference survives load, reset and saved layouts. Resize preserves current zoom.
 Pass `navigation: { mousePan: 'both', defaultVisibleBars: 100 }` to
 `createWidget` to open on the latest 100 bars. Axes settings expose both
 preferences and saved widget layouts retain them. The count controls the initial

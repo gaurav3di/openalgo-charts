@@ -14,13 +14,23 @@ export type ZOrder = 'bottom' | 'normal' | 'top';
 
 export interface PrimitiveRenderContext {
   timeScale: TimeScale;
+  /** Explicitly bound scale, or the pane's right scale for an unbound primitive. */
   priceScale: PriceScale;
   /** The pane's primary visible price series scale, including a moved left axis. */
   readoutPriceScale?: PriceScale;
   dataLayer: DataLayer;
   plotWidth: number;
   plotHeight: number;
+  /** Width of the bound scale's axis column; zero for hidden scales. */
   priceAxisWidth: number;
+  /** Axis placement for price labels. Absent retains the default right axis. */
+  priceAxisSide?: 'left' | 'right' | 'hidden';
+  /**
+   * Plot-relative media-px x of the bound column's inner edge. Defaults to 0 on
+   * the left and plotWidth on the right. An explicit offset confines axis tags
+   * to this column without shifting the primitive's plot coordinates.
+   */
+  priceAxisOffset?: number;
   dpr: number;
   theme: ChartTheme;
   /**
@@ -31,16 +41,22 @@ export interface PrimitiveRenderContext {
   bars?: () => readonly Bar[];
   /** externalId of the primitive hit under the pointer (hover state), if any. */
   hoverId?: string | null;
+  /** Optional subtarget identity; leaves the primitive's external click ID unchanged. */
+  hoverKey?: string | null;
   /** externalId of the line being dragged (active state), if any. */
   dragId?: string | null;
 }
 
 export interface PrimitiveHit {
   externalId: string;
+  /** Distinguishes hover regions which share one external click ID. Omission uses externalId. */
+  hoverKey?: string;
   zOrder: ZOrder;
   /** Pixel distance from the cursor (smaller wins ties before z-order). */
   distance: number;
   cursor?: string;
+  /** Coordinate scale for a bound primitive's drag prices. Unbound hits omit it. */
+  priceScale?: PriceScale;
   /**
    * Arm a drag on press. Price lines set `cursor: 'ns-resize'` and move on one
    * axis; anything that moves on **both** (a drawing anchor, a whole shape)

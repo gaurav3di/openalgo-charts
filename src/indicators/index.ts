@@ -113,4 +113,18 @@ export {
   type Tier2Context,
   type Tier2Point,
 } from './external';
-export { securitySeries, type SecuritySeries, type SecurityOptions } from './security';
+export { securitySeries, securityExpression, type SecuritySeries, type SecurityOptions, type SecurityExpressionOptions } from './security';
+export {
+  rollingMedian, rollingMode, rollingVariance, rollingRange, percentileLinear,
+  rankCorrelation, centerOfGravity, runningMin, runningMax,
+  crossesAbove, crossesBelow, crosses, rising, falling,
+  type NumericalWindowOptions, type RollingVarianceOptions,
+} from './statistics';
+export {
+  alignRequestedExpression, requestedIntrabars,
+  type RequestedBarsSnapshot, type RequestedExpression, type RequestedAlignmentOptions,
+  type RequestedTimeWindow, type RequestedIntrabarOptions, type RequestedIntrabarValues,
+} from './requested-context';
+export {
+  createRequestedIndicator, type RequestedIndicatorDescriptor, type RequestedIndicatorContext,
+} from './requested-indicator';

@@ -1,5 +1,5 @@
 /** Internal boundary shared by replay and data owners added during an active replay. */
-export interface ReplayWindow { time: number; forming: boolean }
+export interface ReplayWindow { time: number; forming: boolean; asOf?: number }
 const windows = new WeakMap<object, ReplayWindow>();
 const listeners = new WeakMap<object, Set<() => void>>();
 
@@ -9,7 +9,7 @@ export function replayWindow(chart: object): ReplayWindow | undefined { return w
 export function isReplaying(chart: object): boolean { return windows.has(chart); }
 
 export function setReplayWindow(chart: object, window?: ReplayWindow): void {
-  if (window) windows.set(chart, window);
+  if (window) windows.set(chart, Object.freeze({ ...window }));
   else windows.delete(chart);
   for (const callback of listeners.get(chart) ?? []) callback();
 }

@@ -118,6 +118,42 @@ export interface DrawingStyle {
   pressure?: boolean;
 }
 
+/**
+ * What a host allows the user to do with one drawing. The flags are
+ * independent of one another and of `locked`, and each defaults to true, so a
+ * drawing without a policy behaves exactly as one did before policies
+ * existed. A copy (paste, duplicate) never inherits a policy: it is the
+ * user's own drawing.
+ *
+ * `selectable`, `persistent` and `listed` bind every caller. `editable`
+ * restricts the user: the controller cannot tell a click from a call, so its
+ * methods treat every call as the user's unless it passes `{ force: true }`
+ * (see `DrawingEditOptions`), which is how the host that placed the drawing
+ * moves or retires it. Stacking order (front, back, either side of the
+ * series) is outside the policy.
+ */
+export interface DrawingPolicy {
+  /**
+   * `false`: never joins the selection, whoever asks. A click passes through
+   * to what lies under it, and nothing hovers, drags or selects it.
+   */
+  selectable?: boolean;
+  /**
+   * `false`: read-only to the user. It still selects, copies and duplicates,
+   * but nothing moves, reshapes, restyles, hides, locks, cuts, deletes or
+   * regroups it, and undo and redo never touch it or the group it is in.
+   */
+  editable?: boolean;
+  /**
+   * `false`: transient. Left out of `toJSON`, and so out of the chart state
+   * and every saved layout, while it renders and undoes as usual in the
+   * session. A restore replaces it with what was saved.
+   */
+  persistent?: boolean;
+  /** `false`: left out of the object inventory (`ChartObjects`) and every panel built on it. */
+  listed?: boolean;
+}
+
 export interface Drawing {
   id: string;
   /** Registered tool id. */
@@ -133,8 +169,14 @@ export interface Drawing {
    */
   props?: Record<string, unknown>;
   paneIndex: number;
-  /** Locked drawings render but cannot be selected or dragged. */
+  /**
+   * Locked drawings render but cannot be selected or dragged on the chart.
+   * The user toggles it; a host restriction the user cannot lift is a
+   * {@link DrawingPolicy}.
+   */
   locked?: boolean;
+  /** Host restrictions on this drawing. Absent means none. */
+  policy?: DrawingPolicy;
   /** Default true. */
   visible?: boolean;
   /**
@@ -158,8 +200,11 @@ export type DrawingInput = Omit<Drawing, 'id' | 'zIndex' | 'createdAt'> & {
   createdAt?: number;
 };
 
-/** The fields `DrawingController.update` and `updateMany` can change. */
-export type DrawingPatch = Partial<Pick<Drawing, 'points' | 'style' | 'text' | 'props' | 'locked' | 'visible' | 'zIndex'>>;
+/**
+ * The fields `DrawingController.update` and `updateMany` can change. `policy`
+ * merges flag by flag, the way `style` does.
+ */
+export type DrawingPatch = Partial<Pick<Drawing, 'points' | 'style' | 'text' | 'props' | 'locked' | 'visible' | 'zIndex' | 'policy'>>;
 
 /** The persisted shape's version; bumped when {@link Drawing} changes. */
 export const DRAWING_STATE_VERSION = 2;

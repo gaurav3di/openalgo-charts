@@ -49,12 +49,12 @@ export function levelLabeller(toolId: string): (ratio: number) => string {
   return formatRatio;
 }
 
-/** The drawings among `ids` whose tool declares a levels field, with the first one's schema. */
+/** The drawings among `ids` the user may edit whose tool declares a levels field, with the first one's schema. */
 export function ladderDrawings(ctx: WidgetContext, ids: readonly string[]): { drawings: Drawing[]; schema: SettingsSchema | null } {
   const drawings: Drawing[] = [];
   for (const id of ids) {
     const d = ctx.draw.get(id);
-    if (d !== undefined && drawingSettingsSchema(d.tool).fields.some((f) => f.kind === 'levels')) drawings.push(d);
+    if (d !== undefined && d.policy?.editable !== false && drawingSettingsSchema(d.tool).fields.some((f) => f.kind === 'levels')) drawings.push(d);
   }
   return { drawings, schema: drawings.length === 0 ? null : drawingSettingsSchema(drawings[0].tool) };
 }

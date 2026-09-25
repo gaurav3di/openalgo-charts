@@ -103,7 +103,9 @@ const TWO_PI = Math.PI * 2;
 /** Two decimals is below anything a viewer can resolve and keeps the file short. */
 function num(n: number): string {
   if (!Number.isFinite(n)) return '0';
-  const r = Math.round(n * 100) / 100;
+  const scaled = n * 100;
+  // Values this large have no fractional part to round, but scaling can overflow.
+  const r = Number.isFinite(scaled) ? Math.round(scaled) / 100 : n;
   return String(r === 0 ? 0 : r);
 }
 

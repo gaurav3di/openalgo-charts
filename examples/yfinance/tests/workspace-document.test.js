@@ -33,6 +33,14 @@ function layout() {
 }
 
 describe('reference workspace documents', () => {
+  it.each(['priceOnlyAutoScale', 'indicatorLegendCollapsed'])('retains independent %s choices in both chart slots', preference => {
+    const original = layout();
+    original[preference] = true;
+    original.secondary.state[preference] = false;
+    const restored = layoutFromWorkspace(workspaceFromLayout(original));
+    expect(restored[preference]).toBe(true);
+    expect(restored.secondary.state[preference]).toBe(false);
+  });
   it('round-trips independent information dock choices and widths', () => {
     const original = layout();
     original.inspection = { panel: 'data', width: 280 };

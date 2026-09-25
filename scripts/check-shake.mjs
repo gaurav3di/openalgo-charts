@@ -75,7 +75,76 @@ const BUNDLE = new URL('../dist/openalgo-charts.mjs', import.meta.url).pathname.
 // events in 2.5.3 also serve raw chart hosts. Against 253ae71, the chart-only
 // build grows from 54.67 to 55.58 KiB (929 bytes Brotli); allow 55.75 KiB.
 // Drawing groups, widget controls and the optional controllers still shake out.
-const LIMIT_BYTES = 55.75 * 1024;
+// Known-interval indicator confirmation now shares the interval registry and
+// calendar boundary logic. This prevents session gaps becoming bar durations
+// and confirms calendar bars in their configured zone. The unchanged a1828e9
+// base bundle measures 55.58 KiB, versus 56.09 KiB with this fix (0.51 KiB).
+// These semantics also govern compiled studies on raw charts; allow 56.25 KiB.
+// Named table ownership, computed fill descriptors and complete scale snapshots
+// serve native chart hosts. Measured 56.15 to 57.13 KiB (0.98 KiB); allow 57.25.
+// The new numerical helpers remain in the optional indicator tier.
+// Direct navigation notifications and renderer changes retain live host state.
+// They add 0.42 KiB, from 57.13 to 57.55 KiB, including type lookup and formatter
+// restoration. The ceiling is 57.75 KiB; optional calculation
+// helpers remain outside the chart-only import.
+// Runtime series-to-scale assignment and price-anchored per-bar gradients add
+// 0.29 KiB, from 57.55 to 57.84 KiB. Both serve native chart hosts; allow 58 KiB.
+// Variable-window calculations remain in the optional indicator tier.
+// Provider confirmation, source revision tracking and left-axis value labels
+// serve raw chart hosts. Together with native table formatting, this batch
+// moves the base from 98.28 to 100.10 kB and chart-only from 57.84 to 59.62 KiB.
+// Allow 59.75 KiB while retaining the optional-tier removal checks below.
+// Whole-study scale transactions, primitive projection and owned range defaults
+// keep native studies coherent across axes and manual views. They add 2.09 KiB
+// to chart-only imports (59.62 to 61.71), and 2.10 kB to the base bundle
+// (100.10 to 102.20). Allow 61.75 KiB; requested-context calculations remain
+// in the optional indicator tier and all removal checks below still apply.
+// Composed request cancellation, native snapshot hooks and source observation
+// add 0.67 KiB to chart-only imports (61.71 to 62.38). These let raw chart hosts
+// supply explicit availability without adding transport. Allow 62.50 KiB;
+// managed requested calculations stay in the optional indicator tier.
+// Explicit study alerts share source confirmation and calculation ownership.
+// Their live-update, close and lifetime checkpoints serve raw chart hosts,
+// adding 1.05 KiB to chart-only imports (62.47 to 63.52) and 1.14 kB to the
+// base bundle (102.94 to 104.08). Allow 63.75 KiB while notification controls,
+// feed adapters and optional tiers must still disappear below.
+// Dependency ordering, committed source snapshots and restore preflight serve
+// native hosts as well as the widget. They add 2.61 KiB to chart-only imports
+// (63.52 to 66.13) and 2.79 kB to the base bundle (104.08 to 106.87).
+// Allow 66.25 KiB; source selectors and template copying stay in optional tiers.
+// Independent visible columns require placement, geometry, input routing and
+// snapshot parsing in raw charts. The measured implementation adds 1.18
+// KiB (66.13 to 67.31); allow 67.5 KiB. Host menus stay in the optional widget.
+// Native per-plot assignment, validation and callback-safe transactions add
+// 0.68 KiB (67.31 to 67.99). Allow 68.25 KiB; workspace persistence stays optional.
+// Scoped restore formatting and occupied-pane preservation add 0.38 KiB
+// (67.99 to 68.37). Allow 68.5 KiB; template planning remains in the workspace tier.
+// Primary-price fitting and the persistent study-count control also serve raw
+// chart hosts. Their range selection, row geometry, state and consumed-gesture
+// handling add 1.22 KiB (68.37 to 69.59), with base growing 109.13 to 110.47 kB.
+// Allow 69.75 KiB. Settings forms and workspace parsing remain optional below.
+// Typed scalar validation, paired exchange defaults and targeted capture
+// lifecycle fences add 1.12 KiB (69.59 to 70.71). Base grows by 1025 bytes;
+// symbol search, editor validation and modal controls remain in the widget.
+// Native tables now measure cell hover targets and wrap their canvas details.
+// Smooth study paths add cubic geometry and local clipping, shared by SVG.
+// These remain available to raw-chart hosts without loading optional tiers.
+// The final measurement is 71.78 KiB, up 1.07 KiB from the typed-input batch.
+// Independent user navigation and native annotation text styles remain in base.
+// Their measured chart-only build is 73.26 KiB; optional host tiers still disappear.
+// Pane collapse is core layout: the strip geometry, divider pairing across a
+// strip, axis and pointer routing that report no price on it, navigator
+// re-homing and the saved flag. Measured alone 73.35 to 73.74 KiB (0.39 KiB),
+// with the base bundle 116.15 to 116.72 kB; the menu rows stay in the widget.
+// Study drawing and marker targets route outputs inside the indicator runtime,
+// which every chart carries. Measuring price-pane shapes on the candles' own
+// scale and restacking routed layers created late complete it: measured alone
+// 73.35 to 73.92 KiB (0.57 KiB).
+// Drawing policies, go-to-date and the chart grid each add under 0.05 KiB here
+// when measured alone; their controllers, panels and grid chrome stay in the
+// optional tiers. The merged 2.5.4 build measures 74.43 KiB (76220 bytes);
+// allow 74.44 KiB.
+const LIMIT_BYTES = 74.44 * 1024;
 
 // Absent from a chart-only build. Each is a string that appears in the adapter
 // source and nowhere in the rendering core.
@@ -98,6 +167,7 @@ const MUST_BE_SHAKEN = [
   ['replay controller', 'replay needs a series to drive'],
   ['replay availability timeline', 'replay timing needs subBarEndTime'],
   ['replay group', 'openalgo-charts: replay group '],
+  ['managed requested indicator', 'Requested indicator:'],
 ];
 
 const virtual = {

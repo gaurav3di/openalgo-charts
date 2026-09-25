@@ -1,6 +1,6 @@
 import { el, esc, currentTheme, toggleTheme } from './ui.js';
 import { attachTip, hideTip } from './hover.js';
-import { cycleMagnet, magnetMode, focusChart } from './rail.js';
+import { cycleMagnet, magnetMode, focusChart, syncNavigationControls } from './rail.js';
 import { INTERVALS, intervalLabel, intervalName, periodsFor, clampPeriod } from './intervals.js';
 import { popupMenu } from './menus.js';
 import { openCompare, comparisonState } from './compare.js';
@@ -18,6 +18,7 @@ import { rememberIndicators, renderIndicatorChips } from './indicators.js';
 import { mountSymbolPicker, mountIndicatorPicker } from '/dist/openalgo-charts.widget.mjs';
 import { referenceSymbolSearch } from './symbol-search.js';
 import { toggleInspection } from './inspection.js';
+import { openGoTo } from './goto.js';
 
 let app;
 let symbolPicker = null;
@@ -82,6 +83,8 @@ export const TOOLBAR_ICON = {
   link: '<path d="M8.4 11.6a3 3 0 0 1 0-4.2l1.8-1.8a3 3 0 1 1 4.2 4.2l-.9.9"/><path d="M11.6 8.4a3 3 0 0 1 0 4.2l-1.8 1.8a3 3 0 1 1-4.2-4.2l.9-.9"/>',
   // One frame divided: the layout, not the group.
   split: '<rect x="2.5" y="4" width="15" height="12" rx="1.6"/><path d="M10 4v12"/>',
+  // The frame divided both ways: the grid view with rows as well as columns.
+  grid: '<rect x="2.5" y="4" width="15" height="12" rx="1.6"/><path d="M10 4v12M2.5 10h15"/>',
   // A stack of stored rows with a tick: something held, and held valid.
   cache: '<ellipse cx="10" cy="5.4" rx="6.2" ry="2.4"/><path d="M3.8 5.4v4.6c0 1.3 2.8 2.4 6.2 2.4s6.2-1.1 6.2-2.4V5.4"/><path d="M3.8 10v4.6c0 1.3 2.8 2.4 6.2 2.4"/><path d="M13 15l1.8 1.8L18 13"/>',
   // The mirror of `download`: a layout file going the other way.
@@ -322,6 +325,14 @@ export function renderToolbar() {
     onSelect: () => changeRequest(target, { period: p }),
   }))));
   bar.appendChild(range);
+  // Go to a date or range, loading a longer period when the date is older
+  // than the one on screen.
+  const goTo = tbtn('<span>Go to</span>', 'Go to a date or range', 'loads older history when it is needed');
+  goTo.id = 'goto';
+  goTo.setAttribute('aria-haspopup', 'dialog');
+  goTo.disabled = !target?.current() || Boolean(pane === 2 ? app.loading2 || app.loadFailed2 : app.loading || app.loadFailed);
+  goTo.addEventListener('click', () => openGoTo(goTo));
+  bar.appendChild(goTo);
   bar.appendChild(divider());
 
   // chart type menu
@@ -432,7 +443,11 @@ export function renderToolbar() {
   bar.appendChild(divider());
 
   // view + layout icons
-  bar.appendChild(iconBtn('fit', 'Reset view', () => { if (currentTarget(target)) target.chart.resetScale(); }));
+  const fit = iconBtn('fit', 'Reset view', () => {
+    if (currentTarget(target) && target.chart.navigationOptions?.().zoomEnabled !== false) target.chart.resetScale();
+  });
+  fit.id = 'toolbar-fit';
+  bar.appendChild(fit);
   // Anchor on the button that was clicked: by the time the handler runs,
   // bar.lastChild is whatever the toolbar appended last, not this button.
   bar.appendChild(iconBtn('grid', 'Grid', (ev) => {
@@ -500,6 +515,7 @@ export function renderToolbar() {
   // assign to #status directly and every one of them would have to remember.
   status.addEventListener('pointerenter', () => { status.title = statusText.textContent; });
   bar.appendChild(status);
+  syncNavigationControls();
   app.refreshWorkspaceControls?.();
 }
 

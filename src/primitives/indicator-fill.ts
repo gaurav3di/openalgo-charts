@@ -9,7 +9,6 @@
  * are split at the exact intersection rather than at the nearest bar, or the
  * colours would bleed a bar past every flip.
  */
-import { verticalGradient } from '../render/gradient';
 import type { IPrimitive, PrimitiveHost, PrimitiveRenderContext, ZOrder } from './primitive';
 
 /**
@@ -54,10 +53,20 @@ export interface FillPoint {
   /**
    * Paints this bar onward in one colour, for a band shaded by something other
    * than which line leads: trend state, a regime, a third series. The run is
-   * split at the bar where the colour changes, so it is per-bar and not merely
-   * per-crossing. Most specific wins: this, then the gradient, then up/down.
+   * split at the bar where the colour changes, or at the preceding intersection
+   * if the plots cross into that bar. Overrides both point and band gradients.
    */
   color?: string;
+  /**
+   * Price-anchored gradient starting at this bar, or at the preceding intersection
+   * when the plots cross into it. Undefined uses the band's gradient.
+   */
+  gradient?: FillGradient;
+}
+
+function sameGradient(a: FillGradient | undefined, b: FillGradient | undefined): boolean {
+  return a === b || (a !== undefined && b !== undefined && a.topValue === b.topValue
+    && a.bottomValue === b.bottomValue && a.topColor === b.topColor && a.bottomColor === b.bottomColor);
 }
 
 export class IndicatorFill implements IPrimitive {
@@ -98,31 +107,39 @@ export class IndicatorFill implements IPrimitive {
     const x = (i: number): number => rc.timeScale.indexToX(i) * dpr;
     const y = (v: number): number => rc.priceScale.priceToY(v) * dpr;
 
-    // Resolve the gradient's axis once per frame: the stops are prices, so they
-    // move with the scale but not with the run being painted.
-    const grad = this._opts.gradient;
-    let gTop = 0;
-    let gSpan = 1;
-    if (grad !== undefined) {
+    // Canvas gradients capture the transform at creation. Cache only within
+    // this draw so panning, pane movement and other bands cannot reuse stale axes.
+    const gradients = new Map<string, CanvasGradient>();
+    let extent: { min: number; max: number } | undefined;
+    const gradientFor = (grad: FillGradient): CanvasGradient => {
       let hi = grad.topValue;
       let lo = grad.bottomValue;
       if (hi === undefined || lo === undefined) {
-        let min = Infinity;
-        let max = -Infinity;
-        const bump = (v: number | null): void => {
-          if (v === null || !Number.isFinite(v)) return;
-          if (v < min) min = v;
-          if (v > max) max = v;
-        };
-        for (const p of this._points) { bump(p.a); bump(p.b); }
-        hi ??= max;
-        lo ??= min;
+        if (extent === undefined) {
+          let min = Infinity;
+          let max = -Infinity;
+          for (const p of this._points) {
+            for (const value of [p.a, p.b]) {
+              if (value !== null && Number.isFinite(value)) { min = Math.min(min, value); max = Math.max(max, value); }
+            }
+          }
+          extent = { min, max };
+        }
+        hi ??= extent.max;
+        lo ??= extent.min;
       }
-      gTop = y(hi);
-      // A flat band (or one with nothing finite in it) would give the gradient
-      // zero length, which paints nothing at all.
-      gSpan = (y(lo) - gTop) || 1;
-    }
+      const top = y(hi);
+      const bottom = top + ((y(lo) - top) || 1);
+      const key = JSON.stringify([top, bottom, grad.topColor, grad.bottomColor]);
+      let result = gradients.get(key);
+      if (result === undefined) {
+        result = ctx.createLinearGradient(0, top, 0, bottom);
+        result.addColorStop(0, grad.topColor);
+        result.addColorStop(1, grad.bottomColor);
+        gradients.set(key, result);
+      }
+      return result;
+    };
 
     ctx.save();
     ctx.globalAlpha = this._opts.opacity ?? 0.12;
@@ -130,7 +147,7 @@ export class IndicatorFill implements IPrimitive {
     // Walk the series accumulating one polygon per constant-sign run. A gap
     // (either value missing) closes the current run — bridging it would fill
     // across a stretch where the indicator has no opinion.
-    let run: { up: boolean; color?: string; top: number[]; bot: number[]; xs: number[] } | null = null;
+    let run: { up: boolean; color?: string; gradient?: FillGradient; top: number[]; bot: number[]; xs: number[] } | null = null;
     const flush = (): void => {
       if (run !== null && run.xs.length >= 2) {
         ctx.beginPath();
@@ -138,19 +155,12 @@ export class IndicatorFill implements IPrimitive {
         for (let i = 1; i < run.xs.length; i++) ctx.lineTo(run.xs[i], run.top[i]);
         for (let i = run.xs.length - 1; i >= 0; i--) ctx.lineTo(run.xs[i], run.bot[i]);
         ctx.closePath();
-        if (grad === undefined || run.color !== undefined) {
+        if (run.gradient === undefined || run.color !== undefined) {
           ctx.fillStyle = run.color ?? (run.up ? this._opts.colorUp : this._opts.colorDown);
           ctx.fill();
         } else {
-          // The path is already in device pixels, so this translate reaches only
-          // the gradient, whose own axis runs 0..gSpan, and lands it on the
-          // prices it was anchored to. Shifting the path instead would mean
-          // rebuilding it per run.
-          ctx.save();
-          ctx.translate(0, gTop);
-          ctx.fillStyle = verticalGradient(ctx, gSpan, grad.topColor, grad.bottomColor);
+          ctx.fillStyle = gradientFor(run.gradient);
           ctx.fill();
-          ctx.restore();
         }
       }
       run = null;
@@ -166,13 +176,15 @@ export class IndicatorFill implements IPrimitive {
       const px = x(p.index);
       const ya = y(p.a);
       const yb = y(p.b);
+      const gradient = p.gradient ?? this._opts.gradient;
 
-      if (run !== null && run.up === up && run.color !== p.color) {
-        // Colour changed with no crossing to split on, so split on the bar and
+      if (run !== null && run.up === up && (run.color !== p.color
+        || (p.color === undefined && !sameGradient(run.gradient, gradient)))) {
+        // Paint changed with no crossing to split on, so split on the bar and
         // let the two polygons share that edge; a plain flush would leave a gap.
         run.xs.push(px); run.top.push(ya); run.bot.push(yb);
         flush();
-        run = { up, color: p.color, xs: [px], top: [ya], bot: [yb] };
+        run = { up, color: p.color, gradient, xs: [px], top: [ya], bot: [yb] };
         continue;
       }
       if (run !== null && run.up !== up) {
@@ -187,12 +199,12 @@ export class IndicatorFill implements IPrimitive {
           const cy = y(prev.a + (p.a - prev.a) * t);
           run.xs.push(cx); run.top.push(cy); run.bot.push(cy);
           flush();
-          run = { up, color: p.color, xs: [cx], top: [cy], bot: [cy] };
+          run = { up, color: p.color, gradient, xs: [cx], top: [cy], bot: [cy] };
         } else {
           flush();
         }
       }
-      if (run === null) run = { up, color: p.color, xs: [], top: [], bot: [] };
+      if (run === null) run = { up, color: p.color, gradient, xs: [], top: [], bot: [] };
       run.xs.push(px);
       run.top.push(ya);
       run.bot.push(yb);

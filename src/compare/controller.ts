@@ -521,7 +521,7 @@ export class ComparisonController {
         range.min = Math.min(range.min, fitted.min * factor);
         range.max = Math.max(range.max, fitted.max * factor);
       }
-      if (entry.primary.autoScale) entry.primary.setPriceRange(range);
+      if (entry.primary.autoScale) entry.primary.setComputedRange(range);
     }
     const bp = entry.primary.baseline;
     if (bp === null || !Number.isFinite(bp) || bp <= 0 || !entry.primary.scaled) return;
@@ -533,7 +533,7 @@ export class ComparisonController {
       const k = bc / bp;
       state.appliedInverted = entry.primary.options.inverted;
       state.scale.setOptions({ inverted: state.appliedInverted });
-      state.scale.setPriceRange({ min: range.min * k, max: range.max * k });
+      state.scale.setComputedRange({ min: range.min * k, max: range.max * k });
     }
   }
 

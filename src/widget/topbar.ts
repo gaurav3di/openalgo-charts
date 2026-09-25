@@ -17,9 +17,12 @@ import { chromeIconSvg } from 'openalgo-charts/draw';
 import { h, glyph, type WidgetContext } from './context';
 import type { WidgetThemeName } from './tokens';
 import { mountSymbolPicker, type SymbolPickerHandle } from './symbol-picker';
+import { timeBuckets } from './date-navigator';
 export { SEARCH_DEBOUNCE_MS } from './symbol-picker';
 export type { SymbolMatch, SymbolSearch } from './symbol-picker';
 import type { SymbolSearch } from './symbol-picker';
+import { openChartDataExportDialog } from './chart-data-export-dialog';
+import type { PanelHandle } from './form';
 
 /** Labels for the built-in chart types; anything else is read from its id. */
 export const CHART_TYPE_LABELS: Readonly<Record<string, string>> = {
@@ -205,6 +208,8 @@ export interface TopbarOptions {
   /** Open the docked data window, omitted without a handler. */
   onDataWindow?(anchor: HTMLElement): void | boolean;
   onAlerts?(anchor: HTMLElement): boolean;
+  /** Open the date and range navigation panel, omitted without a handler. */
+  onGoTo?(anchor: HTMLElement): void | boolean;
   settingsAvailable(): boolean;
   indicatorsAvailable(): boolean;
   /** Refuse CSV export while the host is replacing or recovering its data. */
@@ -213,6 +218,8 @@ export interface TopbarOptions {
 
 export interface TopbarHandle {
   readonly el: HTMLElement;
+  /** Open the shared capture menu from desktop or mobile chrome. */
+  openCapture(anchor: HTMLElement): void;
   /** Repaint every control from `state()`. */
   refresh(): void;
   /** Put the caret in the symbol box, text selected. */
@@ -366,6 +373,19 @@ export function mountTopbar(ctx: WidgetContext, host: HTMLElement, opts: TopbarO
   let brandingAnchor: HTMLAnchorElement | null = null;
   host.appendChild(brandingSlot);
 
+  // Tick and volume bars have no date to go to: greyed with the reason, not dead.
+  const goTo = opts.onGoTo ? btn(widgetText(ctx, 'Go to'), 'oac-topbar__goto') : null;
+  if (goTo !== null) {
+    goTo.textContent = widgetText(ctx, 'Go to');
+    goTo.setAttribute('aria-haspopup', 'dialog');
+    ctx.tips.attach(goTo, () => ({
+      title: widgetText(ctx, 'Go to'),
+      sub: timeBuckets(opts.state().interval) === null ? widgetText(ctx, 'Go to needs a time-based interval') : undefined,
+      side: 'bottom',
+    }));
+    goTo.addEventListener('click', () => { if (!goTo.classList.contains('is-off')) opts.onGoTo?.(goTo); });
+    host.appendChild(goTo);
+  }
   if (opts.onObjects) {
     const objects = btn(widgetText(ctx, 'Objects'), 'oac-topbar__objects');
     objects.textContent = widgetText(ctx, 'Objects');
@@ -392,12 +412,25 @@ export function mountTopbar(ctx: WidgetContext, host: HTMLElement, opts: TopbarO
   snapBtn.appendChild(glyph(doc, chromeIconSvg('camera'), 'chrome'));
   snapBtn.setAttribute('aria-haspopup', 'menu');
   ctx.tips.attach(snapBtn, { title: widgetText(ctx, 'Capture'), sub: widgetText(ctx, 'PNG, SVG, CSV or the clipboard'), side: 'bottom' });
-  snapBtn.addEventListener('click', () => {
+  let dataDialog: PanelHandle | null = null;
+  const openCapture = (anchor: HTMLElement): void => {
     const s = { ...opts.state() };
-    const dataAvailable = (): boolean => !ctx.chart.isDestroyed && opts.dataAvailable?.() !== false && ctx.chart.primaryBars().length > 0;
+    const capturedChart = ctx.chart;
+    const capturedPrimary = capturedChart.primarySeries();
+    const source = capturedChart.getDataContext();
+    const dataAvailable = (): boolean => !capturedChart.isDestroyed && opts.dataAvailable?.() !== false && capturedChart.primaryBars().length > 0;
+    const checkSource = (): void => {
+      const current = opts.state(), context = ctx.chart.getDataContext();
+      if (ctx.chart !== capturedChart || capturedChart.primarySeries() !== capturedPrimary
+        || current.symbol !== s.symbol || current.exchange !== s.exchange || current.interval !== s.interval || current.chartType !== s.chartType
+        || context !== source) {
+        throw new Error(widgetText(ctx, 'The chart changed; reopen Capture for its current source'));
+      }
+      if (!dataAvailable()) throw new Error(widgetText(ctx, 'Wait for this chart to finish loading its data'));
+    };
     const clip = (globalThis as { navigator?: { clipboard?: { write?: unknown } }; ClipboardItem?: unknown });
     const canCopy = clip.navigator?.clipboard?.write !== undefined && clip.ClipboardItem !== undefined;
-    openMenu(ctx, snapBtn, [
+    openMenu(ctx, anchor, [
       { label: widgetText(ctx, 'Download PNG'), onSelect: () => {
         ctx.chart.downloadScreenshot(captureName(s.symbol, s.interval) + '.png');
         ctx.status(widgetText(ctx, 'Saved a PNG of the chart'));
@@ -418,17 +451,22 @@ export function mountTopbar(ctx: WidgetContext, host: HTMLElement, opts: TopbarO
       } },
       { label: widgetText(ctx, 'Download chart data (CSV)'), disabled: !dataAvailable(), onSelect: () => {
         try {
-          const current = opts.state();
-          if (current.symbol !== s.symbol || current.exchange !== s.exchange || current.interval !== s.interval || current.chartType !== s.chartType) {
-            throw new Error(widgetText(ctx, 'The chart changed; reopen Capture for its current source'));
-          }
-          if (!dataAvailable()) throw new Error(widgetText(ctx, 'Wait for this chart to finish loading its data'));
-          const ok = downloadText(doc, captureName(s.symbol, s.interval) + '.csv', exportChartDataCsv(ctx.chart), 'text/csv;charset=utf-8');
-          ctx.status(ok ? widgetText(ctx, 'Chart data download started') : widgetText(ctx, 'This runtime cannot save files'), ok ? 'info' : 'error');
+          checkSource();
+          dataDialog?.close();
+          dataDialog = openChartDataExportDialog(ctx, anchor, options => {
+            checkSource();
+            const csv = exportChartDataCsv(capturedChart, options);
+            checkSource();
+            if (!downloadText(doc, captureName(s.symbol, s.interval) + '.csv', csv, 'text/csv;charset=utf-8')) {
+              throw new Error(widgetText(ctx, 'This runtime cannot save files'));
+            }
+            ctx.status(widgetText(ctx, 'Chart data download started'));
+          });
         } catch (error) { ctx.status(widgetText(ctx, 'Data export failed: {error}', { error: String((error as Error)?.message ?? error) }), 'error'); }
       } },
     ], { ariaLabel: widgetText(ctx, 'Capture') });
-  });
+  };
+  snapBtn.addEventListener('click', () => openCapture(snapBtn));
   host.appendChild(snapBtn);
 
   // ── settings ─────────────────────────────────────────────────────────
@@ -473,6 +511,7 @@ export function mountTopbar(ctx: WidgetContext, host: HTMLElement, opts: TopbarO
     typeLabel.textContent = widgetText(ctx, `schema.chartType.${s.chartType}`, {}, chartTypeLabel(s.chartType));
     setOff(setBtn, !opts.settingsAvailable());
     if (indBtn !== null) setOff(indBtn, !opts.indicatorsAvailable());
+    if (goTo !== null) setOff(goTo, timeBuckets(s.interval) === null);
     themeBtn.dataset.theme = s.theme;
     themeLabel.textContent = s.theme === 'dark' ? widgetText(ctx, 'Light') : widgetText(ctx, 'Dark');
     ctx.tips.refreshLabel(themeBtn);
@@ -499,9 +538,11 @@ export function mountTopbar(ctx: WidgetContext, host: HTMLElement, opts: TopbarO
 
   return {
     el: host,
+    openCapture,
     refresh,
     focusSymbol: () => { symInput.focus(); },
     destroy: () => {
+      dataDialog?.close();
       offBranding();
       picker?.destroy();
       host.textContent = '';

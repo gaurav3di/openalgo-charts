@@ -35,6 +35,7 @@ interface Drawing {
   props?: Record<string, unknown>;   // per-tool extras, JSON-safe, persisted verbatim
   paneIndex: number;
   locked?: boolean;          // renders, but cannot be selected or dragged
+  policy?: DrawingPolicy;    // host restrictions: selectable, editable, persistent, listed (see Drawing policies)
   visible?: boolean;         // default true
   zIndex: number;            // paint order; below 0 paints under the series. add() fills in 0
   createdAt?: number;        // epoch ms, set by add()
@@ -358,23 +359,23 @@ new DrawingController(chart, {
 | `activeTool()` | Armed id, or `null`. |
 | `setOptions(patch)` | Live-patch the options above. |
 | `drawings()` / `get(id)` | Read the model. `drawings()` is the live array, in **paint order** (creation order until a reorder; `createdAt` keeps the creation time). |
-| `add(drawing)` | `add({ tool, points, style, paneIndex, text?, props?, id?, locked?, visible?, zIndex? })` (a `DrawingInput`) returns the created `Drawing`, with `zIndex` 0, `createdAt` and a minted id (a supplied id that collides with a restored one is replaced). The tool's `defaultText` merges under `text` the way `defaultStyle` merges under `style`. |
-| `update(id, patch)` / `updateMany(patches)` | Patch `points` \| `style` \| `text` \| `props` \| `locked` \| `visible` \| `zIndex` (a `DrawingPatch`). `style`, `text` and `props` merge; `points` replaces. `updateMany([{ id, patch }])` is one undo step and one `drawing:change`. |
-| `remove(id)` / `removeMany(ids)` / `clear()` | Delete one / several (one undo step) / all. |
+| `add(drawing)` | `add({ tool, points, style, paneIndex, text?, props?, id?, locked?, visible?, zIndex?, policy? })` (a `DrawingInput`) returns the created `Drawing`, with `zIndex` 0, `createdAt` and a minted id (a supplied id that collides with a restored one is replaced). The tool's `defaultText` merges under `text` the way `defaultStyle` merges under `style`. Adding a drawing whose `policy` sets any flag to false records no undo step: it is the host's. The `policy` object is copied. |
+| `update(id, patch, options?)` / `updateMany(patches, options?)` | Patch `points` \| `style` \| `text` \| `props` \| `locked` \| `visible` \| `zIndex` \| `policy` (a `DrawingPatch`). `style`, `text`, `props` and `policy` merge; `points` replaces. `updateMany([{ id, patch }])` is one undo step and one `drawing:change`. A read-only drawing is refused (`update` returns false, `updateMany` skips it) unless `options` is `{ force: true }` (`DrawingEditOptions`). A patch that carries `policy`, and any forced call, records no undo step, and every recorded step takes it as well, so no later undo or redo reverses it. |
+| `remove(id, options?)` / `removeMany(ids, options?)` / `clear(options?)` | Delete one / several (one undo step) / all. Read-only drawings stay unless `{ force: true }`. A forced delete records no undo step and takes the drawing out of every recorded step, so no redo brings it back. |
 | `finish()` | Commit a `points: 0` tool at the anchors placed so far. Returns whether it committed. |
 | `cancel()` | Drop the anchors placed so far; disarms the tool unless `stayInDrawingMode` keeps it (a second call then disarms). Returns whether anything changed. |
 | `popAnchor()` | Remove the last anchor of a `points: 0` tool still being placed (the Backspace of placement). Fixed-anchor and freehand tools have nothing to pop. |
 | `hovered()` | Id of the unselected drawing under the pointer, or `null`. Fed by the chart's `hover` event; `drawing:hover { id }` fires when it changes. |
 | `magnetMode()` | The resolved `MagnetMode` (`'off' | 'weak' | 'strong'`), after the boolean shorthand is mapped. |
-| `select(id \| ids \| null, additive = false)` / `selected()` / `selection()` | Selection. `additive` toggles each id (shift, ctrl or meta click does this for you); unknown ids are ignored. `selected()` is the primary (first picked) id; `selection()` is the list in pick order. Events fire only when the selection actually changes. |
-| `duplicate(ids)` | Clones with the paste offset (`pasteOffsetBars` / `pasteOffsetPixels`), selects the clones, one undo step. Returns the clones. |
-| `nudge(ids, dx, dy)` | Moves by a screen distance in media px (right and down positive); locked members stay. One undo step. Needs `timeToCoordinate` / `coordinateToTime` on the host for the horizontal half, else assumes the default 8 px bar spacing. |
+| `select(id \| ids \| null, additive = false)` / `selected()` / `selection()` | Selection. `additive` toggles each id (shift, ctrl or meta click does this for you); unknown ids and drawings with `policy.selectable: false` are ignored. `selected()` is the primary (first picked) id; `selection()` is the list in pick order. Events fire only when the selection actually changes. |
+| `duplicate(ids)` | Clones with the paste offset (`pasteOffsetBars` / `pasteOffsetPixels`), selects the clones, one undo step. Returns the clones. A clone carries no `policy`. |
+| `nudge(ids, dx, dy)` | Moves by a screen distance in media px (right and down positive); locked and read-only members stay. One undo step. Needs `timeToCoordinate` / `coordinateToTime` on the host for the horizontal half, else assumes the default 8 px bar spacing. |
 | `setZIndex(id, z)` / `bringToFront(id)` / `sendToBack(id)` | Paint order. The two shortcuts are **band-local**: they set `zIndex` to the max / min of the same pane on the same side of the series and move the drawing to the end / start of the list, never crossing the series. |
 | `sendBehindSeries(id)` / `bringAboveSeries(id)` | Set `zIndex` to -1 / 0. No-ops (no history) when already on that side. |
-| `undo()` / `redo()` / `canUndo()` / `canRedo()` | History. |
+| `undo()` / `redo()` / `canUndo()` / `canRedo()` | History. A step left with nothing to do, once a drawing in it is made read-only or the host's own act has overtaken it, is dropped, so `canUndo()` and `canRedo()` report only a press that changes something. |
 | `copy(target?)` / `cut(target?)` / `paste()` | **Async.** See the clipboard section. |
 | `clipboard()` | The `DrawingClipboard` behind them, for reporting failures. |
-| `toJSON()` / `fromJSON(data)` | `{ version: 2, drawings }` (a `DrawingsDocument`) out, deep-copied; replace-all in (and clears history + selection). `fromJSON` accepts a 1.9.x bare `Drawing[]` too and upgrades it. |
+| `toJSON()` / `fromJSON(data)` | `{ version: 2, drawings }` (a `DrawingsDocument`) out, deep-copied, without transient drawings (`policy.persistent: false`); replace-all in (and clears history + selection, transient drawings included). `fromJSON` accepts a 1.9.x bare `Drawing[]` too and upgrades it. |
 | `migrateDrawings(input)` | The upgrade `fromJSON` runs, exported for a host reading a saved layout on its own: any 1.9.x array or v2 document in, a v2 `DrawingsDocument` out, never throws. |
 | `destroy()` | Unhooks listeners, removes every pane layer, releases placement mode. |
 
@@ -406,7 +407,7 @@ edge-spacing extrapolation and drawing-state formats are unchanged.
 
 ### Selection and dragging
 
-Hit ids are `draw:<id>` for the body and `draw:<id>#<n>` for anchor `n`. A body drag on an unselected drawing selects it alone first; then the **whole selection** moves as one undo entry (locked members stay, other-pane members through `priceToCoordinate` / `coordinateToPrice`); dragging a handle moves that one anchor to the cursor. `draw:update` fires per moved drawing on `drag:end`, plus one `drawing:change`. The grab radius is 6 media px for a body, 7 for a handle; handles of the selected drawing win over its own body.
+Hit ids are `draw:<id>` for the body and `draw:<id>#<n>` for anchor `n`. A body drag on an unselected drawing selects it alone first; then the **whole selection** moves as one undo entry (locked members stay, other-pane members through `priceToCoordinate` / `coordinateToPrice`, and a member on a pane collapsed to its strip, where those return `null`, keeps its prices and moves in time only); dragging a handle moves that one anchor to the cursor. `draw:update` fires per moved drawing on `drag:end`, plus one `drawing:change`. The grab radius is 6 media px for a body, 7 for a handle; handles of the selected drawing win over its own body.
 
 Freehand strokes expose only their first and last handle: one handle per sample would bury the ink.
 
@@ -417,6 +418,62 @@ The controller also tracks the unselected drawing under the pointer from the cha
 **A whole drag is one undo step.** The snapshot is pushed once per gesture, on the first `drag` event, not per frame. Any new edit clears the redo branch. Snapshots are `JSON.stringify` of the full list, capped at `historyLimit`.
 
 `update(id, { locked: true })` keeps the drawing rendered but removes it from hit-testing entirely, it cannot be selected or dragged, and it draws no handles. `update(id, { visible: false })` removes it from both rendering and hit-testing.
+
+### Drawing policies
+
+`locked` is the user's own switch, and it couples two things: no selection on the
+chart and no dragging. A host that places drawings of its own (a signal level, a
+session marker, a replay annotation) needs restrictions the user cannot lift, and
+needs them separately. `drawing.policy` is a `DrawingPolicy`: four independent
+flags, each defaulting to `true`, so a drawing without one behaves exactly as
+before. `locked` is unchanged.
+
+```ts
+const mark = draw.add({
+  tool: 'horizontal-line', paneIndex: 0, style: { lineStyle: 'dashed' },
+  points: [{ time, price }],
+  policy: { editable: false, persistent: false, listed: false },
+});
+draw.update(mark.id, { points: [{ time, price: next }] }, { force: true });   // the host moves it
+draw.remove(mark.id, { force: true });                                       // and retires it
+```
+
+| Flag | `false` means | Binds |
+|---|---|---|
+| `selectable` | Never joins the selection. A click passes through to what lies under it; no hover, handles, drag or context-menu target. | Every caller: `select()` ignores it, so a host UI (an objects list, select-all) cannot select it either. |
+| `editable` | Read-only. It still selects (a click selects it; a press-drag on it pans the chart), copies and duplicates. Nothing moves, reshapes, restyles, retexts, hides, locks, cuts, deletes or regroups it: drag and handles, `nudge`, `cut`, `update`, `updateMany`, `remove`, `removeMany`, `clear`, a group's hide, lock or remove. `createGroup` leaves it in the group it is in, and `renameGroup` and `removeGroup` refuse a group that holds it. Undo and redo never change its content or its group: they leave it where it is, keep the group that holds it and that group's name, and still move the user's own drawings in and out. A selected read-only drawing shows its anchors at the faint hover weight. | User operations. The controller cannot tell a click from a call, so every mutating method treats a call as the user's unless it passes `{ force: true }` (`DrawingEditOptions`). The host's own calls (adding a restricted drawing, a patch that carries `policy`, any forced call) record no undo step and leave the redo branch alone, and every recorded step takes them too: an undo or redo of the user's own steps never reverses a forced move, delete, regroup or rename. `fromJSON` (a restore) and linked-chart commits are not user edits and always apply. |
+| `persistent` | Transient. Left out of `toJSON()`, and so out of `chart.getState().drawings`, every saved layout and workspace document, and the saved membership of its group. It renders, selects and undoes as usual in the session. | Every caller: the serializer. A restore (`fromJSON`, `chart.restoreState`) replaces it with what was saved, and a rebuild that round-trips the document drops it, so re-add it after one. |
+| `listed` | Left out of the object inventory (`ChartObjects`), its group's row and every group-wide action there (a group row's remove deletes only its listed members, and `ChartObjects.ungroup` refuses the group), and so out of every objects panel and the widget's alert source picker. `drawings()` still returns it. | Every caller of the inventory. |
+
+The inventory also honours the other two: a read-only drawing's row offers no
+visibility, lock or remove (a group holding one offers none group-wide), and an
+unselectable drawing's row offers no select. The widget draws every edit control
+for a read-only selection disabled with the note "read-only" (context menu rows,
+the properties dialog's fields and actions, the rail's lock, eye and trash, the
+mobile selection bar) and declines to open the text or level editor; "Remove all
+drawings" counts only what it removes.
+
+A copy is the user's own drawing: `paste()` and `duplicate()` never carry a
+policy, and the clipboard payload does not include one. A policy is data: it
+survives `toJSON` for persistent drawings and `migrateDrawings`, which keeps only
+the four boolean flags. It is never history: a change to it records no step, and
+every recorded step takes the drawing's policy as it is now, so no undo or redo
+brings an older one back. A host importing documents it does not trust
+can strip `policy` before `fromJSON`. Stacking order (`bringToFront`,
+`sendToBack`, either side of the series, `reorder`) is outside the policy.
+
+Cost of the host's acts: taking one into the recorded steps is one pass over
+the undo and redo history, parsing and rewriting both snapshots of every step,
+so it grows with the number of recorded steps (see `historyLimit`) times the
+drawing count. A forced delete, a forced grouping call, a forced patch to a
+drawing the user may edit or one that carries `zIndex`, any patch that carries
+`policy` and a linked chart's change of policy make that pass. A forced patch
+to a read-only drawing that carries neither `policy` nor `zIndex` makes none,
+so trailing a level on every tick is cheap: history cannot reach that drawing
+while it stays read-only, and the patch goes in with the next pass, which a
+change of its policy always makes. Move a trailing level with `points` (and
+`style`) alone; putting `zIndex` or `policy` in the same patch pays for the
+pass on every tick.
 
 ## Clipboard: copy, cut, paste
 
@@ -725,8 +782,15 @@ hit regions. Zoom in or disable unneeded levels to inspect crowded values.
 ## Named drawing groups (2.5.3)
 
 `DrawingGroup` contains an id, name and drawing ids. `DrawingController.groups()`,
-`createGroup(name, ids)`, `renameGroup(id, name)`, and
-`removeGroup(id, removeDrawings = false)` manage membership. A drawing belongs to
+`createGroup(name, ids, options?)`, `renameGroup(id, name, options?)`, and
+`removeGroup(id, removeDrawings = false, options?)` manage membership. A read-only
+drawing (`policy.editable: false`) keeps the group the host gave it: `createGroup`
+leaves it out, and a group that holds one is renamed or removed only with
+`{ force: true }`. Undo and redo follow the same rule, and every step already
+recorded takes a forced grouping call as well, so no press reverses it.
+`createGroup` mints an id (`group-N`) that neither a live group nor any undo or
+redo step holds, so a step that brings back an old group never lands on a new
+one. A drawing belongs to
 at most one group. Invalid/missing members are discarded on restore. Optional
 `DrawingsDocument.groups` preserves old drawing documents and round-trips named
 groups. Group changes participate in undo/redo. `ChartObjectDrawingGroup` is the

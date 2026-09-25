@@ -24,6 +24,7 @@ import type {
   IndicatorPlot,
   IndicatorInput,
   IndicatorLevel,
+  IndicatorRequestState,
   IndicatorSettings,
   IndicatorStore,
   IndicatorValues,
@@ -39,6 +40,10 @@ export interface Tier2Point {
 export interface Tier2Context {
   /** Host identity when supplied. Indicator settings remain independent. */
   dataContext?: Readonly<ChartDataContext>;
+  /** Native source, provider and external-data revisions, when supplied. */
+  requestState?: Readonly<IndicatorRequestState>;
+  /** Inclusive availability cutoff during opted-in native timed replay. */
+  asOf?: number;
   /** Cancelled when this request is obsolete or the instance is removed. */
   signal?: AbortSignal;
   settings: Readonly<IndicatorSettings>;
@@ -89,6 +94,13 @@ export interface Tier2Descriptor {
   /** Load the series for the current window. */
   fetch(ctx: Tier2Context): Promise<readonly Tier2Point[]>;
   /**
+   * Opt into native timed replay. fetch must honor finite ctx.asOf, return the
+   * values known then, and use point.time as availability time. Raw requestBars
+   * does not supply historical value versions automatically. Native legacy
+   * replay without an availability clock remains unsupported. Defaults false.
+   */
+  supportsReplay?: boolean;
+  /**
    * Optional live subscription. Call `push` with each incoming point; return an
    * unsubscribe function.
    */
@@ -102,12 +114,23 @@ export interface Tier2Descriptor {
   range?(settings: Readonly<IndicatorSettings>): { min: number; max: number } | null;
 }
 
+type Tier2Outcome = { ok: true; points: readonly Tier2Point[] } | { ok: false; error: unknown };
+
 interface Tier2Request {
-  promise: Promise<readonly Tier2Point[]>;
   controller: AbortController;
+  context: Tier2Context;
   from: number;
   to: number;
-  extend: boolean;
+  mode: 'replace' | 'tail' | 'prepend';
+  version: string;
+  liveAfter: number | null;
+  started: boolean;
+  outcome?: Tier2Outcome;
+  receive(outcome: Tier2Outcome): void;
+}
+
+interface Tier2Subscription {
+  dispose?: () => void;
 }
 
 interface Tier2State {
@@ -119,8 +142,15 @@ interface Tier2State {
   to: number;
   status: IndicatorDataStatus;
   request: Tier2Request | null;
-  unsubscribe: (() => void) | null;
+  subscription: Tier2Subscription | null;
   generation: number;
+  lastContext?: Tier2Context;
+  completedContext?: Tier2Context;
+  baseDataRevision?: number;
+  completedVersion: string | null;
+  liveRevision: number;
+  liveVersions: Map<number, number>;
+  errorKind?: 'fetch' | 'calc';
 }
 
 const STATE = '__tier2';
@@ -198,6 +228,7 @@ function alignedKeys(d: Tier2Descriptor): string[] {
  * ```
  */
 export function createTier2Indicator(d: Tier2Descriptor): IndicatorDescriptor {
+  const failures = new WeakMap<IndicatorStore, { points: readonly Tier2Point[] | undefined; error: unknown }>();
   return {
     id: d.id,
     name: d.name,
@@ -210,145 +241,239 @@ export function createTier2Indicator(d: Tier2Descriptor): IndicatorDescriptor {
 
     calc: (bars, settings, store, ctx) => {
       const state = stateOf(store);
-      const external = align(bars, state?.points ?? [], alignedKeys(d));
-      return d.calc === undefined ? external : d.calc(bars, external, settings, store, ctx);
+      try {
+        const external = align(bars, state?.points ?? [], alignedKeys(d));
+        const values = d.calc === undefined ? external : d.calc(bars, external, settings, store, ctx);
+        failures.delete(store);
+        return values;
+      } catch (error) {
+        failures.set(store, { points: state?.points, error });
+        throw error;
+      }
     },
 
     attach: (ctx) => {
       // A synchronous style reattach inherits pending history and its signal.
       const state: Tier2State = stateOf(ctx.store) ?? {
         key: null, points: [], live: [], loaded: false, from: 0, to: 0,
-        status: { state: 'empty' }, request: null, unsubscribe: null, generation: 0,
+        status: { state: 'empty' }, request: null, subscription: null, generation: 0,
+        completedVersion: null, liveRevision: 0, liveVersions: new Map(),
       };
       ctx.store[STATE] = state;
       let generation = ++state.generation;
       let active = true;
-      let observed: Tier2Request | null = null;
+      let refreshRevision = 0;
       let unsubscribeChanges: () => void = () => {};
-      state.unsubscribe?.();
-      state.unsubscribe = null;
 
       const current = (): boolean => active && state.generation === generation && !ctx.signal?.aborted;
       const publish = (status: IndicatorDataStatus): void => {
         state.status = status;
-        if (current()) ctx.setDataStatus?.(status);
+        const failure = failures.get(ctx.store);
+        if (current()) ctx.setDataStatus?.((status.state === 'ready' || status.state === 'empty') && failure?.points === state.points
+          ? { state: 'error', error: failure.error } : status);
       };
       const context = (): Tier2Context => {
         const bars = ctx.bars();
         const market = ctx.dataContext?.() ?? {
           symbol: ctx.symbol?.(), interval: ctx.interval?.(),
         };
+        const requestState = ctx.requestState?.();
         return {
           settings: ctx.settings(), bars,
           dataContext: { ...market },
+          requestState, asOf: requestState?.replay?.asOf,
           from: bars[0]?.time ?? 0, to: bars[bars.length - 1]?.time ?? 0,
           requestBars: ctx.requestBars,
         };
       };
       const cancel = (): void => {
-        state.request?.controller.abort();
+        const request = state.request;
         state.request = null;
-        observed = null;
+        request?.controller.abort();
       };
       const stopLive = (): void => {
-        state.unsubscribe?.();
-        state.unsubscribe = null;
+        const subscription = state.subscription;
+        state.subscription = null;
+        subscription?.dispose?.();
+      };
+      const clear = (): void => {
+        generation = ++state.generation;
+        state.loaded = false;
+        state.completedVersion = null;
+        state.completedContext = undefined;
+        state.baseDataRevision = state.lastContext?.requestState?.dataRevision;
+        state.live = [];
+        state.liveVersions.clear();
+        state.errorKind = undefined;
+        const hadPoints = state.points.length > 0;
+        state.points = [];
+        state.status = { state: 'empty' };
+        // Invalidation precedes every callback, including abort and disposal.
+        const request = state.request;
+        const subscription = state.subscription;
+        state.request = null;
+        state.subscription = null;
+        request?.controller.abort();
+        subscription?.dispose?.();
+        if (hadPoints) ctx.requestRecompute();
       };
       const observe = (request: Tier2Request): void => {
-        if (observed === request) return;
-        observed = request;
-        void request.promise.then((points) => {
+        request.receive = outcome => {
           if (!current() || state.request !== request || request.controller.signal.aborted) return;
           state.request = null;
-          observed = null;
-          const prepend = request.extend && request.from < state.from;
-          const merged: Tier2Point[] = request.extend && !prepend ? state.points.slice() : [];
-          for (const point of points.slice().sort((a, b) => a.time - b.time)) {
-            if (Number.isFinite(point.time)) upsert(merged, point);
+          state.completedVersion = request.version;
+          if (!outcome.ok) {
+            state.errorKind = 'fetch';
+            publish({ state: 'error', error: outcome.error });
+            if (request.context.requestState !== undefined) refresh();
+            return;
           }
-          // An older page must not overwrite the already loaded boundary or live tail.
-          if (prepend) for (const point of state.points) upsert(merged, point);
-          for (const point of state.live) upsert(merged, point);
+          const merged = request.mode === 'tail' ? state.points.slice() : [];
+          try {
+            for (const point of outcome.points.slice().sort((a, b) => a.time - b.time)) {
+              if (Number.isFinite(point.time) && (request.context.asOf === undefined || point.time <= request.context.asOf)) upsert(merged, point);
+            }
+          } catch (error) {
+            state.errorKind = 'fetch'; publish({ state: 'error', error });
+            if (request.context.requestState !== undefined) refresh();
+            return;
+          }
+          if (request.mode === 'prepend') for (const point of state.points) upsert(merged, point);
+          if (request.context.asOf === undefined) for (const point of state.live) {
+            if (request.liveAfter === null || (state.liveVersions.get(point.time) ?? 0) > request.liveAfter) upsert(merged, point);
+          }
+          const previous = state.points;
           state.points = merged;
-          state.from = state.loaded ? Math.min(state.from, request.from) : request.from;
-          state.to = state.loaded ? Math.max(state.to, request.to) : request.to;
+          try {
+            ctx.requestRecompute();
+            const failure = failures.get(ctx.store);
+            if (failure?.points === merged) throw failure.error;
+          } catch (error) {
+            if (current() && state.points === merged) {
+              state.points = previous;
+              state.errorKind = 'calc';
+              publish({ state: 'error', error });
+              if (request.context.requestState !== undefined) refresh();
+            }
+            return;
+          }
+          if (!current() || state.points !== merged) return;
+          if (request.liveAfter !== null) {
+            state.live = state.live.filter(point => (state.liveVersions.get(point.time) ?? 0) > request.liveAfter!);
+            for (const [time, revision] of state.liveVersions) if (revision <= request.liveAfter) state.liveVersions.delete(time);
+          }
+          state.from = state.loaded && request.mode !== 'replace' ? Math.min(state.from, request.from) : request.from;
+          state.to = state.loaded && request.mode !== 'replace' ? Math.max(state.to, request.to) : request.to;
           state.loaded = true;
+          state.completedContext = request.context;
+          state.errorKind = undefined;
           publish({ state: merged.length > 0 ? 'ready' : 'empty' });
-          ctx.requestRecompute();
           refresh();
-        }, (error: unknown) => {
-          if (!current() || state.request !== request || request.controller.signal.aborted) return;
-          state.request = null;
-          observed = null;
-          publish({ state: 'error', error });
-        });
+        };
+        if (request.outcome !== undefined) request.receive(request.outcome);
       };
-      const load = (c: Tier2Context, from: number, to: number, extend: boolean): void => {
-        const controller = new AbortController();
-        publish({ state: 'loading' });
+      const start = (request: Tier2Request): void => {
+        if (!current() || state.request !== request || request.started || request.controller.signal.aborted) return;
+        request.started = true;
+        const finish = (outcome: Tier2Outcome): void => { request.outcome = outcome; request.receive(outcome); };
         let promise: Promise<readonly Tier2Point[]>;
-        try { promise = d.fetch({ ...c, from, to, signal: controller.signal }); }
-        catch (error) { publish({ state: 'error', error }); return; }
-        const request: Tier2Request = { promise, controller, from, to, extend };
+        try { promise = d.fetch({ ...request.context, from: request.from, to: request.to, signal: request.controller.signal }); }
+        catch (error) { finish({ ok: false, error }); return; }
+        // The stable request dispatches directly to its current attachment, so
+        // adopting work does not add a promise turn to existing custom hosts.
+        void Promise.resolve(promise).then(points => finish({ ok: true, points }), error => finish({ ok: false, error }));
+      };
+      const load = (c: Tier2Context, from: number, to: number, mode: Tier2Request['mode'], version: string, replaceLive = false): void => {
+        const controller = new AbortController();
+        const request: Tier2Request = {
+          controller, context: c, from, to, mode, version,
+          liveAfter: replaceLive ? state.liveRevision : null, started: false, receive: () => {},
+        };
         state.request = request;
         observe(request);
+        publish({ state: 'loading' });
+        start(request);
       };
       const refresh = (retry = false): void => {
         if (!current()) return;
+        const revision = ++refreshRevision;
+        const fresh = (): boolean => current() && refreshRevision === revision;
         const c = context();
+        const previous = state.lastContext;
+        state.lastContext = c;
         const market = c.dataContext;
-        const key = JSON.stringify([cacheKey(d, c.settings), market?.symbol, market?.exchange, market?.interval]);
-        const changed = key !== state.key;
+        const native = c.requestState;
+        const replay = native?.replay;
+        const source = native?.source;
+        const oldSource = previous?.requestState?.source;
+        const oldReplay = previous?.requestState?.replay;
+        const key = JSON.stringify([cacheKey(d, c.settings), market?.symbol, market?.exchange, market?.interval,
+          native?.providerRevision, source?.sourceId, replay !== undefined]);
+        const offset = c.bars.length - (previous?.bars.length ?? 0);
+        const safePrepend = previous !== undefined && oldSource !== undefined && source !== undefined
+          && source.change === 'prepend' && source.revision === oldSource.revision + 1
+          && source.historyRevision === oldSource.historyRevision + 1 && c.bars !== previous.bars && offset > 0
+          && previous.bars.every((bar, i) => c.bars[offset + i] === bar);
+        const historyChanged = replay === undefined && source !== undefined && oldSource !== undefined
+          && source.historyRevision !== oldSource.historyRevision && !safePrepend;
+        const backward = c.asOf !== undefined && oldReplay?.asOf !== undefined && c.asOf < oldReplay.asOf;
+        const changed = key !== state.key || historyChanged || backward;
         if (changed) {
-          // Invalidate before stopping providers, whose cleanup can call back synchronously.
-          generation = ++state.generation;
-          stopLive();
-          cancel();
+          clear();
+          if (!fresh()) return;
           state.key = key;
-          state.loaded = false;
-          state.live = [];
-          state.status = { state: 'empty' };
-          if (state.points.length > 0) {
-            state.points = [];
-            ctx.requestRecompute();
-          }
         }
         let supported: boolean;
-        try { supported = d.supports?.(c) ?? true; }
-        catch (error) { publish({ state: 'error', error }); return; }
+        try { supported = (replay === undefined || (d.supportsReplay === true && Number.isFinite(c.asOf))) && (d.supports?.(c) ?? true); }
+        catch (error) { if (fresh()) publish({ state: 'error', error }); return; }
+        if (!fresh()) return;
         if (!supported) {
-          generation = ++state.generation;
-          stopLive();
-          cancel();
-          state.loaded = false;
-          state.live = [];
-          if (state.points.length > 0) { state.points = []; ctx.requestRecompute(); }
-          publish({ state: 'unsupported' });
+          clear(); if (fresh()) publish({ state: 'unsupported' });
           return;
         }
         if (c.bars.length === 0) {
-          // Replay may temporarily hide every bar. Retain same-source history.
-          if (state.request === null) publish({ state: 'empty' });
+          // Older hosts use range truncation without native replay metadata.
+          if (native !== undefined) { clear(); if (fresh()) publish({ state: 'empty' }); }
+          else if (state.request === null) publish({ state: 'empty' });
           return;
         }
-        if (state.request !== null) observe(state.request);
-        else if (retry || changed || state.status.state !== 'error') {
-          if (!state.loaded || retry) load(c, c.from, c.to, false);
-          else if (c.from < state.from) load(c, c.from, state.from, true);
-          else if (d.subscribe === undefined && c.to > state.to) load(c, state.to, c.to, true);
+        const version = JSON.stringify([key, c.from, d.subscribe === undefined || replay !== undefined ? c.to : null,
+          replay === undefined && d.subscribe === undefined ? source?.revision : null, native?.dataRevision, c.asOf]);
+        // A prefix page can carry the latest revision while its right edge is
+        // still unfetched. Revision equality alone cannot certify both ends.
+        const uncovered = c.from < state.from || (d.subscribe === undefined && c.to > state.to);
+        if (state.request !== null) { const request = state.request; observe(request); start(request); }
+        else if (retry || changed || (native !== undefined
+          ? state.completedVersion !== version || (uncovered && state.status.state !== 'error')
+          : state.status.state !== 'error')) {
+          const externalChanged = native !== undefined
+            && (state.completedContext?.requestState?.dataRevision ?? state.baseDataRevision) !== native.dataRevision;
+          if (!state.loaded || retry) load(c, c.from, c.to, 'replace', version, externalChanged);
+          else if (replay !== undefined || externalChanged) load(c, c.from, c.to, 'replace', version, externalChanged);
+          else if (c.from < state.from) load(c, c.from, state.from, 'prepend', version);
+          else if (d.subscribe === undefined && (c.to > state.to || native !== undefined)) load(c, state.to, c.to, 'tail', version);
           else publish({ state: state.points.length > 0 ? 'ready' : 'empty' });
         }
-        if (state.unsubscribe === null && d.subscribe !== undefined) {
+        if (!fresh()) return;
+        if (state.subscription === null && d.subscribe !== undefined && replay === undefined) {
           const liveGeneration = generation;
+          const subscription: Tier2Subscription = {};
+          state.subscription = subscription;
           try {
-            state.unsubscribe = d.subscribe(c, (point) => {
-              if (!current() || generation !== liveGeneration || !Number.isFinite(point.time)) return;
+            const dispose = d.subscribe(c, (point) => {
+              if (!current() || generation !== liveGeneration || state.subscription !== subscription || !Number.isFinite(point.time)) return;
               upsert(state.live, point);
+              state.liveVersions.set(point.time, ++state.liveRevision);
               upsert(state.points, point);
-              if (state.request === null && state.status.state !== 'error') publish({ state: 'ready' });
               ctx.requestRecompute();
+              if (!current() || generation !== liveGeneration || state.subscription !== subscription) return;
+              if (state.request === null && state.status.state !== 'error') publish({ state: 'ready' });
             });
-          } catch (error) { publish({ state: 'error', error }); }
+            if (current() && generation === liveGeneration && state.subscription === subscription) subscription.dispose = dispose;
+            else dispose();
+          } catch (error) {
+            if (current() && state.subscription === subscription) { state.subscription = null; publish({ state: 'error', error }); }
+          }
         }
       };
       const cleanup = (): void => {
@@ -358,19 +483,26 @@ export function createTier2Indicator(d: Tier2Descriptor): IndicatorDescriptor {
         ctx.signal?.removeEventListener('abort', abort);
         if (state.generation !== generation) return;
         state.generation += 1;
-        stopLive();
+        const detached = state.generation;
         ctx.setDataRetry?.(null);
+        stopLive();
         // Hand-built contexts have no lifetime signal. Allow synchronous style
         // reattachment before aborting history that no attachment still owns.
-        const detached = state.generation;
         queueMicrotask(() => { if (state.generation === detached) cancel(); });
       };
-      const abort = (): void => { cancel(); cleanup(); };
+      const abort = (): void => { if (state.generation === generation) cancel(); cleanup(); };
+      stopLive();
       ctx.signal?.addEventListener('abort', abort, { once: true });
-      unsubscribeChanges = ctx.subscribeDataChanges?.(() => refresh()) ?? (() => {});
+      unsubscribeChanges = ctx.requestState !== undefined && ctx.subscribeRequestChanges !== undefined
+        ? ctx.subscribeRequestChanges(() => refresh()) : ctx.subscribeDataChanges?.(() => refresh()) ?? (() => {});
       ctx.setDataRetry?.(() => refresh(true));
-      ctx.setDataStatus?.(state.status);
-      refresh(state.status.state === 'error');
+      const failure = failures.get(ctx.store);
+      if (state.errorKind === 'calc' && failure === undefined) {
+        state.errorKind = undefined;
+        state.status = { state: state.points.length ? 'ready' : 'empty' };
+      }
+      ctx.setDataStatus?.(failure?.points === state.points ? { state: 'error', error: failure.error } : state.status);
+      refresh(state.status.state === 'error' && state.errorKind !== 'calc');
       return cleanup;
     },
   };

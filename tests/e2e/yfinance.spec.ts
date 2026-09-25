@@ -557,3 +557,72 @@ test('an alert line drag previews without saving and persists once when released
   await page.screenshot({ path: info.outputPath('reference-alert-drag-restored.png') });
   expect(errors).toEqual([]);
 });
+
+test('a session mark selects read-only, stays out of the layout, and only the host clears it', async ({ page }, info) => {
+  const errors = watchErrors(page);
+  await openDemo(page);
+  const box = await chartBox(page);
+  const at = { x: box.x + box.width * 0.5, y: box.y + box.height * 0.35 };
+  await page.mouse.click(at.x, at.y, { button: 'right' });
+  const mark = page.locator('#ctxmenu [data-act="mark"]');
+  await expect(mark).toBeVisible();
+  await expect(mark).toHaveText(/^Mark .+ for This Session$/);
+  await mark.click();
+  const marks = () => page.evaluate(() => (window as any).__oac.draw.drawings()
+    .filter((d: { policy?: { persistent?: boolean } }) => d.policy?.persistent === false)
+    .map((d: { id: string; points: unknown }) => ({ id: d.id, points: JSON.stringify(d.points) })) as { id: string; points: string }[]);
+  const [placed] = await marks();
+  expect(placed).toBeDefined();
+
+  // A click on the line selects it; the bar says read-only and offers only a copy.
+  const y = await page.evaluate((id) => {
+    const { chart, draw } = (window as any).__oac;
+    return chart.priceToCoordinate(draw.get(id).points[0].price, 0) as number;
+  }, placed.id);
+  await page.mouse.click(box.x + box.width * 0.4, box.y + y);
+  expect(await selectedId(page)).toBe(placed.id);
+  const bar = page.locator('#propbar');
+  await expect(bar.locator('.pb-note')).toHaveText('Read-only');
+  await expect(bar.locator('[data-act="delete"]')).toHaveCount(0);
+  await page.screenshot({ path: info.outputPath('session-mark-selected.png') });
+
+  // Neither a drag nor Delete moves or removes it, and the saved layout never sees it.
+  await page.mouse.move(box.x + box.width * 0.4, box.y + y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.4 + 60, box.y + y + 40, { steps: 6 });
+  await page.mouse.up();
+  await page.keyboard.press('Delete');
+  expect(await marks()).toEqual([placed]);
+  expect(await page.evaluate(() => JSON.stringify((window as any).__oac.draw.toJSON()))).not.toContain(`"${placed.id}"`);
+
+  // With the mark selected again, so a drag that cleared the selection could
+  // not pass this on its own, the toolbar's Del has nothing to take and says
+  // why, and Clear has nothing either. A chart-type switch, which rebuilds
+  // the chart from the saved state, then brings the mark back as it was.
+  // Measured again: the drag panned the chart, which may have moved the line.
+  const yNow = await page.evaluate((id) => {
+    const { chart, draw } = (window as any).__oac;
+    return chart.priceToCoordinate(draw.get(id).points[0].price, 0) as number;
+  }, placed.id);
+  await page.mouse.click(box.x + box.width * 0.4, box.y + yNow);
+  expect(await selectedId(page)).toBe(placed.id);
+  await expect(page.locator('#drawdel')).toBeDisabled();
+  await expect(page.locator('#drawdel')).toHaveAttribute('title', 'read-only');
+  await expect(page.locator('#drawclear')).toBeDisabled();
+  await page.evaluate(() => {
+    const select = document.getElementById('ctype') as HTMLSelectElement;
+    select.value = 'line';
+    select.dispatchEvent(new Event('change'));
+  });
+  await expect.poll(marks).toEqual([placed]);
+  await page.screenshot({ path: info.outputPath('session-mark-after-rebuild.png') });
+
+  // The host's own row clears it.
+  await page.mouse.click(at.x, at.y, { button: 'right' });
+  const clear = page.locator('#ctxmenu [data-act="unmark"]');
+  await expect(clear).toHaveText('Clear Session Marks (1)');
+  await expect(page.locator('#ctxmenu [data-act="delall"]')).toBeHidden();
+  await clear.click();
+  expect(await marks()).toEqual([]);
+  expect(errors).toEqual([]);
+});

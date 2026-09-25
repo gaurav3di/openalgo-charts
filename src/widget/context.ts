@@ -18,6 +18,7 @@ import type { Keymap } from './keymap';
 import type { ToastHandle, ToastKind } from './toast';
 import type { WidgetThemeName } from './tokens';
 import type { WidgetTranslator } from './localization';
+import type { SymbolSearch } from './symbol-picker';
 
 // ── small DOM helpers ───────────────────────────────────────────────────
 
@@ -46,6 +47,16 @@ export function glyph(doc: Document, svg: string, kind: 'tool' | 'chrome'): HTML
   span.setAttribute('aria-hidden', 'true');
   span.innerHTML = svg;
   return span;
+}
+
+/**
+ * The ids among `ids` the user may edit: a drawing whose policy sets
+ * `editable` false is not one of them. Every widget control that edits a
+ * drawing takes its enabled state from this, so none is offered and then
+ * refused by the controller.
+ */
+export function editableIds(draw: DrawingController, ids: readonly string[]): string[] {
+  return ids.filter((id) => draw.get(id)?.policy?.editable !== false);
 }
 
 /** Whether a key event came from a text control, where chords stay out of the way. */
@@ -318,6 +329,8 @@ interface OverlayEntry {
   scrim: HTMLElement | null;
   restore: HTMLElement | null;
   closed: boolean;
+  suspended: number;
+  suspension?: { hidden: boolean; scrimHidden: boolean; focus: HTMLElement | null };
 }
 
 export interface OverlayStack {
@@ -327,6 +340,8 @@ export interface OverlayStack {
   closeAll(): void;
   top(): HTMLElement | null;
   size(): number;
+  /** Hide one overlay and its scrim without closing its session. Returns an idempotent resume. */
+  suspend?(el: HTMLElement): () => void;
   /** The layer element overlays are appended to. */
   readonly layer: HTMLElement;
   destroy(): void;
@@ -342,6 +357,7 @@ export function createOverlayStack(root: HTMLElement, doc: Document): OverlaySta
   const layer = h(doc, 'div', 'oac-layer');
   root.appendChild(layer);
   const stack: OverlayEntry[] = [];
+  const visibleTop = (): OverlayEntry | undefined => [...stack].reverse().find(entry => entry.suspended === 0);
 
   const close = (entry: OverlayEntry): void => {
     if (entry.closed) return;
@@ -364,7 +380,7 @@ export function createOverlayStack(root: HTMLElement, doc: Document): OverlaySta
   };
 
   const onKey = (e: KeyboardEvent): void => {
-    const top = stack[stack.length - 1];
+    const top = visibleTop();
     if (top === undefined) return;
     if (e.key === 'Escape') {
       if (top.opts.dismissOnEscape === false) return;
@@ -390,6 +406,7 @@ export function createOverlayStack(root: HTMLElement, doc: Document): OverlaySta
     // landed in, and stops at a modal.
     for (let i = stack.length - 1; i >= 0; i--) {
       const o = stack[i];
+      if (o.suspended > 0) continue;
       if (target !== null && (o.el.contains(target) || o.opts.anchor?.contains(target) === true)) break;
       if (o.opts.dismissOnOutside === false || (o.opts.modal === true && o.opts.dismissOnOutside !== true)) break;
       close(o);
@@ -414,9 +431,12 @@ export function createOverlayStack(root: HTMLElement, doc: Document): OverlaySta
     const placement = opts.placement ?? (opts.anchor ? 'below' : 'center');
     const modal = opts.modal ?? placement === 'center';
     const active = doc.activeElement as HTMLElement | null;
-    const restore = active !== null && active !== doc.body && !el.contains(active) ? active : null;
+    // WebKit does not focus a button on click or tap, so an overlay a tap opened
+    // finds nothing focused here. Its anchor is the control that opened it, and
+    // is where focus returns on close rather than nowhere.
+    const restore = active !== null && active !== doc.body && !el.contains(active) ? active : opts.anchor ?? null;
     let scrim: HTMLElement | null = null;
-    const entry: OverlayEntry = { el, opts: { ...opts, modal }, scrim: null, restore, closed: false };
+    const entry: OverlayEntry = { el, opts: { ...opts, modal }, scrim: null, restore, closed: false, suspended: 0 };
     if (modal) {
       scrim = h(doc, 'div', 'oac-scrim');
       if (opts.dismissOnOutside === true) scrim.addEventListener('pointerdown', () => close(entry));
@@ -462,14 +482,35 @@ export function createOverlayStack(root: HTMLElement, doc: Document): OverlaySta
 
   return {
     open,
+    suspend: (el) => {
+      const entry = stack.find(item => item.el === el);
+      if (!entry || entry.closed) return () => {};
+      if (entry.suspended === 0) entry.suspension = { hidden: entry.el.hidden,
+        scrimHidden: entry.scrim?.hidden ?? false, focus: doc.activeElement as HTMLElement | null };
+      entry.suspended++;
+      entry.el.hidden = true;
+      if (entry.scrim) entry.scrim.hidden = true;
+      let resumed = false;
+      return () => {
+        if (resumed) return;
+        resumed = true;
+        entry.suspended--;
+        if (entry.closed || entry.suspended > 0) return;
+        const saved = entry.suspension!;
+        entry.suspension = undefined;
+        entry.el.hidden = saved.hidden;
+        if (entry.scrim) entry.scrim.hidden = saved.scrimHidden;
+        if (!saved.hidden && saved.focus?.isConnected && entry.el.contains(saved.focus)) saved.focus.focus();
+      };
+    },
     closeTop: () => {
-      const top = stack[stack.length - 1];
+      const top = visibleTop();
       if (top === undefined) return false;
       close(top);
       return true;
     },
     closeAll: () => { for (const o of stack.slice().reverse()) close(o); },
-    top: () => stack[stack.length - 1]?.el ?? null,
+    top: () => visibleTop()?.el ?? null,
     size: () => stack.length,
     layer,
     destroy: () => {
@@ -641,6 +682,8 @@ export interface WidgetContext {
   readonly storage: WidgetStorage;
   readonly locale: string | undefined;
   readonly translate?: WidgetTranslator;
+  /** Configured instrument lookup, shared by the header and indicator inputs. */
+  readonly symbolSearch?: SymbolSearch;
   toast(message: string, kind?: ToastKind): ToastHandle;
   /**
    * Show `el` over the widget: positioned from `opts.anchor` (or centred as a
