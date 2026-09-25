@@ -408,7 +408,19 @@ them as well: undoing and redoing the user's own steps never reverses a forced m
 regroup or rename. A policy is never history either:
 every recorded step takes the drawing's policy as it is now, so no undo or redo brings an
 older one back, and a step a new restriction or a forced call has left with nothing to do is
-dropped, so `canUndo()` and `canRedo()` stay true to what a press would do.
+dropped, so `canUndo()` and `canRedo()` stay true to what a press would do. A new group
+never takes the id of a group that an undo or redo step still holds, so bringing that group
+back never dissolves the new one.
+
+Taking the host's act into the recorded steps is one pass over the undo and redo history:
+both snapshots of every step are parsed and rewritten, so the work grows with the number of
+recorded steps (see `historyLimit`) times the number of drawings. A forced delete, a forced
+grouping call, a forced patch to a drawing the user may edit or one that carries `zIndex`,
+any patch that carries `policy` and a linked chart's change of policy make that pass. A
+forced patch to a read-only drawing that carries neither `policy` nor `zIndex` makes none,
+so a host can trail a level on every tick: history cannot reach that drawing while it stays
+read-only, and the patch goes in with the next pass, which a change of its policy always
+makes.
 
 A copy is the user's own drawing: paste and duplicate never carry a policy. A policy is
 data, so it survives a save and a restore for a persistent drawing, and the migration keeps

@@ -144,14 +144,15 @@ export interface DrawingEditOptions {
    *
    * Cost: taking a call into the recorded steps is one pass over the undo
    * and redo history, parsing and rewriting both snapshots of every step, so
-   * it grows with the history length (`historyLimit` per branch) times the
-   * drawing count. A forced delete, a forced grouping call, a forced patch
-   * to a drawing the user may edit or one that carries `zIndex`, and any
-   * patch that carries `policy` make that pass. A forced patch to a
-   * read-only drawing that carries neither `policy` nor `zIndex` (a level
-   * the host trails on every tick) makes none: history cannot reach that
-   * drawing's content while it stays read-only, so the patch is held and
-   * goes in with the next pass, which a change of its policy always makes.
+   * it grows with the number of recorded steps (see `historyLimit`) times
+   * the drawing count. A forced delete, a forced grouping call, a forced
+   * patch to a drawing the user may edit or one that carries `zIndex`, any
+   * patch that carries `policy` and a linked chart's change of policy make
+   * that pass. A forced patch to a read-only drawing that carries neither
+   * `policy` nor `zIndex` (a level the host trails on every tick) makes
+   * none: history cannot reach that drawing's content while it stays
+   * read-only, so the patch is held and goes in with the next pass, which a
+   * change of its policy always makes.
    */
   force?: boolean;
 }

@@ -462,6 +462,19 @@ brings an older one back. A host importing documents it does not trust
 can strip `policy` before `fromJSON`. Stacking order (`bringToFront`,
 `sendToBack`, either side of the series, `reorder`) is outside the policy.
 
+Cost of the host's acts: taking one into the recorded steps is one pass over
+the undo and redo history, parsing and rewriting both snapshots of every step,
+so it grows with the number of recorded steps (see `historyLimit`) times the
+drawing count. A forced delete, a forced grouping call, a forced patch to a
+drawing the user may edit or one that carries `zIndex`, any patch that carries
+`policy` and a linked chart's change of policy make that pass. A forced patch
+to a read-only drawing that carries neither `policy` nor `zIndex` makes none,
+so trailing a level on every tick is cheap: history cannot reach that drawing
+while it stays read-only, and the patch goes in with the next pass, which a
+change of its policy always makes. Move a trailing level with `points` (and
+`style`) alone; putting `zIndex` or `policy` in the same patch pays for the
+pass on every tick.
+
 ## Clipboard: copy, cut, paste
 
 ```ts
@@ -774,7 +787,10 @@ hit regions. Zoom in or disable unneeded levels to inspect crowded values.
 drawing (`policy.editable: false`) keeps the group the host gave it: `createGroup`
 leaves it out, and a group that holds one is renamed or removed only with
 `{ force: true }`. Undo and redo follow the same rule, and every step already
-recorded takes a forced grouping call as well, so no press reverses it. A drawing belongs to
+recorded takes a forced grouping call as well, so no press reverses it.
+`createGroup` mints an id (`group-N`) that neither a live group nor any undo or
+redo step holds, so a step that brings back an old group never lands on a new
+one. A drawing belongs to
 at most one group. Invalid/missing members are discarded on restore. Optional
 `DrawingsDocument.groups` preserves old drawing documents and round-trips named
 groups. Group changes participate in undo/redo. `ChartObjectDrawingGroup` is the

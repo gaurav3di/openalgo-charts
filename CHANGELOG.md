@@ -15,8 +15,12 @@ All notable changes to OpenAlgo Charts.
   user's own steps never reverses a forced move, delete, regroup or rename. History
   never restores an older policy, never regroups a read-only drawing or renames or
   dissolves its group, and drops a step a new restriction or a forced call leaves with
-  nothing to do, so `canUndo` and `canRedo` stay accurate. An unselectable drawing
-  never joins the selection and a click passes through it. A transient drawing is
+  nothing to do, so `canUndo` and `canRedo` stay accurate. `createGroup` never reuses a
+  group id an undo or redo step still holds. A forced patch to a read-only drawing that
+  carries neither `policy` nor `zIndex` costs no pass over the history, so a host can
+  trail a level on every tick; any other forced call, and any patch that carries
+  `policy`, rewrites every recorded step. An unselectable drawing never joins the
+  selection and a click passes through it. A transient drawing is
   left out of `toJSON`, the chart state and saved layouts. An unlisted drawing is
   left out of `ChartObjects`, every objects panel, every group-wide action there and
   the widget's alert source picker. Copies carry no policy, and `locked` behaves as
