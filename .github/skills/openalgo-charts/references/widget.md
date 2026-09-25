@@ -281,6 +281,7 @@ Color swatches stay compact. Theme overrides should target these tokens.
 | `now` | `() => number` | `Date.now` | Clock for the load window and the capture filename. |
 | `onOrder` | `(order: OrderRequest) => void` | none | Order entry from the right-click menu. Without it the menu draws no trade rows. |
 | `styleNonce` | `string` | none | Response CSP nonce for the shared widget and dialog stylesheet. Style-attribute policy remains the host's responsibility. |
+| `keyboardRoute` | `() => boolean \| undefined` | none | For hosts with several widgets: false silences this widget's chords and chart shortcuts, true sends them here, undefined keeps pointer or focus. The chart grid sets it per cell. |
 
 Confirm defaults against `WidgetOptions` in the typings rather than assuming.
 
@@ -517,3 +518,54 @@ view and width; old records stay valid. No saved-state version bump is needed.
 all component styles, including dialogs and indicator-picker additions. Include it
 beside `WIDGET_CSS` when managing styles yourself; apply widget tokens to the root.
 createWidget/createAlertUi inject the complete component styles automatically.
+
+## Chart grid (unreleased)
+
+`createChartGrid(container, options)` returns a `ChartGrid`: one widget per cell on a
+rows by columns grid, with splitters, one active cell, linking through the base
+`LinkGroup`, and the portable `WorkspacePayload` of `openalgo-charts/workspace`. It is
+part of the widget tier, not a new one. Source of truth: `src/widget/grid.ts`.
+
+```ts
+import { createChartGrid } from 'openalgo-charts/widget';
+import { parseWorkspacePayload } from 'openalgo-charts/workspace';
+
+const grid = createChartGrid('#desk', { feed, symbol: 'RELIANCE', exchange: 'NSE', interval: '5m',
+  preset: '2x2', links: { crosshair: true, viewport: true }, persist: 'desk' });
+grid.setPreset('1x3');
+const report = grid.applyWorkspace(parseWorkspacePayload(fileText)); // { applied, reason? }
+```
+
+- `ChartGridOptions` is `WidgetOptions` (every cell's options) minus `keyboardRoute`,
+  plus `preset` (`ChartGridPreset`, default `1x1`), `links` (`LinkOptions`), `compactWidth`
+  (default 640 CSS px, 0 off), and grid-level `persist`/`storage`. `symbol`, `exchange`,
+  `interval` and `chartType` seed the first cell. Cells default to `mobile: 'never'`,
+  because a cell in a split is often narrower than the phone threshold.
+- `CHART_GRID_PRESETS`: `1x1`, `1x2`, `1x3`, `2x1`, `3x1`, `2x2` as `[rows, columns]`.
+  `setPreset` keeps surviving cells in reading order (same widget instances), builds new
+  ones on the active chart's instrument, destroys the rest and resets weights. No span
+  editing; spans from a saved payload are drawn and splitters stop where a span crosses.
+- `ChartGridCell` (`id`, `widget`, `element`, `row`, `column`, `rowSpan`, `columnSpan`);
+  `cells()`, `active()`, `setActive(id, { focus })`, `layout()` (`ChartGridLayout`),
+  `linkOptions()`, `setLinks(patch)`, `theme()`, `setTheme()`, `compact()`, `destroy()`.
+- Events (`ChartGridEvents`, `ChartGridEventName`): `active`, `layout` (`preset`,
+  `weights`, `workspace`, `compact`), `links`, `theme`.
+- Keyboard: only the active cell answers. Pointer down or focus inside a cell makes it
+  active. A key pressed with the focus on the page body, while the pointer is over the
+  grid, goes to the active chart; a focused splitter keeps its arrow keys.
+- `WidgetOptions.keyboardRoute` is the hook behind that: `() => boolean | undefined`.
+  False silences the widget's chords and its chart's shortcuts, true routes them there,
+  undefined keeps the pointer-or-focus rule. A host with several plain widgets can use it.
+- `getWorkspace()` returns a JSON `WorkspacePayload` that `parseWorkspacePayload` accepts:
+  slots, weights, preset, active pane, sync, per-pane chart state, `settings['widget.theme']`,
+  rail magnet/stay. `volume` is written false and `comparisons` empty: a widget draws
+  neither. `applyWorkspace` checks the whole payload first (size, slots, overlap, weights,
+  intervals, chart types, studies, no comparisons, linked symbols or intervals that agree),
+  builds and restores every new cell off screen, and on the first failure destroys them,
+  aborting their history requests, and returns `{ applied: false, reason }` with the old
+  cells untouched. Pass untrusted input through `parseWorkspacePayload` first.
+- Linked viewports ignore moves caused by freshly loaded bars, so a follower on another
+  interval is not squeezed; views converge on the next pan or zoom. Linked symbols carry
+  the leader's exchange.
+- Below `compactWidth` only the active cell shows, with a tab strip to switch; splitters
+  hide. `CHART_GRID_CSS` is part of `WIDGET_COMPONENT_CSS`.

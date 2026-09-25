@@ -20,6 +20,7 @@ export default {
   'price-levels': 'Price Levels & Axis Chrome',
   'symbol-comparison': 'Symbol Comparison',
   'chart-linking': 'Chart Linking',
+  'chart-grid': 'Chart Grid',
   themes: 'Theming & Chart Options',
   'branding-and-watermarks': 'Branding & Watermarks',
   'settings-and-menus': 'Settings & Menus',

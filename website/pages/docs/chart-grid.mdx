@@ -1,0 +1,137 @@
+---
+title: Chart Grid
+description: Several widget charts in one layout with presets, splitters, an active chart, linking and portable workspace documents.
+---
+
+# Chart grid
+
+`createChartGrid` from `openalgo-charts/widget` places one complete widget in each
+cell of a rows by columns grid. It adds the pieces a multi-chart desk needs around
+them: layout presets, draggable splitters, one active chart that owns the keyboard,
+linking through the engine's `LinkGroup`, a compact view for narrow screens, and the
+same portable workspace payload that `openalgo-charts/workspace` validates and stores.
+
+It is part of the widget tier. The base engine and the other tiers still ship no DOM.
+
+## Create a grid
+
+```ts
+import { createChartGrid } from 'openalgo-charts/widget';
+import 'openalgo-charts/indicators';
+
+const grid = createChartGrid('#desk', {
+  feed,                          // one DataFeed; every chart loads through its own controller
+  symbol: 'RELIANCE', exchange: 'NSE', interval: '5m',
+  preset: '2x2',                 // the layout when nothing is restored
+  links: { crosshair: true, viewport: true },
+  persist: 'desk',               // keep the workspace in localStorage
+});
+
+grid.cells()[1].widget.setSymbol('INFY');
+grid.setActive(grid.cells()[1].id, { focus: true });
+```
+
+Every other `WidgetOptions` field applies to each chart. `symbol`, `exchange`,
+`interval` and `chartType` seed the first chart; a chart added by a larger preset
+copies the active chart's instrument. Cells use desktop controls unless you pass
+`mobile`, because a chart in a split is often narrower than the phone threshold.
+
+## Presets and splitters
+
+| Preset | Rows by columns |
+| --- | --- |
+| `1x1` | one chart |
+| `1x2`, `1x3` | two or three columns |
+| `2x1`, `3x1` | two or three rows |
+| `2x2` | two by two |
+
+`setPreset(name)` keeps the charts that still fit, in reading order and with their
+drawings, studies and data, destroys the rest and builds any new ones. Weights reset
+to equal tracks.
+
+A splitter sits in the gap between two tracks. Drag it, focus it and use the arrow
+keys (Shift for a bigger step), or double click to even the pair. A track keeps at
+least 15 percent of the pair it shares. Weights are fractions, so a resized window
+keeps the proportions. Spans in a saved workspace are drawn as saved, and a splitter
+stops where a spanning chart crosses its boundary. Span editing is not offered yet.
+
+## The active chart and the keyboard
+
+Every widget listens for keys on the document, so on a page with several charts one
+chord could reach the chart under the pointer and the chart holding the focus. The
+grid makes the active chart the only one that answers. Pressing or focusing inside a
+chart activates it and draws its outline. A key pressed while the page itself has the
+focus goes to the active chart whenever the pointer is over the grid, and a focused
+splitter or tab keeps its own arrow keys.
+
+The same decision is available to any host through `WidgetOptions.keyboardRoute`:
+return false to silence a widget and its chart's shortcuts, true to send keys to it,
+and undefined to keep the usual pointer or focus rule.
+
+## Linking
+
+`setLinks({ crosshair, viewport, symbol, interval, appearance })` switches channels of
+the engine's link group. Each change is applied once per follower and never echoes
+back. Turning symbol or interval linking on adopts the active chart's choice, and a
+linked symbol carries the leader's exchange. A view that moves only because a chart
+received new bars stays local, so a follower on a different interval is not squeezed
+into a sliver; linked views converge on the next pan or zoom. See
+[Chart linking](/docs/chart-linking) for how time, not bar index, crosses charts.
+
+## Workspaces
+
+```ts
+import { parseWorkspacePayload } from 'openalgo-charts/workspace';
+
+const text = JSON.stringify(grid.getWorkspace());      // portable, validated by the tier
+const report = grid.applyWorkspace(parseWorkspacePayload(text));
+if (!report.applied) console.warn(report.reason);        // nothing on screen changed
+```
+
+`getWorkspace()` returns a plain JSON `WorkspacePayload`: rows, columns, slots,
+weights, preset, the active pane, sync switches and each chart's instrument, chart
+type, chart state, theme (`settings['widget.theme']`) and drawing magnet and stay. A
+widget draws no separate volume series and no comparisons, so `volume` is written
+false and `comparisons` empty.
+
+`applyWorkspace(payload)` is all or nothing. It first checks the whole payload: grid
+size, slots and overlap, weights, intervals and chart types this build knows,
+registered studies, no comparison symbols, and linked symbols or intervals that
+agree. It then builds and restores every new chart off screen. On the first failure
+it destroys the new charts, which cancels their history requests, and returns
+`{ applied: false, reason }` with the old charts exactly as they were. Validate
+untrusted files with `parseWorkspacePayload` first.
+
+With `persist`, the grid saves this payload after every change (debounced, and on
+page hide) and restores it on the next construction. A saved payload that no longer
+applies falls back to `preset`.
+
+## Loading and teardown
+
+Each chart owns its data controller, status overlay and retry. Charts on the same
+request share one feed call; switching a chart's instrument cancels its previous
+request unless another chart still needs it. Removing a chart through a preset, a
+workspace or `destroy()` destroys its widget, and a late answer for a destroyed chart
+never reaches the screen.
+
+## Narrow screens
+
+At or below `compactWidth` (640 CSS px by default, 0 to disable) the grid shows only
+the active chart at full size, with a tab strip naming each chart's symbol and
+interval. Splitters hide. Widening the grid restores every chart with its weights.
+
+## Events
+
+| Event | Payload |
+| --- | --- |
+| `active` | `{ id }` |
+| `layout` | `{ reason }`: `preset`, `weights`, `workspace` or `compact` |
+| `links` | the resolved link options |
+| `theme` | `{ theme }` after any chart changes theme; every chart follows |
+
+## Reference host
+
+The yfinance example has a grid view, `examples/yfinance/grid.html`, with preset and
+link controls, import and export of layout files, and persistence. The main page
+hands a layout it cannot draw (more than two charts, or rows) to the grid view from
+its Layouts dialog.

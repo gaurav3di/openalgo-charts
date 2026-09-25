@@ -3,7 +3,9 @@
 The optional `openalgo-charts/workspace` entry point provides portable configuration
 documents, a catalog repository and an IndexedDB storage adapter. It creates no UI,
 chart or market-data subscription. Hosts own their layout controls, data loading,
-template application and save notifications.
+template application and save notifications. The widget tier's `createChartGrid` is
+one such host: `grid.getWorkspace()` writes a payload this tier accepts, and
+`grid.applyWorkspace(parseWorkspacePayload(text))` applies one all or nothing.
 
 ```ts
 import {

@@ -4,6 +4,16 @@ All notable changes to OpenAlgo Charts.
 
 ## Unreleased
 
+- The widget tier adds `createChartGrid`: one widget per cell in `1x1`, `1x2`,
+  `1x3`, `2x1`, `3x1` or `2x2` presets, with draggable and keyboard splitters, one
+  active chart that owns the keyboard, crosshair, viewport, symbol, interval and
+  appearance links without echo, a compact tabbed view on narrow screens, and
+  persistence. It writes and applies the portable workspace payload, including
+  saved spans and weights; a failed apply destroys the half-built charts, cancels
+  their requests and leaves the old ones untouched. `WidgetOptions.keyboardRoute`
+  lets any multi-widget host decide which widget answers a key. The yfinance
+  reference host gains a grid view, and its main page hands over layouts it
+  cannot draw.
 - CSV export supports explicit study instances, inclusive UTC ranges and
   display-aligned plot values with effective runtime offsets. Candle plots expand
   into OHLC fields; projected times are identified without exposing future replay
