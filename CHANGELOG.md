@@ -5,14 +5,18 @@ All notable changes to OpenAlgo Charts.
 ## Unreleased
 
 - Study drawings and markers can name where they go. `overlay: true` sends a
-  shape to the price pane on its right scale, or anchors a marker to the
-  candles, even from a study in its own pane; `plot: key` draws a shape on that
-  plot's pane and scale, or anchors a marker to that plot's series. Each target
-  is its own layer that follows scale reassignment and study moves, hides with
-  the study, reports hits where it is drawn, and is released when no longer
-  returned or when the study or its pane goes. Outputs that name no target
-  render exactly as before. `IndicatorOutputTarget` and `IndicatorMarker` are
-  exported.
+  shape to the price pane, measured on the candles' own scale on whichever axis
+  they sit, or anchors a marker to the candles, even from a study in its own
+  pane; neither holds an axis, so the price axis stays free to move. `plot: key`
+  draws a shape on that plot's pane and scale, or anchors a marker to that
+  plot's series. Each target is its own layer that follows scale reassignment
+  and study moves, hides with the study, reports hits where it is drawn, keeps
+  its study's place in the stack, and is released when no longer returned or
+  when the study or its pane goes. An invalid target or style throws before any
+  layer of that kind changes; the rest of that pass is not rolled back. Outputs
+  that name no target render exactly as before. `IndicatorOutputTarget` and
+  `IndicatorMarker` are exported, and `IndicatorDrawings` takes an optional
+  price-scale callback.
 - CSV export supports explicit study instances, inclusive UTC ranges and
   display-aligned plot values with effective runtime offsets. Candle plots expand
   into OHLC fields; projected times are identified without exposing future replay

@@ -674,6 +674,10 @@ layer.setItems([{ kind: 'line', from: a, to: b, color: '#4f8cff' }]);
 layer.setVisible(false);
 ```
 
+The constructor takes an optional callback returning the scale to measure prices on,
+read on every frame. `new IndicatorDrawings(() => series.priceScale())` keeps the shapes
+on that series' scale wherever the series goes, without binding the layer to an axis.
+
 ## Drawing and marker targets
 
 A study in its own pane often has something to say about the candles: the range a signal
@@ -684,7 +688,7 @@ returned by `markers` can name where it goes with two optional fields, together 
 
 | Field | Drawing | Marker |
 |---|---|---|
-| `overlay: true` | Drawn on the price pane, on its right scale, in the instrument's units. | Anchored to the instrument's candles, so `belowBar` sits under the low. Drawn once the chart has a primary series. |
+| `overlay: true` | Drawn on the price pane in the instrument's units, measured on the candles' own scale, whichever axis that is. | Anchored to the instrument's candles, so `belowBar` sits under the low. Drawn once the chart has a primary series. |
 | `plot: 'key'` | Drawn on that declared plot's pane and measured on its effective scale. | Anchored to that plot's series: its pane, its scale and its values. |
 
 With neither field, an output stays where it always went: drawings in the study's own
@@ -730,17 +734,24 @@ What the runtime does with a target:
   leaves price-pane layers on the price pane. A `plot` target follows its plot, so an
   `overlay: true` plot takes it to the price pane.
 - **Scales.** A `plot` target follows that plot through `setPlotPriceScales` and
-  `setPriceScale`. A price-pane drawing keeps the right scale; a price-pane marker keeps
-  the candles' scale.
+  `setPriceScale`. Price-pane drawings and markers both follow the candles: moving the
+  price axis to the left, or the instrument onto another scale, takes them along. Neither
+  holds an axis of its own, so neither stops the price axis from moving.
 - **Hiding and removal.** Hiding the study hides every target. A target that a later
   calculation no longer returns is released rather than kept empty, and removing the study,
-  or the pane it lives in, releases all of them.
+  or the pane it lives in, releases all of them. A layer made after the study was added,
+  for a target returned again or for the first time, takes the study's place in the
+  stack, below the studies added after it.
 - **Hits.** A `box` or `label` with an `id` or `tooltip`, and a marker with an `id`, report
   through `subscribeClick` where they are drawn: on the price pane or on the plot's axis.
 - **Saved state.** Targets are descriptor data, so a restored layout routes the same way.
-- **Errors.** An unknown plot, or `plot` together with `overlay: true`, rejects the whole
-  pass before any layer changes: `addIndicator` throws, and a later pass publishes an error
-  status while the previous layers stay up.
+- **Errors.** An unknown plot, or `plot` together with `overlay: true`, throws before any
+  layer of that kind changes, and so does an invalid style on any shape or mark: every
+  drawing layer, or every marker layer, keeps what the last good pass drew. `addIndicator`
+  throws; a later pass publishes an error status instead. The rest of that pass is not
+  rolled back. A pass syncs plots and fills, markers, the table, drawings, then background,
+  bar colours, levels and alerts: those before the failing output stay applied, and those
+  after it wait for the next pass that succeeds.
 
 Marks in different targets do not stack against each other at a shared bar, since each
 layer stacks only its own.
