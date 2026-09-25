@@ -6,6 +6,7 @@ import {
   armCursor, setDrawLock, magnetMode, stayMode,
 } from './rail.js';
 import { autosave } from './persist.js';
+import { followSessionMarks } from './session-marks.js';
 
 let app;
 
@@ -27,7 +28,12 @@ export function attachDrawing() {
     buildRail();
   }
   app.chart.on('draw:tool', ({ tool }) => { syncRail(tool); syncMobileControls(tool); armCursor(el('chart'), tool); });
-  app.chart.on('draw:add', ({ drawing }) => { el('status').textContent = `drew ${drawing.tool}`; });
+  // A drawing with a policy is the host's (a session mark put back after a
+  // rebuild), not something the user just drew.
+  app.chart.on('draw:add', ({ drawing }) => { if (!drawing.policy) el('status').textContent = `drew ${drawing.tool}`; });
+  followSessionMarks(app.chart, app.draw, () => app.req?.symbol);
+  for (const ev of ['drawing:change', 'drawing:select']) app.chart.on(ev, syncDrawToolbar);
+  syncDrawToolbar();
   // The properties bar follows the selection on its own (it subscribes to
   // the chart when the rail hands it the rebuilt one). What is left for the
   // status line is the chords, at the one moment they apply: the engine
@@ -44,6 +50,33 @@ export function attachDrawing() {
   }
   syncRail(app.draw.activeTool());
   syncMobileControls(app.draw.activeTool());
+}
+
+/**
+ * What the toolbar's draw buttons would do for `draw` right now. Del takes
+ * the part of the selection the user may delete and Clear every drawing but
+ * the read-only ones, so each is offered only with something to take; Undo
+ * and Redo follow the controller, which drops a step that would do nothing.
+ */
+export function drawToolbarState(draw) {
+  const sel = draw ? draw.selection() : [];
+  const del = sel.filter((id) => draw.get(id)?.policy?.editable !== false).length;
+  return {
+    undo: !!draw && draw.canUndo(), redo: !!draw && draw.canRedo(),
+    del, readOnly: sel.length > 0 && del === 0,
+    clear: draw ? draw.drawings().filter((d) => d.policy?.editable !== false).length : 0,
+  };
+}
+
+function syncDrawToolbar() {
+  const state = drawToolbarState(app.draw);
+  const del = el('drawdel');
+  if (!del) return;
+  el('drawundo').disabled = !state.undo;
+  el('drawredo').disabled = !state.redo;
+  del.disabled = state.del === 0;
+  del.title = state.readOnly ? 'read-only' : 'delete selected';
+  el('drawclear').disabled = state.clear === 0;
 }
 
 export function fillToolPicker() {
@@ -64,10 +97,8 @@ export function initDrawing(a) {
   el('drawtool').addEventListener('change', () => { if (!app.draw) return; setDrawLock(false); app.draw.setTool(el('drawtool').value || null); });
   el('drawundo').addEventListener('click', () => app.draw && app.draw.undo());
   el('drawredo').addEventListener('click', () => app.draw && app.draw.redo());
-  el('drawdel').addEventListener('click', () => {
-    const id = app.draw && app.draw.selected();
-    if (id) app.draw.remove(id);
-  });
+  // The whole selection, as one undo step; read-only drawings in it stay.
+  el('drawdel').addEventListener('click', () => app.draw && app.draw.removeMany(app.draw.selection()));
   el('drawclear').addEventListener('click', () => app.draw && app.draw.clear());
   // The legacy magnet checkbox is the rail's to follow (it owns the
   // three-way mode); nothing here reads it any more.

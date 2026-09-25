@@ -498,8 +498,10 @@ function controlsBlock() {
     glyph: chromeGlyph('trash'),
     tip: () => {
       const sel = selectionOf(app.draw);
+      // The count is what the press deletes: read-only drawings stay.
+      const n = sel.filter((id) => isEditable(app.draw.get(id))).length;
       return sel.length
-        ? { title: sel.length > 1 ? `Delete ${sel.length} drawings` : 'Delete drawing', chord: 'Del', sub: 'Right-click to remove all', side: 'right' }
+        ? { title: n > 1 ? `Delete ${n} drawings` : 'Delete drawing', chord: 'Del', sub: 'Right-click to remove all', side: 'right' }
         : { title: 'Delete drawing', chord: 'Del', sub: 'Select one first. Right-click to remove all', side: 'right' };
     },
     onClick: () => {
@@ -508,10 +510,14 @@ function controlsBlock() {
     },
     onContext: () => {
       if (!app.draw) return;
-      const n = app.draw.drawings().length;
+      // Each count is what its row reaches: an unselectable drawing never
+      // joins a selection, and a read-only one survives a clear.
+      const all = app.draw.drawings();
+      const picked = all.filter((d) => d.policy?.selectable !== false).length;
+      const n = all.filter(isEditable).length;
       openRailMenu(ctl.trash, [
-        { label: `Select all (${n})`, icon: 'cursor', disabled: n === 0, onSelect: () => {
-          app.draw.select(app.draw.drawings().map((d) => d.id));
+        { label: `Select all (${picked})`, icon: 'cursor', disabled: picked === 0, onSelect: () => {
+          app.draw.select(all.map((d) => d.id));
           refreshControls();
         } },
         { label: `Remove all drawings (${n})`, icon: 'trash', danger: true, disabled: n === 0, onSelect: () => {
@@ -543,6 +549,8 @@ function controlsBlock() {
   return box;
 }
 
+/** Whether the user may edit `d`: a drawing whose policy says otherwise is the host's. */
+const isEditable = (d) => !!d && d.policy?.editable !== false;
 const allLocked = (ids) => ids.length > 0 && ids.every((id) => { const d = app.draw.get(id); return d && d.locked === true; });
 const allHidden = (ids) => ids.length > 0 && ids.every((id) => { const d = app.draw.get(id); return d && d.visible === false; });
 
@@ -567,7 +575,8 @@ export function refreshControls() {
   ctl.magnet.dataset.mode = prefs.magnet;
   setState(ctl.stay, { on: prefs.stay, pressed: prefs.stay });
   const sel = d ? selectionOf(d) : [];
-  const none = sel.length === 0;
+  // A read-only selection leaves these three nothing they could change.
+  const none = !sel.some((id) => isEditable(d.get(id)));
   const locked = !none && allLocked(sel);
   const hidden = !none && allHidden(sel);
   setState(ctl.lock, { off: none, on: locked, pressed: locked, glyph: locked ? 'unlock' : 'lock' });

@@ -9,6 +9,7 @@ import { removeBracket } from './bracket.js';
 import { clipboardAction } from './clipboard.js';
 import { autosave } from './persist.js';
 import { alertContextEntries } from './alerts.js';
+import { addSessionMark, sessionMarks, clearSessionMarks } from './session-marks.js';
 import { capturePaneTarget } from './pane-target.js';
 
 // Price-level family (previous close, session extremes, extended hours,
@@ -29,6 +30,7 @@ let axSub = null;
 // target, which is the part a canvas cannot tell a host by itself: it is how
 // the indicator row below knows which instance was under the pointer.
 let ctxPrice = 0;
+let ctxTime = null;        // the bar time a session mark anchors to
 let ctxIndicator = null;   // instance id when the pointer was over an indicator
 let ctxAlerts = [];
 let ctxOwner = null;
@@ -46,6 +48,23 @@ export function paneCollapseRow(chart, paneIndex) {
   const folded = chart.paneCollapsed(paneIndex);
   return { label: folded ? 'Expand pane' : 'Collapse pane',
     onSelect: () => { chart.setPaneCollapsed(paneIndex, !folded); } };
+}
+
+/**
+ * What the menu's drawing rows reach. `removable` counts what Remove All
+ * would take, `deletable` is the selection Delete and Cut act on (null when
+ * it is read-only), `copyable` is the selection Copy takes, and `marks`
+ * counts the session marks the host would clear.
+ */
+export function drawingMenuState(draw) {
+  const selected = draw ? draw.selected() : null;
+  const primary = selected ? draw.get(selected) : undefined;
+  return {
+    removable: draw ? draw.drawings().filter((d) => d.policy?.editable !== false).length : 0,
+    deletable: primary && primary.policy?.editable !== false ? selected : null,
+    copyable: selected,
+    marks: sessionMarks(draw).length,
+  };
 }
 
 export function openContextMenu(e, pane = 1) {
@@ -99,24 +118,31 @@ export function openContextMenu(e, pane = 1) {
   ctxMenu.querySelector('hr[data-sec="alerts"]').hidden = ctxAlerts.length === 0;
 
   // Hide the drawing rows when there is nothing to act on, so the menu
-  // never offers a dead option.
-  const nDraw = app.draw ? app.draw.drawings().length : 0;
-  const selId = app.draw ? app.draw.selected() : null;
+  // never offers a dead option. A read-only drawing (a session mark) is
+  // neither counted for removal nor offered for delete or cut.
+  const drawState = drawingMenuState(app.draw);
   const rowAll = ctxMenu.querySelector('[data-act="delall"]');
   const rowSel = ctxMenu.querySelector('[data-act="delsel"]');
-  rowAll.hidden = nDraw === 0;
-  rowSel.hidden = !selId;
-  rowSel.previousElementSibling.hidden = nDraw === 0;   // the separator above the pair
-  if (nDraw > 0) rowAll.textContent = `Remove All Drawings (${nDraw})`;
+  const rowMark = ctxMenu.querySelector('[data-act="mark"]');
+  const rowUnmark = ctxMenu.querySelector('[data-act="unmark"]');
+  ctxTime = e.time ?? app.currentBars.at(-1)?.time ?? null;
+  rowAll.hidden = drawState.removable === 0;
+  rowSel.hidden = !drawState.deletable;
+  rowMark.hidden = !app.draw || !tradable || ctxTime === null;
+  rowUnmark.hidden = drawState.marks === 0;
+  // The separator above the group.
+  rowSel.previousElementSibling.hidden = rowAll.hidden && rowSel.hidden && rowMark.hidden && rowUnmark.hidden;
+  if (drawState.removable > 0) rowAll.textContent = `Remove All Drawings (${drawState.removable})`;
+  if (!rowMark.hidden) rowMark.textContent = `Mark ${fmt(ctxPrice)} for This Session`;
+  if (drawState.marks > 0) rowUnmark.textContent = `Clear Session Marks (${drawState.marks})`;
 
   // Clipboard rows. Copy and cut need a selection; paste does not, because
   // whether there is anything of ours to paste can only be known by asking
   // the clipboard, which is asynchronous. A dist/ whose controller has no
   // copy() hides the three rather than offering three dead options.
   const clipOk = app.draw && typeof app.draw.copy === 'function';
-  for (const act of ['copy', 'cut']) {
-    ctxMenu.querySelector(`[data-act="${act}"]`).hidden = !clipOk || !selId;
-  }
+  ctxMenu.querySelector('[data-act="copy"]').hidden = !clipOk || !drawState.copyable;
+  ctxMenu.querySelector('[data-act="cut"]').hidden = !clipOk || !drawState.deletable;
   ctxMenu.querySelector('[data-act="paste"]').hidden = !clipOk;
   ctxMenu.querySelector('hr[data-sec="clip"]').hidden = !clipOk;
 
@@ -651,8 +677,8 @@ export function initMenus(a) {
     }
     if (act === 'delall') {
       if (!app.draw) return;
-      const n = app.draw.drawings().length;
-      app.draw.clear();                 // one undo step, so it is recoverable
+      const n = drawingMenuState(app.draw).removable;
+      app.draw.clear();                 // one undo step, so it is recoverable; read-only drawings stay
       autosave();
       el('status').textContent = n ? `removed ${n} drawing${n === 1 ? '' : 's'}` : 'no drawings to remove';
       return;
@@ -660,7 +686,20 @@ export function initMenus(a) {
     if (act === 'delsel') {
       if (!app.draw) return;
       const id = app.draw.selected();
-      if (id) { app.draw.remove(id); autosave(); el('status').textContent = 'drawing deleted'; }
+      if (id && app.draw.remove(id)) { autosave(); el('status').textContent = 'drawing deleted'; }
+      return;
+    }
+    // Session marks are the host's own: it places them, and it alone clears
+    // them, which is why this is the one row that passes `force`.
+    if (act === 'mark') {
+      if (!app.draw || ctxTime === null) return;
+      addSessionMark(app.draw, { time: ctxTime, price: ctxPrice }, app.req.symbol);
+      el('status').textContent = `marked ${fmt(ctxPrice)} for this session`;
+      return;
+    }
+    if (act === 'unmark') {
+      const n = clearSessionMarks(app.draw, app.req.symbol);
+      el('status').textContent = `cleared ${n} session mark${n === 1 ? '' : 's'}`;
       return;
     }
     if (act === 'copy' || act === 'cut' || act === 'paste') {

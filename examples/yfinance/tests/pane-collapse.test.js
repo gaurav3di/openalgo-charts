@@ -34,6 +34,8 @@ function setup(chart, chart2 = null) {
   };
   add('button', 'data-act', 'alert-create'); add('button', 'data-act', 'alert-list'); add('hr', 'data-sec', 'alerts');
   add('hr'); add('button', 'data-act', 'delsel'); add('button', 'data-act', 'delall');
+  // The session mark rows the page declares after Remove All.
+  add('button', 'data-act', 'mark'); add('button', 'data-act', 'unmark');
   add('hr', 'data-sec', 'clip'); for (const act of ['copy', 'cut', 'paste']) add('button', 'data-act', act);
   add('hr', 'data-sec', 'ind'); add('button', 'data-act', 'indset');
   add('hr', 'data-sec', 'pane'); add('button', 'data-act', 'panecollapse');

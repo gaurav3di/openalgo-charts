@@ -87,7 +87,9 @@ export function createObjectsPanelContent(ctx: WidgetContext, opts: ObjectsPanel
     content.insertBefore(grouping, list);
   }
   const updateGroupButton = (): void => {
-    groupButton.disabled = !groupName.value.trim() || !all.some(item => item.kind === 'drawing' && item.selected);
+    // A read-only drawing's row offers no lock, and grouping leaves it in the
+    // group the host gave it, so a selection of only those has nothing to group.
+    groupButton.disabled = !groupName.value.trim() || !all.some(item => item.kind === 'drawing' && item.selected && item.capabilities.lock);
   };
   groupName.addEventListener('input', updateGroupButton);
 

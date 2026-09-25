@@ -139,7 +139,7 @@ which returns `applied: false`. Hosts must not roll back over that newer state.
 | `timezone` (IANA name) | yes, but a name this runtime does not recognise is **skipped**, not thrown, so one stale zone cannot cost the whole layout |
 | `panes[]`: `weight`, right `priceScale`, optional secondary `scales`, optional `collapsed` | yes; every scale retains margins, `minMove`, optional `minPrecision`, mode, inversion, auto-scale, manual `range`, declared `fixedRange` and `ratioLock` geometry. `collapsed: true` is written only for a folded pane; a pane saved without it restores open, and pane 0 always restores open. A restore that lists panes or rebuilds studies also opens a pane it does not list |
 | `indicators[]`: `{ indicatorId, instanceId?, settings, paneIndex, visible? }` | yes, replaced not appended; saved identities are stable, legacy entries receive new IDs |
-| `drawings` | round-tripped opaquely; only present when a drawing state has been set. The draw tier writes a `DrawingsDocument` (`{ version: 2, drawings }`) here and reads a 1.9.x bare array too |
+| `drawings` | round-tripped opaquely; only present when a drawing state has been set. The draw tier writes a `DrawingsDocument` (`{ version: 2, drawings }`) here, without transient drawings (`policy.persistent: false`), and reads a 1.9.x bare array too |
 | `alerts` | optional `AlertsDocument`; lifecycle, scope, anchors and consumed bars survive reload; unsupported runtime payloads reject serialization |
 | `series[]`: `{ type, style, paneIndex, priceScaleId }` | **no**, reported back to you |
 | series **data** | **no**, never captured |

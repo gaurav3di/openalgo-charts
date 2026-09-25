@@ -314,9 +314,9 @@ chart has a different interval loaded.
 | `setTool(id \| null)` | Arm a tool for placement, or return to the cursor. |
 | `activeTool()` | The armed tool id, or null. |
 | `drawings()` / `get(id)` | The model, in paint order. |
-| `add(drawing)` | Add one directly (import, or host-authored). `zIndex`, `createdAt` and `id` are filled in. |
-| `update(id, patch)` / `updateMany(patches)` | Patch `points`, `style`, `text`, `props`, `locked`, `visible` or `zIndex`. `updateMany` is one undo step. |
-| `remove(id)` / `removeMany(ids)` / `clear()` | Delete one, several (one undo step), or all. |
+| `add(drawing)` | Add one directly (import, or host-authored). `zIndex`, `createdAt` and `id` are filled in. A `policy` restricts what the user can do with it; see [Drawing policies](#drawing-policies). |
+| `update(id, patch, options?)` / `updateMany(patches, options?)` | Patch `points`, `style`, `text`, `props`, `locked`, `visible`, `zIndex` or `policy`. `updateMany` is one undo step. A read-only drawing is left alone unless `options` is `{ force: true }`, and a forced patch is not an undo step. |
+| `remove(id, options?)` / `removeMany(ids, options?)` / `clear(options?)` | Delete one, several (one undo step), or all. Read-only drawings stay unless `{ force: true }`. |
 | `finish()` | End a variable-anchor shape (`path`, `polyline`) at the anchors placed so far. Returns whether it committed. Double-click already calls it. |
 | `select(id \| ids \| null, additive?)` / `selected()` / `selection()` | Selection. `additive` toggles each id; `selected()` is the primary id, `selection()` the list in pick order. |
 | `duplicate(ids)` / `nudge(ids, dx, dy)` | Clone with the paste offset and select the clones; move by a screen distance. One undo step each. |
@@ -324,7 +324,7 @@ chart has a different interval loaded.
 | `sendBehindSeries(id)` / `bringAboveSeries(id)` | Cross the series: below zero paints under the candles. |
 | `copy(target?)` / `cut(target?)` / `paste()` | Clipboard, all async. See [Drawing Clipboard](/docs/drawing-clipboard). |
 | `clipboard()` | The `DrawingClipboard` behind those three, for reporting why a copy did not reach the OS clipboard. |
-| `undo()` / `redo()` / `canUndo()` / `canRedo()` | History. A paste of several drawings is one step. |
+| `undo()` / `redo()` / `canUndo()` / `canRedo()` | History. A paste of several drawings is one step. `canUndo()` and `canRedo()` report only a step that still changes something. |
 | `toJSON()` / `fromJSON(data)` | Explicit serialisation: a `{ version: 2, drawings }` document out; a document or a 1.9.x bare array in, upgraded by `migrateDrawings`. |
 | `setOptions(patch)` | `magnet`, `stayInDrawingMode`, `historyLimit`, `defaultStyle`, `pasteOffsetBars`, `pasteOffsetPixels`, `clipboard`. |
 | `cancel()` / `popAnchor()` | Drop the anchors placed so far (the tool disarms unless `stayInDrawingMode` keeps it); remove the last anchor of a variable-anchor shape still being placed. Escape and Backspace, once the host wires them. |
@@ -366,6 +366,9 @@ those for its own order lines without the two fighting over one channel.
   (`style.pressure`).
 - **Undo**: a whole drag is **one** undo step, not one per frame.
 - **Lock**: a locked drawing renders but cannot be selected or dragged.
+- **Read-only**: a drawing whose policy sets `editable: false` selects on a click, while a
+  press-drag on it pans the chart. It shows its anchors faintly and no control moves or
+  deletes it. See [Drawing policies](#drawing-policies).
 
 <Callout>
 While a tool is armed the controller puts the chart in **placement mode**
@@ -374,6 +377,64 @@ reports the gesture as two `click` events: the press point, then the release poi
 `viaDrag`. `DrawingController` manages this for you; you only need it if you are placing
 things (alerts, annotations) without the draw tier.
 </Callout>
+
+## Drawing policies
+
+`locked` is the user's own switch. A host that places drawings of its own (a signal
+level, a session marker, an annotation from a strategy) needs restrictions the user
+cannot lift, and needs them one at a time. `drawing.policy` carries four independent
+flags. Each defaults to `true`, so a drawing without a policy behaves as it always has.
+
+```ts
+const mark = draw.add({
+  tool: 'horizontal-line', paneIndex: 0, style: { lineStyle: 'dashed' },
+  points: [{ time, price }],
+  policy: { editable: false, persistent: false, listed: false },
+});
+
+// The host that placed it still moves and retires it.
+draw.update(mark.id, { points: [{ time, price: next }] }, { force: true });
+draw.remove(mark.id, { force: true });
+```
+
+| Flag | `false` means | Binds |
+|---|---|---|
+| `selectable` | Never joins the selection. A click passes through to what lies under it, and nothing hovers or drags it. | Every caller: `select()` ignores it. |
+| `editable` | Read-only. It still selects, copies and duplicates, but nothing moves, reshapes, restyles, hides, locks, cuts, deletes or regroups it, and undo and redo never change it or its group. `createGroup` leaves it in its group, and a group holding it cannot be renamed or removed, by a call or by an undo. | User operations. Every mutating controller method treats a call as the user's unless it passes `{ force: true }`. A restore and a linked chart's commit always apply. |
+| `persistent` | Transient. Left out of `toJSON()`, the chart state and every saved layout, while it renders and undoes as usual in the session. | Every caller: the serializer. A restore replaces it with what was saved. |
+| `listed` | Left out of the object inventory (`ChartObjects`), every objects panel and every group-wide action there, and out of the widget's alert source picker. | Every caller of the inventory. |
+
+Placing a drawing with a restriction, a patch that carries `policy`, and every forced call
+are the host's own acts, so none of them is an undo step, and every step already recorded takes
+them as well: undoing and redoing the user's own steps never reverses a forced move, delete,
+regroup or rename. A policy is never history either:
+every recorded step takes the drawing's policy as it is now, so no undo or redo brings an
+older one back, and a step a new restriction or a forced call has left with nothing to do is
+dropped, so `canUndo()` and `canRedo()` stay true to what a press would do. A new group
+never takes the id of a group that an undo or redo step still holds, so bringing that group
+back never dissolves the new one.
+
+Taking the host's act into the recorded steps is one pass over the undo and redo history:
+both snapshots of every step are parsed and rewritten, so the work grows with the number of
+recorded steps (see `historyLimit`) times the number of drawings. A forced delete, a forced
+grouping call, a forced patch to a drawing the user may edit or one that carries `zIndex`,
+any patch that carries `policy` and a linked chart's change of policy make that pass. A
+forced patch to a read-only drawing that carries neither `policy` nor `zIndex` makes none,
+so a host can trail a level on every tick: history cannot reach that drawing while it stays
+read-only, and the patch goes in with the next pass, which a change of its policy always
+makes.
+
+A copy is the user's own drawing: paste and duplicate never carry a policy. A policy is
+data, so it survives a save and a restore for a persistent drawing, and the migration keeps
+only the four boolean flags; strip `policy` before `fromJSON` when importing a document you
+do not trust, the way the yfinance host does for every layout file it imports. Stacking order (front, back, either side of the series) is outside the policy.
+
+The widget draws every edit control for a read-only selection disabled with the note
+"read-only" (context menu, properties dialog, rail, mobile bar) and keeps copy and duplicate.
+The [Objects](/docs/objects) panel leaves unlisted drawings out and offers a read-only one
+no hide, lock or remove. The yfinance reference host's **Mark ... for This Session** menu
+row places a read-only, transient, unlisted line, puts it back after every rebuild or
+restore, and clears the marks with `force`.
 
 ## Keyboard shortcuts
 
@@ -512,6 +573,9 @@ localStorage.setItem('layout', JSON.stringify(chart.getState()));   // includes 
 chart.restoreState(JSON.parse(localStorage.getItem('layout')));
 const draw = new DrawingController(chart);   // picks them up from the state
 ```
+
+A transient drawing (`policy.persistent: false`) is never in that state, so a rebuild or a
+restore drops it; re-add it afterwards.
 
 See [Chart State](/docs/state) for the rest of the payload.
 

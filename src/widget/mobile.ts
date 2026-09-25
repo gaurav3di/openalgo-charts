@@ -1,6 +1,6 @@
 import { widgetText } from './localization';
 import { registeredDrawingTools } from 'openalgo-charts/draw';
-import { h, type WidgetContext } from './context';
+import { h, editableIds, type WidgetContext } from './context';
 import type { RailHandle } from './rail';
 import {
   chartTypeChoices, chartTypeLabel, intervalLabel,
@@ -331,13 +331,16 @@ export function mountMobile(ctx: WidgetContext, opts: MobileOptions): MobileHand
     if (selection.parentNode !== null) {
       const ids = ctx.draw.selection();
       selection.hidden = ids.length === 0;
+      // Lock and delete have nothing to act on in a read-only selection.
+      const fixed = String(editableIds(ctx.draw, ids).length === 0);
       if (ids.length > 0 && lockButton !== null) {
         const locked = ids.every((id) => ctx.draw.get(id)?.locked === true);
         lockButton.textContent = locked ? widgetText(ctx, 'Unlock') : widgetText(ctx, 'Lock');
         lockButton.setAttribute('aria-pressed', String(locked));
+        lockButton.setAttribute('aria-disabled', fixed);
       }
       if (propertiesButton !== null) propertiesButton.setAttribute('aria-disabled', String(ids.length === 0));
-      if (deleteButton !== null) deleteButton.setAttribute('aria-disabled', String(ids.length === 0));
+      if (deleteButton !== null) deleteButton.setAttribute('aria-disabled', fixed);
     }
     sheet?.repaint();
   }

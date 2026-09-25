@@ -364,6 +364,18 @@ action returning `false` or throwing reports through the existing toast. No prim
 source removal control is offered. Settings reuse the widget's current chart,
 indicator and drawing editors. Drawing actions use existing undo history.
 
+Drawing policies reach the panel through the inventory: an unlisted drawing
+(`policy.listed: false`) has no row, a read-only one (`policy.editable: false`)
+has no Hide, Lock or Remove, and an unselectable one no select. Elsewhere in the
+widget a read-only selection keeps its copy and duplicate actions while every
+edit control is drawn disabled with the note "read-only": context menu rows, the
+properties dialog (fields, lock, visibility, delete, restore defaults), the rail's
+lock, eye and trash, and the mobile selection bar. The text and level editors
+decline to open on it. In a selection that mixes the two, Cut, Delete and the trash
+tooltip count only the drawings they take. **Group selected** is off for a
+selection of read-only drawings only, and the alert editor's drawing picker leaves
+unlisted drawings out. See [drawing policies](drawing-tools.md#drawing-policies).
+
 The panel uses the shared overlay for pointer containment, focus trapping, Escape
 and focus restoration. Its scrollable list fits the actual container, including
 350 px and short hosts; search and footer remain reachable. All controls are text.

@@ -72,6 +72,30 @@ All notable changes to OpenAlgo Charts.
   on the same pass. `IndicatorOutputTarget` and `IndicatorMarker` are
   exported, and `IndicatorDrawings` takes an optional callback that picks the
   price scale from each frame's context.
+- Drawings accept an independent `policy`: `selectable`, `editable`, `persistent`
+  and `listed`, each defaulting to true. A read-only drawing still selects and
+  copies, but no drag, handle, key, menu, dialog, rail, mobile, objects or grouping
+  action changes, regroups or deletes it, and undo never touches it; the owning host
+  passes `{ force: true }` to `update`, `updateMany`, `remove`, `removeMany`,
+  `clear`, `createGroup`, `renameGroup` or `removeGroup`. Placing a restricted
+  drawing, a patch that carries `policy` and every forced call are the host's acts
+  and record no undo step, and every recorded step takes them too, so undoing the
+  user's own steps never reverses a forced move, delete, regroup or rename. History
+  never restores an older policy, never regroups a read-only drawing or renames or
+  dissolves its group, and drops a step a new restriction or a forced call leaves with
+  nothing to do, so `canUndo` and `canRedo` stay accurate. `createGroup` never reuses a
+  group id an undo or redo step still holds. A forced patch to a read-only drawing that
+  carries neither `policy` nor `zIndex` costs no pass over the history, so a host can
+  trail a level on every tick; any other forced call, and any patch that carries
+  `policy`, rewrites every recorded step. An unselectable drawing never joins the
+  selection and a click passes through it. A transient drawing is
+  left out of `toJSON`, the chart state and saved layouts. An unlisted drawing is
+  left out of `ChartObjects`, every objects panel, every group-wide action there and
+  the widget's alert source picker. Copies carry no policy, and `locked` behaves as
+  before. `ChartObjectDrawingSource` gains an
+  optional `removeMany`. The yfinance host adds session price marks that use all
+  three host policies and return after every rebuild, strips policies from imported
+  layout files, and keeps its toolbar's Del, Clear, Undo and Redo to what they would do.
 - CSV export supports explicit study instances, inclusive UTC ranges and
   display-aligned plot values with effective runtime offsets. Candle plots expand
   into OHLC fields; projected times are identified without exposing future replay

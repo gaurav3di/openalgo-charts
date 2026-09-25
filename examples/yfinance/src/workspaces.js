@@ -3,17 +3,24 @@ import { ReferenceWorkspaceCatalog } from './workspace-catalog.js';
 import { workspaceFromLayout } from './workspace-document.js';
 import { workspaceUnavailable } from './workspace-host.js';
 import { validateReferenceLayout } from './workspace-transition.js';
-import { layoutSnapshot, readLayout, persistLayoutNow, parseLayoutFile } from './persist.js';
+import { layoutSnapshot, readLayout, persistLayoutNow, parseLayoutFile, untrustedDrawings } from './persist.js';
 import { magnetMode, stayMode } from './rail.js';
 import { el, openOverlay, toast } from './ui.js';
 import { capturePaneTarget } from './pane-target.js';
 import { chartDataUnavailableReason } from './chart-data.js';
 import { openChartDataControls } from './chart-data-controls.js';
 
-/** Older exported snapshots become named saves without inferring a live source. */
+/**
+ * Older exported snapshots become named saves without inferring a live
+ * source. A file is from elsewhere, so no drawing in it keeps a policy.
+ */
 export function workspaceFileDocument(text, filename) {
   const parsed = JSON.parse(text);
-  if (parsed?.kind !== undefined) return parsed;
+  if (parsed?.kind !== undefined) {
+    return Array.isArray(parsed.panes)
+      ? { ...parsed, panes: parsed.panes.map(pane => (pane?.chart ? { ...pane, chart: untrustedDrawings(pane.chart) } : pane)) }
+      : parsed;
+  }
   const payload = workspaceFromLayout(parseLayoutFile(text));
   return { ...payload, kind: 'workspace', version: 1, id: 'legacy-file',
     name: String(filename || 'Imported layout').replace(/\.json$/i, '').trim().slice(0, 120) || 'Imported layout',

@@ -30,7 +30,7 @@
  * Idempotent on a version 2 document, so a host can call it on every load.
  */
 import type {
-  Drawing, DrawingPoint, DrawingStyle, DrawingText, DrawingsDocument, DrawingGroup, FibLevel,
+  Drawing, DrawingPoint, DrawingPolicy, DrawingStyle, DrawingText, DrawingsDocument, DrawingGroup, FibLevel,
 } from './types';
 import { DRAWING_STATE_VERSION } from './types';
 import { cycleColor, levelColor } from './levels';
@@ -59,6 +59,7 @@ const STYLE_FLAGS = ['fill', 'extendLeft', 'extendRight', 'showLabels', 'showSta
 const TEXT_STRINGS = ['color', 'fontFamily', 'backgroundColor', 'borderColor'] as const;
 const TEXT_NUMBERS = ['fontSize', 'wrapWidth', 'backgroundOpacity'] as const;
 const TEXT_FLAGS = ['bold', 'italic', 'wrap', 'background', 'border'] as const;
+const POLICY_FLAGS = ['selectable', 'editable', 'persistent', 'listed'] as const;
 
 /** Deep enough for anything a tool stores in `props`, shallow enough to stop a cycle. */
 const MAX_PROPS_DEPTH = 8;
@@ -148,6 +149,13 @@ function migrateEntry(raw: unknown): Drawing | null {
   if (isRecord(raw.props)) out.props = jsonRecord(raw.props, 0);
   if (typeof raw.locked === 'boolean') out.locked = raw.locked;
   if (typeof raw.visible === 'boolean') out.visible = raw.visible;
+  // History snapshots come through here too, so a policy the migration
+  // dropped would be a policy one undo could strip.
+  if (isRecord(raw.policy)) {
+    const policy: DrawingPolicy = {};
+    for (const key of POLICY_FLAGS) if (typeof raw.policy[key] === 'boolean') policy[key] = raw.policy[key];
+    if (Object.keys(policy).length > 0) out.policy = policy;
+  }
   if (isNum(raw.createdAt)) out.createdAt = raw.createdAt;
   return out;
 }

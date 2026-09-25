@@ -177,6 +177,8 @@ export function mountTextEditor(ctx: WidgetContext, _anchor?: HTMLElement, opts:
   const id = opts.id ?? (sel.length === 1 ? sel[0] : undefined);
   const d = id === undefined ? undefined : draw.get(id);
   if (!isTextContent(d)) return declined(ctx, widgetText(ctx, 'Select a text drawing first'), opts.onDone);
+  // A box whose commit the controller would refuse is not offered.
+  if (d.policy?.editable === false) return declined(ctx, widgetText(ctx, 'read-only'), opts.onDone);
   const tool = ((): { defaultText?: DrawingText } | null => { try { return getDrawingTool(d.tool); } catch { return null; } })();
   const fallback = tool?.defaultText?.value !== undefined && tool.defaultText.value !== '' ? tool.defaultText.value : widgetText(ctx, 'Text');
   const t: TextLike = d.text ?? { value: '' };

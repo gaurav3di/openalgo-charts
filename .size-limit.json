@@ -23,7 +23,7 @@
   {
     "name": "Draw tier (87 drawing tools + controller)",
     "path": "dist/openalgo-charts.draw.mjs",
-    "limit": "42 kB",
+    "limit": "42.48 kB",
     "brotli": true
   },
   {

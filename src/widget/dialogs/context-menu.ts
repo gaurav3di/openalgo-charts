@@ -20,7 +20,7 @@ import { checkTradingCapability, getIndicator, isReplaying, PRICE_SCALE_MODES } 
 import type { Chart, ContextMenuEvent, ContextMenuTarget, PriceScaleId, PriceScaleMode, TradingCapabilityRequest, TradingCapabilitySource } from 'openalgo-charts';
 import { drawingSettingsSchema } from 'openalgo-charts/draw';
 import type { Drawing } from 'openalgo-charts/draw';
-import type { WidgetContext } from '../context';
+import { editableIds, type WidgetContext } from '../context';
 import { boxInRoot, chromeGlyph, el, glyphSvg, openPanel, placePanel, stopOwnKeys, type PanelHandle } from '../form';
 import { mountDrawingProperties } from './drawing-properties';
 import { mountIndicatorPicker } from './indicator-picker';
@@ -120,23 +120,29 @@ function drawingEntries(ctx: WidgetContext, primary: Drawing, ids: readonly stri
   const hidden = primary.visible === false;
   const behind = primary.zIndex < 0;
   const many = ids.length > 1;
+  // A selection with nothing the user may edit keeps its edit rows, greyed
+  // with the reason; the controller would refuse each one anyway. Cut and
+  // delete count only what they take.
+  const mine = editableIds(draw, ids).length;
+  const fixed = mine === 0;
+  const why = fixed ? widgetText(ctx, 'read-only') : undefined;
   out.push({ id: 'draw-props', label: many ? widgetText(ctx, 'Properties of the selection...') : widgetText(ctx, 'Properties...'), icon: 'settings',
     run: () => { mountDrawingProperties(ctx, undefined, { ids }); } });
   if (!many && isTextContent(primary)) {
-    out.push({ id: 'draw-text', label: widgetText(ctx, 'Edit text'), icon: 'text', chord: 'Enter', run: () => { mountTextEditor(ctx, undefined, { id: primary.id }); } });
+    out.push({ id: 'draw-text', label: widgetText(ctx, 'Edit text'), icon: 'text', chord: 'Enter', disabled: fixed, note: why, run: () => { mountTextEditor(ctx, undefined, { id: primary.id }); } });
   }
   if (schema.fields.some((f) => f.kind === 'levels')) {
-    out.push({ id: 'draw-levels', label: widgetText(ctx, 'Edit levels...'), run: () => { mountLevelEditor(ctx, undefined, { ids }); } });
+    out.push({ id: 'draw-levels', label: widgetText(ctx, 'Edit levels...'), disabled: fixed, note: why, run: () => { mountLevelEditor(ctx, undefined, { ids }); } });
   }
   out.push(SEP);
   out.push({ id: 'draw-copy', label: many ? widgetText(ctx, 'Copy {count} drawings', { count: ids.length }) : widgetText(ctx, 'Copy drawing'), icon: 'copy', chord: 'Ctrl+C', run: () => { void draw.copy(ids); } });
-  out.push({ id: 'draw-cut', label: many ? widgetText(ctx, 'Cut {count} drawings', { count: ids.length }) : widgetText(ctx, 'Cut drawing'), chord: 'Ctrl+X', disabled: locked, note: locked ? widgetText(ctx, 'locked') : undefined,
+  out.push({ id: 'draw-cut', label: mine > 1 ? widgetText(ctx, 'Cut {count} drawings', { count: mine }) : widgetText(ctx, 'Cut drawing'), chord: 'Ctrl+X', disabled: locked || fixed, note: why ?? (locked ? widgetText(ctx, 'locked') : undefined),
     run: () => { void draw.cut(ids); } });
   out.push({ id: 'draw-duplicate', label: widgetText(ctx, 'Duplicate'), icon: 'duplicate', chord: 'Ctrl+D', run: () => { draw.duplicate(ids); } });
   out.push(SEP);
-  out.push({ id: 'draw-lock', label: locked ? widgetText(ctx, 'Unlock') : widgetText(ctx, 'Lock'), icon: locked ? 'lock' : 'unlock', mark: 'check', on: locked,
+  out.push({ id: 'draw-lock', label: locked ? widgetText(ctx, 'Unlock') : widgetText(ctx, 'Lock'), icon: locked ? 'lock' : 'unlock', mark: 'check', on: locked, disabled: fixed, note: why,
     run: () => { draw.updateMany(ids.map((id) => ({ id, patch: { locked: !locked } }))); } });
-  out.push({ id: 'draw-hide', label: hidden ? widgetText(ctx, 'Show') : widgetText(ctx, 'Hide'), icon: hidden ? 'eye-off' : 'eye', mark: 'check', on: hidden,
+  out.push({ id: 'draw-hide', label: hidden ? widgetText(ctx, 'Show') : widgetText(ctx, 'Hide'), icon: hidden ? 'eye-off' : 'eye', mark: 'check', on: hidden, disabled: fixed, note: why,
     run: () => { draw.updateMany(ids.map((id) => ({ id, patch: { visible: hidden } }))); } });
   out.push(SEP);
   out.push(header(widgetText(ctx, 'Order')));
@@ -149,8 +155,8 @@ function drawingEntries(ctx: WidgetContext, primary: Drawing, ids: readonly stri
   out.push({ id: 'draw-behind', label: widgetText(ctx, 'Behind the series'), icon: glyphSvg(BEHIND_GLYPH), mark: 'radio', on: behind,
     run: () => { for (const id of ids) draw.sendBehindSeries(id); } });
   out.push(SEP);
-  out.push({ id: 'draw-delete', label: many ? widgetText(ctx, 'Delete {count} drawings', { count: ids.length }) : widgetText(ctx, 'Delete'), icon: 'trash', chord: 'Del', danger: true,
-    disabled: locked, note: locked ? widgetText(ctx, 'locked') : undefined, run: () => { draw.removeMany(ids); } });
+  out.push({ id: 'draw-delete', label: mine > 1 ? widgetText(ctx, 'Delete {count} drawings', { count: mine }) : widgetText(ctx, 'Delete'), icon: 'trash', chord: 'Del', danger: true,
+    disabled: locked || fixed, note: why ?? (locked ? widgetText(ctx, 'locked') : undefined), run: () => { draw.removeMany(ids); } });
   return out;
 }
 
@@ -349,7 +355,8 @@ export function contextMenuEntries(ctx: WidgetContext, e: ContextMenuEvent, hook
     sep();
     out.push({ id: 'draw-paste', label: widgetText(ctx, 'Paste'), icon: 'paste', chord: 'Ctrl+V',
       run: () => { void draw.paste().then((made) => { if (made.length === 0) ctx.toast(widgetText(ctx, 'Nothing to paste'), 'info'); }); } });
-    const n = draw.drawings().length;
+    // What `clear` would take: a read-only drawing stays, so it is not counted.
+    const n = draw.drawings().filter((d) => d.policy?.editable !== false).length;
     if (n > 0) {
       out.push({ id: 'draw-clear', label: widgetText(ctx, 'Remove all drawings ({count})', { count: n }), icon: 'trash', danger: true, run: () => { draw.clear(); } });
     }

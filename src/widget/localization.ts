@@ -361,6 +361,7 @@ export type WidgetBuiltinMessage =
   | "one instance on the chart"
   | "other side taken"
   | "paste it anywhere"
+  | "read-only"
   | "text stays text"
   | "{count} alert"
   | "{count} alerts"
