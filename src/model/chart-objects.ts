@@ -86,6 +86,8 @@ export interface ChartObjectDrawingSource {
   select(id: string | readonly string[] | null, additive?: boolean): void;
   update(id: string, patch: { visible?: boolean; locked?: boolean }): void;
   remove(id: string): boolean;
+  /** Delete several as one undo step; a group row holding an unlisted drawing needs it to offer remove. */
+  removeMany?(ids: readonly string[]): void;
   reorder?(id: string, direction: -1 | 1): boolean;
   groups?(): readonly ChartObjectDrawingGroup[];
   createGroup?(name: string, ids: readonly string[]): ChartObjectDrawingGroup | null;
@@ -100,7 +102,8 @@ export interface ChartObjectsOptions {
   onSettings?(object: ChartObjectSnapshot): void;
 }
 
-type Actions = Pick<ChartObjectProvider, 'select' | 'setVisible' | 'setLocked' | 'remove' | 'openSettings' | 'focus' | 'reorder' | 'move'>;
+type Actions = Pick<ChartObjectProvider, 'select' | 'setVisible' | 'setLocked' | 'remove' | 'openSettings' | 'focus' | 'reorder' | 'move'>
+  & { ungroup?(): boolean };
 interface Entry { row: ChartObjectSnapshot; actions: Actions }
 interface Registration { provider: ChartObjectProvider; off?: () => void }
 const EMPTY: readonly ChartObjectSnapshot[] = Object.freeze([]);
@@ -282,9 +285,9 @@ export class ChartObjects {
   }
 
   public ungroup(id: string): boolean {
-    const row = this.get(id);
-    if (this._destroyed || row?.kind !== 'group' || id !== 'group:' + row.sourceId) return false;
-    const result = this._options.drawings?.removeGroup?.(row.sourceId, false) === true;
+    const ungroup = this._destroyed ? undefined : this._entries.get(id)?.actions.ungroup;
+    if (!ungroup) return false;
+    const result = ungroup();
     this.refresh();
     return result;
   }
@@ -358,16 +361,23 @@ export class ChartObjects {
           else for (const member of members) draw.update(member.id, value);
         };
         const pickable = members.filter(member => member.policy?.selectable !== false);
+        // Removing or dissolving the whole group would reach its unlisted
+        // members too, so a group holding one removes just the members
+        // listed here, and is not ungrouped from here at all.
+        const whole = members.length === group.members.length;
+        const remove = whole ? draw.removeGroup && (() => { draw.removeGroup!(group.id, true); })
+          : draw.removeMany && (() => { draw.removeMany!(members.map(member => member.id)); });
         add(id, group.id, { kind: 'group', name: group.name, paneIndex: members[0].paneIndex,
           visible: members.some(member => member.visible !== false), locked: members.every(member => member.locked === true),
           selected: pickable.length > 0 && pickable.every(member => selected.includes(member.id)),
         }, {
           ...(pickable.length ? { select: () => draw.select(pickable.map(member => member.id)) } : {}),
+          ...(whole && draw.removeGroup ? { ungroup: () => draw.removeGroup!(group.id, false) } : {}),
           // A group-wide switch that skipped a read-only member would leave
           // the group half done, so a group holding one offers none.
           ...(members.every(member => member.policy?.editable !== false) ? {
             setVisible: (visible: boolean) => patch({ visible }), setLocked: (locked: boolean) => patch({ locked }),
-            ...(draw.removeGroup ? { remove: () => { draw.removeGroup!(group.id, true); } } : {}),
+            ...(remove ? { remove } : {}),
           } : {}),
         });
       }
