@@ -299,14 +299,20 @@ chart is a complete widget with its own top bar, loading status and retry.
 - The grid keeps its layout in `localStorage` under the `yfinance-grid` namespace.
   A first visit opens AAPL, MSFT, RELIANCE.NS and ^NSEI in a two by two grid. A
   saved layout the page cannot restore is kept, and the status line says why.
-- Each chart loads one fixed period per interval (1m 5d; 5m, 15m and 30m 1mo; 1h
-  6mo; 1d 2y; 1w 10y) and pages no older history, since the server answers by
-  period; a document's `historyPeriod` is not carried over.
+- Each chart loads the history period its layout saved (`historyPeriod`, the
+  main page's range) through the grid's `feed` function, when its interval can
+  serve it. Otherwise, and for a chart with no saved period, it loads its
+  interval's usual one (1m 5d; 5m, 15m and 30m 1mo; 1h 6mo; 1d 2y; 1w 10y). A chart
+  keeps its period when its interval changes, for when it changes back, and a
+  preset copies the active chart's period to the charts it adds. The grid writes
+  the periods back into its saved layout and exports. No older history is paged,
+  since the server answers by period.
 - Import accepts a portable workspace document or payload whose charts use those
-  intervals (`1wk` from the main page opens as `1w`). It is validated in full, then
-  applied all at once; on failure nothing on screen changes and the status line
-  says why. Comparison symbols are refused, since a widget draws none, and so are
-  the main page's folded calendar frames (`1mo`, `1q`).
+  intervals (`1wk` from the main page opens as `1w`) and periods the server knows.
+  It is validated in full, then applied all at once; on failure nothing on screen
+  changes and the status line says why. Comparison symbols are refused, since a
+  widget draws none, and so are the main page's folded calendar frames (`1mo`,
+  `1q`).
 
 The main page draws one chart or two side by side. Importing a layout with more
 charts, or with rows, into its Layouts dialog offers **Open in grid view**, which

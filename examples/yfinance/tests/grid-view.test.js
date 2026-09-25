@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { DataLoadingController } from '/dist/openalgo-charts.mjs';
 import { parseWorkspaceDocument } from '/dist/openalgo-charts.workspace.mjs';
 import {
-  GRID_HANDOFF_KEY, GRID_INTERVALS, GRID_PRESET_LABELS, gridFeed, gridViewRefusal, presetGlyph, handOffToGrid, takeGridHandoff, readGridFile, gridDocument,
+  GRID_HANDOFF_KEY, GRID_INTERVALS, GRID_PRESET_LABELS, gridFeed, gridFeeds, gridPeriod, gridViewRefusal, presetGlyph, handOffToGrid, takeGridHandoff, readGridFile, gridDocument,
 } from '../src/grid-view.js';
 import { needsGridView, validateReferenceWorkspace } from '../src/workspace-document.js';
 import { gridFileDocument } from '../src/workspaces.js';
@@ -33,6 +33,29 @@ describe('grid view feed', () => {
       ['1m', '5d'], ['5m', '1mo'], ['15m', '1mo'], ['1h', '6mo'], ['1d', '2y'], ['1wk', '10y'],
     ]);
     expect(asked.every(req => req.signal === signal && req.symbol === 'AAPL')).toBe(true);
+  });
+
+  it('loads the history period a layout saved wherever the interval can serve it', async () => {
+    const asked = [];
+    const source = { getBars: async req => { asked.push([req.interval, req.period]); return []; } };
+    const signal = new AbortController().signal;
+    const cases = [['1d', '5y'], ['1h', '1y'], ['5m', '5y'], ['1m', '5d'], ['1d', undefined], ['1w', 'max'], ['1d', 'toString']];
+    for (const [interval, period] of cases) await gridFeed(source, { period }).getBars({ symbol: 'AAPL', exchange: '', interval, signal });
+    // Five years of 5m bars is more than the source keeps, so that chart loads its usual month.
+    expect(asked).toEqual([['1d', '5y'], ['1h', '1y'], ['5m', '1mo'], ['1m', '5d'], ['1d', '2y'], ['1wk', 'max'], ['1d', '2y']]);
+    expect(gridPeriod('1h', '2y')).toBe('6mo');
+  });
+
+  it('gives the charts of one period one feed, so they still share a request', async () => {
+    const asked = [];
+    const feeds = gridFeeds({}, { getBars: async req => { asked.push(req.period); return []; } });
+    const long = feeds({ id: 'a', historyPeriod: '5y' });
+    expect(feeds({ id: 'b', historyPeriod: '5y' })).toBe(long);
+    expect(feeds({ id: 'c' })).toBe(feeds({ id: 'd' }));
+    expect(feeds({ id: 'c' })).not.toBe(long);
+    await long.getBars({ symbol: 'AAPL', exchange: '', interval: '1d' });
+    await feeds({ id: 'c' }).getBars({ symbol: 'AAPL', exchange: '', interval: '1d' });
+    expect(asked).toEqual(['5y', '2y']);
   });
 
   it('tells history paging there is nothing older, so a left edge downloads nothing again', async () => {
@@ -104,6 +127,13 @@ describe('grid view documents', () => {
     weekly.sync.interval = true;
     expect(gridViewRefusal(weekly)).toBe('');
     expect(readGridFile(JSON.stringify(weekly)).panes.map(pane => pane.interval)).toEqual(['1w', '1w', '1w', '1w']);
+    const periods = payload(2, 2);
+    periods.panes[0].historyPeriod = '5y';
+    expect(gridViewRefusal(periods)).toBe('');
+    periods.panes[3].historyPeriod = 'forever';
+    expect(gridViewRefusal(periods)).toMatch(/NVDA: the grid view cannot load a forever history period/);
+    periods.panes[3].historyPeriod = 'constructor';
+    expect(gridViewRefusal(periods)).toMatch(/cannot load a constructor history period/);
     const linked = payload(2, 2);
     linked.sync.symbol = true;
     expect(gridViewRefusal(linked)).toMatch(/linked by symbol/);

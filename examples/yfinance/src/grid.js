@@ -7,7 +7,7 @@
 import '/dist/openalgo-charts.indicators.mjs';
 import { createChartGrid, CHART_GRID_PRESETS } from '/dist/openalgo-charts.widget.mjs';
 import {
-  GRID_INTERVALS, GRID_PRESET_LABELS, gridFeed, presetGlyph, takeGridHandoff, readGridFile, gridDocument,
+  GRID_INTERVALS, GRID_PRESET_LABELS, gridFeeds, presetGlyph, takeGridHandoff, readGridFile, gridDocument,
 } from './grid-view.js';
 import { THEME_KEY } from './ui.js';
 
@@ -38,7 +38,8 @@ export function initGridView(doc = document) {
   const ready = handed === null ? undefined : new Promise(resolve => { release = resolve; });
   const coarse = view.matchMedia?.('(pointer: coarse)').matches === true;
   const grid = createChartGrid($('grid'), {
-    document: doc, feed: gridFeed(undefined, { ready }), symbol: 'AAPL', exchange: '', interval: '1d', intervals: GRID_INTERVALS,
+    // Each chart loads the history period its layout saved.
+    document: doc, feed: gridFeeds({ ready }), symbol: 'AAPL', exchange: '', interval: '1d', intervals: GRID_INTERVALS,
     theme, preset: '2x2', persist: PERSIST, links: { crosshair: true, viewport: true },
     // Touch devices get the phone controls in each chart; a mouse keeps the
     // desktop bar even when a chart in a four-way split is narrow.

@@ -69,8 +69,9 @@ test('a saved grid the page cannot restore is kept and reported, not overwritten
   expect(await page.evaluate(() => localStorage.getItem('oac-widget:yfinance-grid:grid'))).toBe(text);
 });
 
-const handPane = (id: string, symbol: string) => ({ id, symbol, exchange: '', interval: '1d', chartType: 'candlestick',
-  chart: { version: 1 }, settings: {}, volume: true, magnet: 'off', stay: false, comparisons: [] as unknown[], comparisonMode: 'percent' });
+const handPane = (id: string, symbol: string, historyPeriod?: string) => ({ id, symbol, exchange: '', interval: '1d', chartType: 'candlestick',
+  chart: { version: 1 }, settings: {}, volume: true, magnet: 'off', stay: false, comparisons: [] as unknown[], comparisonMode: 'percent',
+  ...(historyPeriod === undefined ? {} : { historyPeriod }) });
 const deskOf = (panes: ReturnType<typeof handPane>[]) => ({ kind: 'workspace', version: 1, id: 'desk', name: 'Desk', createdAt: 1, updatedAt: 1,
   panes, activePaneId: panes[2].id,
   layout: { rows: 2, columns: 2, slots: panes.map((pane, i) => ({ paneId: pane.id, row: Math.floor(i / 2), column: i % 2, rowSpan: 1, columnSpan: 1 })) },
@@ -97,10 +98,13 @@ test('the main page hands a layout it cannot draw to the grid view, which opens 
   await page.evaluate(() => { for (const cell of (window as any).__grid.cells()) cell.widget.setSymbol('IBM'); });
   await expect.poll(() => grid(page, g => g.cells().every((cell: any) => cell.widget.series.getData().length > 0 && cell.widget.symbol() === 'IBM')), { timeout: 20_000 }).toBe(true);
   const asked: string[] = [];
-  page.on('request', request => { if (request.url().includes('/api/history')) asked.push(new URL(request.url()).searchParams.get('symbol')!); });
+  page.on('request', request => {
+    const url = new URL(request.url());
+    if (url.pathname === '/api/history') asked.push(`${url.searchParams.get('symbol')}:${url.searchParams.get('period')}`);
+  });
   await page.goto(ORIGIN + '/examples/yfinance/index.html?test=1');
   await page.waitForFunction(() => (window as any).__oac?.app.chart && !(window as any).__oac.app.loading);
-  const desk = deskOf([handPane('a', 'AAPL'), handPane('b', 'MSFT'), handPane('c', 'TSLA'), handPane('d', 'NVDA')]);
+  const desk = deskOf([handPane('a', 'AAPL'), handPane('b', 'MSFT', '5y'), handPane('c', 'TSLA', '6mo'), handPane('d', 'NVDA')]);
   await page.getByRole('button', { name: 'Layouts', exact: true }).click();
   await page.locator('#ws-file').setInputFiles({ name: 'desk.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(desk)) });
   await expect(page.locator('#ws-notice')).toContainText('grid view');
@@ -110,10 +114,15 @@ test('the main page hands a layout it cannot draw to the grid view, which opens 
   await expect(page.locator('.oac-grid__cell')).toHaveCount(4);
   await expect(page.locator('#grid-status')).toContainText('Opened the layout from the main view: 4 charts');
   await expect(page.locator('.oac-grid__cell').nth(2)).toHaveAttribute('data-active', 'true');
-  // The saved IBM desk was built first and replaced; only the handed charts reached the server.
-  await expect.poll(() => ['MSFT', 'TSLA', 'NVDA'].every(symbol => asked.includes(symbol)), { timeout: 20_000 }).toBe(true);
+  // Each chart loads the history period the layout saved, or its interval's usual one.
+  await expect.poll(() => ['MSFT:5y', 'TSLA:6mo', 'NVDA:2y'].every(ask => asked.includes(ask)), { timeout: 20_000 }).toBe(true);
   await expect(page.locator('.oac-grid__cell .oac-data-status').first()).not.toContainText('Loading');
   await page.screenshot({ path: info.outputPath('yfinance-grid-opened.png') });
-  expect(asked.filter(symbol => symbol === 'IBM')).toEqual([]);
+  // The saved IBM desk was built first and then replaced. A feed that started
+  // its requests before the hand-off was applied would have sent IBM here.
+  expect(asked.filter(ask => ask.startsWith('IBM:'))).toEqual([]);
+  // The periods stay with the charts, so the saved grid and an exported layout carry them back.
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('oac-widget:yfinance-grid:grid')!).panes
+    .map((pane: { historyPeriod?: string }) => pane.historyPeriod ?? null))).toEqual([null, '5y', '6mo', null]);
   expect(errors).toEqual([]);
 });
