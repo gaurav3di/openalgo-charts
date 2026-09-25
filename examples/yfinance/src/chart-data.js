@@ -11,7 +11,7 @@ export function chartDataUnavailableReason(app, target = capturePaneTarget(app))
   return target.chart.primaryBars().length ? null : 'This chart has no bars to download';
 }
 
-export function chartDataFile(app, target = capturePaneTarget(app)) {
+export function chartDataFile(app, target = capturePaneTarget(app), options) {
   const reason = chartDataUnavailableReason(app, target);
   if (reason) throw new Error(reason);
   const part = value => String(value || 'chart').replace(/[^A-Za-z0-9._-]/g, '') || 'chart';
@@ -22,19 +22,23 @@ export function chartDataFile(app, target = capturePaneTarget(app)) {
   const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
   const filename = [target.request.symbol, target.request.interval, type]
     .map(part).join('-') + (replay ? '-replay' : '') + `-${stamp}.csv`;
-  return { filename, text: exportChartDataCsv(target.chart), rows: target.chart.primaryBars().length };
+  const rows = target.chart.primaryBars().filter(bar => (options?.range?.from === undefined || bar.time >= options.range.from)
+    && (options?.range?.to === undefined || bar.time <= options.range.to)).length;
+  return { filename, text: exportChartDataCsv(target.chart, options), rows };
 }
 
-export function downloadChartData(app, target = capturePaneTarget(app)) {
+export function downloadChartData(app, target = capturePaneTarget(app), options, preparedFile) {
   try {
-    const file = chartDataFile(app, target), anchor = document.createElement('a');
+    const reason = chartDataUnavailableReason(app, target);
+    if (reason) throw new Error(reason);
+    const file = preparedFile ?? chartDataFile(app, target, options), anchor = document.createElement('a');
     const url = URL.createObjectURL(new Blob([file.text], { type: 'text/csv;charset=utf-8' }));
     try {
       anchor.href = url; anchor.download = file.filename; document.body.appendChild(anchor); anchor.click();
     } finally {
       anchor.remove(); setTimeout(() => URL.revokeObjectURL(url), 0);
     }
-    el('status').textContent = `Chart data download started: ${file.rows} bars`;
+    el('status').textContent = `Chart data download started: ${file.rows} source bars`;
     return true;
   } catch (error) {
     const message = `Data export failed: ${error.message}`;

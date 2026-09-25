@@ -355,6 +355,11 @@ export const WIDGET_CSS = `
 .oac-widget .oac-dialog__foot { flex: none; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 14px 12px;
   border-top: 1px solid ${v('bd-soft')}; }
 .oac-widget .oac-dialog__foot > .oac-spacer { flex: 1 1 auto; }
+.oac-widget .oac-csv { width: 490px; }
+.oac-widget .oac-csv__ranges, .oac-widget .oac-csv .oac-dialog__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.oac-widget .oac-csv__hint { color: ${v('mut')}; line-height: 1.5; }
+.oac-widget .oac-csv__error { color: ${v('danger')}; overflow-wrap: anywhere; }
+.oac-widget .oac-csv__error:empty { display: none; }
 
 /* Shortcuts panel */
 .oac-widget .oac-keys { columns: 2; column-gap: 24px; min-width: 520px; }

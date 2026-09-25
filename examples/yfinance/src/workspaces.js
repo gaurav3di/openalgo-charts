@@ -7,7 +7,8 @@ import { layoutSnapshot, readLayout, persistLayoutNow, parseLayoutFile } from '.
 import { magnetMode, stayMode } from './rail.js';
 import { el, openOverlay, toast } from './ui.js';
 import { capturePaneTarget } from './pane-target.js';
-import { chartDataUnavailableReason, downloadChartData } from './chart-data.js';
+import { chartDataUnavailableReason } from './chart-data.js';
+import { openChartDataControls } from './chart-data-controls.js';
 
 /** Older exported snapshots become named saves without inferring a live source. */
 export function workspaceFileDocument(text, filename) {
@@ -56,7 +57,7 @@ export async function initWorkspaces(app) {
     const dataReason = chartDataUnavailableReason(app, dataTarget);
     el('ws-data').disabled = Boolean(dataReason);
     el('ws-data-source').textContent = dataTarget
-      ? `CSV for Chart ${dataTarget.pane}: ${dataTarget.request.symbol}, ${dataTarget.request.interval}. ${dataReason || 'All loaded bars, studies and comparisons.'}`
+      ? `CSV for Chart ${dataTarget.pane}: ${dataTarget.request.symbol}, ${dataTarget.request.interval}. ${dataReason || 'Choose rows, studies and alignment before downloading.'}`
       : 'Select a chart to download its data.';
     picker.disabled = locked || !documents.length;
     name.disabled = locked;
@@ -128,7 +129,7 @@ export async function initWorkspaces(app) {
     }
   };
   el('ws-close').addEventListener('click', close);
-  el('ws-data').addEventListener('click', () => downloadChartData(app, dataTarget));
+  el('ws-data').addEventListener('click', () => openChartDataControls(app, dataTarget));
   modal.addEventListener('click', event => { if (event.target === modal) close(); });
   name.addEventListener('input', render);
   picker.addEventListener('change', () => { pendingDelete = null; render(); });

@@ -27,11 +27,30 @@ returns all installed primary bars as `time,open,high,low,close,volume,oi`, foll
 by declared study plots and registered comparison closes. Time is UTC seconds;
 missing/nonfinite readings are blank, zero remains zero and OI is never summed.
 Repeated study columns include instance identity; hidden studies are included.
-`indicators: false` omits studies. `comparisons` overrides the registered handles,
+`indicators: false` or `[]` omits studies. An array of study instance IDs selects
+those studies in the requested order. Duplicate, unknown or removed IDs throw;
+use `IndicatorApi.id`, not a descriptor ID or displayed name. `range: { from, to }`
+filters rows by inclusive UTC seconds after full-history calculation; either
+finite boundary may be omitted. `ChartDataCsvRange` names these bounds; fractions
+and negative timestamps are retained.
+`comparisons` overrides the registered handles,
 for example with an explicitly managed controller's `list()` or `[]` to omit them.
 Comparisons retain original price units and their existing calendar/replay gaps.
 Only the installed replay prefix is read; transforms retain installed OHLC and
-study values precede visual plot offsets. This helper is DOM-free and does not
+study values precede visual plot offsets by default. `alignment: 'display'`
+uses effective runtime study offsets on the shared axis, expands candle plots
+into OHLC fields and adds `logical_index,time_origin` beside raw time. Primary
+and comparison values stay on primary positions. Sparse projected rows contain
+known study values, never future source observations. `projectTime` can override
+outside-axis time labels using the frozen `ChartDataProjectionContext`; null
+keeps a time unknown. Invalid or colliding positions/times throw. Time bounds
+apply after shifting.
+`ChartDataCsvFormatters` provides time, value and header callbacks. Time labels
+add a column without replacing numeric time; only finite data values reach the
+value callback. `ChartDataColumn` exposes frozen canonical key/source metadata.
+All callbacks return strings; text is CSV-escaped and formula-protected. Snapshot
+data is detached before callbacks, and callback exceptions abort the export.
+This helper is DOM-free and does not
 download, fetch or serialize trading state. See `docs/chart-data-export.md` for
 the complete format and captured-source host guards.
 
@@ -167,6 +186,13 @@ data transformation.
 live owned series, including one that is not primary. It returns null for foreign
 or removed handles and destroyed charts. Use it when a host tracks series types
 that may also change through native chart calls.
+
+`chart.seriesStyle(series): Readonly<SeriesStyle> | null` returns a frozen,
+detached snapshot including current renderer defaults and direct style changes.
+Read `barOffset` from this snapshot when aligning data with the rendered plot;
+the descriptor's original offset may have been overridden. An omitted offset
+means zero. Old snapshots do not change after `applyOptions`. Foreign or removed
+handles and destroyed charts return null.
 
 ## Requested bar providers
 

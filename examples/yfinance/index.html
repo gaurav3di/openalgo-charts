@@ -295,6 +295,26 @@
     </div>
   </div>
 
+  <div id="chartdatamodal" hidden>
+    <div class="set-card ws-card csv-card" role="dialog" aria-modal="true" aria-labelledby="csv-title">
+      <div class="set-head"><span id="csv-title">Download chart data</span><button id="csv-close" type="button">Close</button></div>
+      <div class="set-body ws-body">
+        <p id="csv-source" class="ws-hint"></p>
+        <div class="ws-actions"><button id="csv-all-rows" class="btn btn--ghost" type="button">All loaded rows</button><button id="csv-visible" class="btn btn--ghost" type="button">Use visible bounds</button></div>
+        <div class="set-row"><label for="csv-from">From (UTC seconds)</label><div class="set-ctl"><input id="csv-from" type="text" inputmode="decimal" autocomplete="off" placeholder="No lower bound" /></div></div>
+        <div class="set-row"><label for="csv-to">To (UTC seconds)</label><div class="set-ctl"><input id="csv-to" type="text" inputmode="decimal" autocomplete="off" placeholder="No upper bound" /></div></div>
+        <p class="ws-hint">Bounds are inclusive. Studies keep their full loaded-history warmup.</p>
+        <div class="set-row"><label for="csv-alignment">Alignment</label><div class="set-ctl"><select id="csv-alignment"><option value="source">Source rows</option><option value="display">Displayed plot positions</option></select></div></div>
+        <p class="ws-hint">Display alignment follows study plot offsets. Projected times are spacing estimates, not future observations.</p>
+        <div class="ws-actions"><button id="csv-all-studies" class="btn btn--ghost" type="button">All studies</button><button id="csv-no-studies" class="btn btn--ghost" type="button">No studies</button></div>
+        <div id="csv-studies" role="group" aria-label="Studies to export"></div>
+        <label class="csv-study"><input id="csv-comparisons" type="checkbox" checked /><span>Include comparison closes</span></label>
+        <p id="csv-error" class="ws-error" role="alert" hidden></p>
+      </div>
+      <div class="set-foot"><button id="csv-cancel" class="btn btn--ghost" type="button">Cancel</button><button id="csv-download" class="btn btn--primary" type="button">Download CSV</button></div>
+    </div>
+  </div>
+
   <!-- Compare: a second instrument on the primary's pane. The engine aligns it
        by timestamp and rebases the pane; the symbol list and the scale choice
        are ours. -->

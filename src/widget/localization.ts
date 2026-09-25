@@ -1,5 +1,16 @@
 /** English source keys keep fallback messages available without a locale bundle. */
 export type WidgetBuiltinMessage =
+  | "Only loaded rows are exported. Blank bounds include all loaded times."
+  | "From (UTC seconds)"
+  | "To (UTC seconds)"
+  | "Study alignment"
+  | "Source rows"
+  | "Displayed rows"
+  | "Use captured visible range"
+  | "All loaded rows"
+  | "Download CSV"
+  | "Enter finite UTC seconds or leave the bound blank"
+  | "The From bound must be before or equal to the To bound"
   | "Enable panning"
   | "Enable zooming"
   | "Search"

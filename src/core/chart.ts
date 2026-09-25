@@ -1284,6 +1284,11 @@ export class Chart {
       ? record.type : null;
   }
 
+  /** Frozen style snapshot, including renderer defaults, or null for an unavailable handle. */
+  public seriesStyle(series: SeriesApi): Readonly<SeriesStyle> | null {
+    return this.seriesType(series) === null ? null : Object.freeze({ ...this._seriesRecords.get(series)!.style });
+  }
+
   /**
    * Assign a host-owned series to a scale on its current pane without replacing it.
    * Both scales retain their configuration. Explicit series formatting applies to

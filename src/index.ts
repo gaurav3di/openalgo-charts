@@ -16,7 +16,7 @@ export type {
 export { SvgContext, SvgLinearGradient } from './render/svg-export';
 export type { SvgContextOptions } from './render/svg-export';
 export { exportChartDataCsv } from './model/chart-data-export';
-export type { ChartDataCsvOptions } from './model/chart-data-export';
+export type { ChartDataCsvOptions, ChartDataCsvRange, ChartDataColumn, ChartDataProjectionContext, ChartDataCsvFormatters } from './model/chart-data-export';
 export { Pane } from './core/pane';
 export { ChartObjects } from './model/chart-objects';
 export type {

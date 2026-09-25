@@ -563,6 +563,7 @@ class WidgetImpl implements Widget {
       onDataWindow: options.panels === false ? undefined : () => this._dock?.toggle('data'),
       onAlerts: (anchor) => this._openAlerts(anchor),
       onProperties: (anchor) => this._openDialog('drawingProperties', anchor),
+      onCapture: (anchor) => this._topbar?.openCapture(anchor),
       settingsAvailable: () => widgetDialog('settings') !== null,
       indicatorsAvailable: () => widgetDialog('indicatorPicker') !== null,
     });

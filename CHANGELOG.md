@@ -4,6 +4,13 @@ All notable changes to OpenAlgo Charts.
 
 ## Unreleased
 
+- CSV export supports explicit study instances, inclusive UTC ranges and
+  display-aligned plot values with effective runtime offsets. Candle plots expand
+  into OHLC fields; projected times are identified without exposing future replay
+  observations. Optional formatting preserves raw time identity and protects
+  spreadsheet text. Both hosts provide guarded CSV selection dialogs.
+- Series styles can be read as frozen snapshots, including renderer defaults
+  and current plot offsets, through `chart.seriesStyle(series)`.
 - User panning and zooming can be enabled independently at runtime. The policy
   covers plot and axis gestures, wheel, touch, keys, navigation buttons and user
   reset/fit actions, and cancels active motion. Both hosts expose and persist the

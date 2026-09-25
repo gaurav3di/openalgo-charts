@@ -138,6 +138,7 @@ export function toast(kind, message, opts = {}) {
 export const OVERLAY_CLOSE = {
   setmodal: '#set-x', cmpmodal: '#cmp-x', chartset: '#cset-x',
   workspacemodal: '#ws-close',
+  chartdatamodal: '#csv-close',
   templatemodal: '#tp-close',
   indsource: '#indsource-close',
   replayleave: '#rp-leave-stay',

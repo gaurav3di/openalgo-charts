@@ -29,6 +29,7 @@ export interface MobileOptions {
   onObjects(anchor: HTMLElement): boolean;
   onDataWindow?(anchor: HTMLElement): void | boolean;
   onAlerts?(anchor: HTMLElement): boolean;
+  onCapture?(anchor: HTMLElement): void;
   onProperties(anchor: HTMLElement): boolean;
   settingsAvailable(): boolean;
   indicatorsAvailable(): boolean;
@@ -264,6 +265,10 @@ export function mountMobile(ctx: WidgetContext, opts: MobileOptions): MobileHand
     if (opts.onDataWindow) bar.appendChild(makeAction('data-window', widgetText(ctx, 'schema.ui.dataWindow', {}, 'Data'), (anchor) => { opts.onDataWindow?.(anchor); }));
     bar.appendChild(makeAction('more', widgetText(ctx, 'More'), (anchor) => {
       openSheet(widgetText(ctx, 'More'), anchor, (body, close) => {
+        if (opts.onCapture) body.appendChild(makeAction('capture', widgetText(ctx, 'Capture'), () => {
+          close();
+          opts.onCapture?.(anchor);
+        }));
         if (opts.onAlerts) body.appendChild(makeAction('alerts', widgetText(ctx, 'Alerts'), () => {
           close();
           opts.onAlerts?.(anchor);

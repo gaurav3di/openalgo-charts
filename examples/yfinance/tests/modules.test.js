@@ -44,7 +44,7 @@ const INIT = {
 describe('demo modules', () => {
   it('lists the modules the README documents', () => {
     expect(MODULES).toEqual([
-      'alerts.js', 'axis-chrome.js', 'bracket.js', 'chart-data.js', 'chart-settings.js', 'clipboard.js', 'compare.js',
+      'alerts.js', 'axis-chrome.js', 'bracket.js', 'chart-data-controls.js', 'chart-data.js', 'chart-settings.js', 'clipboard.js', 'compare.js',
       'drawing.js', 'expression.js', 'feed.js', 'hover.js', 'indicator-input-controls.js', 'indicator-source.js', 'indicator-templates.js', 'indicators.js', 'inspection.js', 'intervals.js', 'level-editor.js',
       'link.js', 'menus.js', 'orders.js', 'pane-target.js', 'persist.js', 'properties.js', 'rail-flyout.js',
       'rail.js', 'replay-timing.js', 'replay.js', 'snapshot.js', 'split.js', 'status.js', 'symbol-search.js', 'templates.js', 'text-editor.js',

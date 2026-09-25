@@ -379,6 +379,7 @@ exists to show one engine surface carrying real use, not just being present.
 | `workspace-catalog.js`, `workspaces.js` | Bind the workspace repository to prepared chart publication and the Layouts dialog. Serialize named saves, retain recent ordering, coalesce active-layout autosaves, and reject unacknowledged revisions from another session. Selection failures compensate storage with a new atomic revision. Startup restores the saved named document; recovery does not overwrite it with autosave disabled. |
 | `indicator-templates.js`, `templates.js` | Capture repeated studies with parameters, styles, visibility and pane grouping. Apply shared replace/append planning to the captured chart while preserving drawings and valid alert anchors. Save named templates in the same revision-aware catalog as layouts, with explicit application after import. |
 | `chart-data.js` | Download the captured chart's loaded OHLC/volume/OI, study plots and eligible comparison closes through the shared CSV serializer. Reject obsolete/loading owners and release file resources on success or failure. |
+| `chart-data-controls.js` | Capture a study checklist and visible time bounds, validate custom UTC bounds, and choose source or display alignment before download. |
 | `alerts.js` | The Alerts toolbar button opens the focused chart's lifecycle list and source editor. Price, study plots, supported drawing levels and registered candle conditions use the same controls as the packaged widget. Local notices display fired events; the demo does not send notifications or orders for an alert. |
 | `timeline.js` | The Events menu enables labelled sample events, clustering and group visibility. Click a marker to read its details. These are demonstration events, not a company calendar feed. |
 
@@ -524,12 +525,22 @@ Loading, failed history and pending replay selection block export. The filename
 identifies the source, interval and chart type, with a replay marker for a chart
 participating in active replay.
 
-The file contains all installed bars, including only the revealed replay prefix,
+The dialog starts with all installed bars and studies. Select individual study
+instances, enter inclusive UTC-second bounds, or use the visible bounds captured
+when the dialog opened. Hidden studies remain selectable; adding another study
+later does not silently include it. Removed selected studies report an error.
+Comparison closes can be omitted separately.
+
+The default file contains all installed bars, including only the revealed replay prefix,
 with UTC seconds and unrounded numeric values. OI and volume gaps remain blank,
 while zero remains zero. Configured study plots include repeated and hidden
 studies, before visual offsets. Comparison columns use eligible aligned closes in
 their original price units. There is no extra history fetch, aggregation or
-trading/account data in the file. See [the CSV format](../../docs/chart-data-export.md).
+trading/account data in the file. Display alignment follows current study plot
+offsets and labels each time as loaded, interpolated, projected or unknown.
+Projected rows contain known study values with blank future primary/comparison
+fields. They do not promise a future market session. See
+[the CSV format](../../docs/chart-data-export.md).
 
 ## Indicator templates
 
