@@ -757,6 +757,40 @@ describe('the object inventory', () => {
     draw.destroy();
   });
 
+  it('skips a group member its source no longer holds, and still offers ungroup and remove', () => {
+    const chart = makeChart();
+    const a = { id: 'a', tool: 'trend-line', paneIndex: 0, points: [{ time: T0, price: 100 }, { time: T0 + 600, price: 101 }] };
+    const calls: unknown[][] = [];
+    const source = {
+      drawings: () => [a], get: (id: string) => (id === 'a' ? a : undefined), selection: () => [],
+      select: () => {}, update: () => {}, remove: () => true,
+      groups: () => [{ id: 'g', name: 'G', members: ['gone', 'a'] }],
+      removeGroup: (id: string, removeDrawings?: boolean) => { calls.push([id, removeDrawings]); return true; },
+    };
+    const objects = new ChartObjects(chart, { drawings: source });
+    const group = objects.get('group:g')!;
+    expect(group.capabilities).toMatchObject({ remove: true, visibility: true, lock: true });
+    expect(objects.get('drawing:a')?.groupId).toBe('group:g');
+    expect(objects.ungroup('group:g')).toBe(true);
+    expect(objects.remove('group:g')).toBe(true);
+    expect(calls).toEqual([['g', false], ['g', true]]);
+    objects.destroy();
+  });
+
+  it('answers ungroup with a boolean whatever the source returns', () => {
+    const chart = makeChart();
+    const a = { id: 'a', tool: 'trend-line', paneIndex: 0, points: [{ time: T0, price: 100 }, { time: T0 + 600, price: 101 }] };
+    const source = {
+      drawings: () => [a], get: (id: string) => (id === 'a' ? a : undefined), selection: () => [],
+      select: () => {}, update: () => {}, remove: () => true,
+      groups: () => [{ id: 'g', name: 'G', members: ['a'] }],
+      removeGroup: (() => undefined) as unknown as (id: string) => boolean,
+    };
+    const objects = new ChartObjects(chart, { drawings: source });
+    expect(objects.ungroup('group:g')).toBe(false);
+    objects.destroy();
+  });
+
   it('offers a read-only drawing no hide, lock or remove, and an unselectable one no select', () => {
     const chart = makeChart();
     const draw = new DrawingController(chart);

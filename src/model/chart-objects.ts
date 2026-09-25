@@ -349,10 +349,12 @@ export class ChartObjects {
     if (draw) {
       // An unlisted drawing is not in the inventory at all, so no row, group
       // or group-wide action reaches it from here.
-      const listed = (drawing: ChartObjectDrawing | undefined): drawing is ChartObjectDrawing => drawing?.policy?.listed !== false;
+      const listed = (drawing: ChartObjectDrawing): boolean => drawing.policy?.listed !== false;
       const membership = new Map<string, string>();
       for (const group of draw.groups?.() ?? []) {
-        const members = group.members.map(id => draw.get(id)).filter(listed);
+        // A member the source no longer holds is skipped, as it always was.
+        const found = group.members.flatMap(id => { const drawing = draw.get(id); return drawing ? [drawing] : []; });
+        const members = found.filter(listed);
         if (!members.length) continue;
         const id = 'group:' + group.id;
         for (const member of members) membership.set(member.id, id);
@@ -364,7 +366,7 @@ export class ChartObjects {
         // Removing or dissolving the whole group would reach its unlisted
         // members too, so a group holding one removes just the members
         // listed here, and is not ungrouped from here at all.
-        const whole = members.length === group.members.length;
+        const whole = members.length === found.length;
         const remove = whole ? draw.removeGroup && (() => { draw.removeGroup!(group.id, true); })
           : draw.removeMany && (() => { draw.removeMany!(members.map(member => member.id)); });
         add(id, group.id, { kind: 'group', name: group.name, paneIndex: members[0].paneIndex,
@@ -372,7 +374,7 @@ export class ChartObjects {
           selected: pickable.length > 0 && pickable.every(member => selected.includes(member.id)),
         }, {
           ...(pickable.length ? { select: () => draw.select(pickable.map(member => member.id)) } : {}),
-          ...(whole && draw.removeGroup ? { ungroup: () => draw.removeGroup!(group.id, false) } : {}),
+          ...(whole && draw.removeGroup ? { ungroup: () => draw.removeGroup!(group.id, false) === true } : {}),
           // A group-wide switch that skipped a read-only member would leave
           // the group half done, so a group holding one offers none.
           ...(members.every(member => member.policy?.editable !== false) ? {
