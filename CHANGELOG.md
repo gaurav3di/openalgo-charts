@@ -6,21 +6,23 @@ All notable changes to OpenAlgo Charts.
 
 - A lower pane collapses to a header strip and opens again at exactly the height
   it had, through `chart.setPaneCollapsed(index, collapsed)`,
-  `chart.paneCollapsed(index)`, a collapse button on the pane's first legend row
-  and the `paneCollapsed` event. A collapsed pane keeps its data, studies,
-  drawings, scales and weight, and draws and hit-tests only one legend row, its
-  first study row, which leads the strip above any row the host placed there and
-  gains the collapse button when closing the study above it makes it first, so no
-  drawing, price alert or pick lands on it; `priceToCoordinate` and
-  `coordinateToPrice` return `null` for it, while alerts on its studies and
-  drawings keep firing. Pane 0 stays open, the time axis stays at the foot of the
-  chart under a collapsed bottom pane, maximize shows a collapsed pane whole, and
-  `collapsed` is saved in pane state and workspace documents. A restore that lists
-  panes or rebuilds studies opens every pane its layout does not fold, so a study
-  never lands in a stale strip. The widget and the reference host, including its
-  split chart, offer the control in their right-click menus. This is separate from
-  collapsing study legend rows; with both on, a strip keeps its first study row
-  and the control that opens it.
+  `chart.paneCollapsed(index)`, a collapse button on the pane's first study row
+  (open or folded, whichever study that is) and the `paneCollapsed` event. A
+  collapsed pane keeps its data, studies, drawings, scales and weight, and draws
+  and hit-tests only one legend row, its first study row, which leads the strip
+  above any row the host placed there, so no drawing, price alert or pick lands on
+  it; `priceToCoordinate` and `coordinateToPrice` return `null` for it, while
+  alerts on its studies and drawings keep firing. Pane 0 stays open, the time axis
+  stays at the foot of the chart under a collapsed bottom pane, maximize shows a
+  collapsed pane whole, and `collapsed` is saved in pane state and workspace
+  documents. A restore that lists panes or rebuilds studies opens every pane its
+  layout does not fold, so a study never lands in a stale strip. The widget and
+  the reference host, including its split chart, offer the control in their
+  right-click menus. This is separate from collapsing study legend rows; with both
+  on, a strip keeps its first study row and the control that opens it.
+- The move and maximize buttons of a lower pane follow its first study row, as
+  the collapse button does. Closing the first study on a pane, or adding one below
+  a row the host placed there, used to leave the new first study row without them.
 - Pane dividers no longer rewrite the weights of panes hidden behind a maximized
   pane, and removing a pane above the time navigator no longer attaches the
   navigator twice.

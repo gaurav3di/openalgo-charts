@@ -288,8 +288,9 @@ chart.setPaneCollapsed(rsi.paneIndex, false);  // back to its former height
 
 The strip shows one legend row: the pane's first study row, and that row's collapse
 button opens it again. The study row leads the strip even when the host placed its own
-row on the pane first, and a study that becomes first because the one above it was
-closed gains the button. Nothing else on the strip paints or answers the pointer: no
+row on the pane first, and whichever study is first carries the button, open or folded,
+so one that becomes first because the study above it was closed or moved gains it.
+Nothing else on the strip paints or answers the pointer: no
 plot, grid, price ladder or crosshair. `click`, `crosshair:move` and `contextmenu` report no price there,
 and `priceToCoordinate` and `coordinateToPrice` return `null` for the pane, so a drawing
 tool, a price alert or a host overlay cannot land on a pane nobody can see. Alerts on the
@@ -325,8 +326,9 @@ show/hide, move, collapse, maximize, and delete without wiring anything.
 | Maximize | Expand this pane; press again to restore. |
 | Trash | Remove the source, and its pane if that empties it. |
 
-The first legend on a non-price pane also carries the pane-level controls (move, collapse, maximize),
-so extra rows on the same pane stay uncluttered.
+The first study row on a non-price pane also carries the pane-level controls (move, collapse, maximize),
+whichever study that is and whether or not the host added a row above it, so extra rows on the same
+pane stay uncluttered.
 
 The base engine has no built-in settings dialog: the gear emits an event for the host.
 The optional widget supplies the dialog through that public API.
