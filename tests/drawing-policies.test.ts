@@ -499,6 +499,41 @@ describe('a policy that arrives from a linked chart', () => {
     expect(draw.canUndo()).toBe(false);
     expect(draw.undo()).toBe(false);
   });
+
+  it('holds when it arrives during a drag of another drawing that is then cancelled', () => {
+    const chart = busHost();
+    const draw = new DrawingController(chart);
+    draw.fromJSON({ version: 2, drawings: [{ id: 'mine', tool: 'trend-line', paneIndex: 0, zIndex: 0, style: {},
+      points: [{ time: 1000, price: 10 }, { time: 2000, price: 20 }] }] });
+    const b = line(draw, { points: [{ time: 5000, price: 50 }, { time: 6000, price: 60 }] });
+    drag(chart, 'draw:mine', 1000, 10);
+    drag(chart, 'draw:mine', 1500, 15);
+    draw.applyLinkedDrawing(b.id, { ...draw.get(b.id)!, policy: { editable: false } });
+    // The drag is taken back, and with it the history as it stood before the
+    // drag, which must not bring back the step the policy emptied.
+    expect(draw.cancelDrag()).toBe(true);
+    expect(draw.get('mine')?.points[0]).toEqual({ time: 1000, price: 10 });
+    expect(draw.canUndo()).toBe(false);
+    expect(draw.undo()).toBe(false);
+  });
+
+  it('holds for the redo branch a cancelled drag puts back', () => {
+    const chart = busHost();
+    const draw = new DrawingController(chart);
+    draw.fromJSON({ version: 2, drawings: [{ id: 'mine', tool: 'trend-line', paneIndex: 0, zIndex: 0, style: {},
+      points: [{ time: 1000, price: 10 }, { time: 2000, price: 20 }] }] });
+    const b = line(draw, { points: [{ time: 5000, price: 50 }, { time: 6000, price: 60 }] });
+    const placed = cloneDrawing(draw.get(b.id)!);
+    expect(draw.undo()).toBe(true);
+    drag(chart, 'draw:mine', 1000, 10);
+    drag(chart, 'draw:mine', 1500, 15);
+    // The other chart puts the drawing back, read-only.
+    draw.applyLinkedDrawing(b.id, { ...placed, policy: { editable: false } });
+    expect(draw.cancelDrag()).toBe(true);
+    expect(draw.canRedo()).toBe(false);
+    expect(draw.redo()).toBe(false);
+    expect(draw.get(b.id)?.policy).toEqual({ editable: false });
+  });
 });
 
 describe('a drawing that cannot be selected (selectable: false)', () => {

@@ -2023,6 +2023,15 @@ export class DrawingController {
       entry.after = rewrite(entry.after);
       return entry === this._pendingHistory || this._applyHistory(entry.before, entry.after);
     };
+    // A drag holds the branches as they were when it began, for a cancel to
+    // put back. They share their steps with the live ones, and taking an
+    // edit twice changes nothing, since a snapshot is read through the
+    // migration.
+    const drag = this._dragStart;
+    if (drag) {
+      drag.undo = drag.undo.filter(keep);
+      drag.redo = drag.redo.filter(keep);
+    }
     this._undo = this._undo.filter(keep);
     this._redo = this._redo.filter(keep);
   }
