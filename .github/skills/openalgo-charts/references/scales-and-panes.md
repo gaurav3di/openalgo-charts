@@ -506,9 +506,11 @@ Heights are **relative weights**, not pixels: pane height is `chartHeight * weig
 | `chart.movePane(index, -1 \| 1)` | `boolean` | Swaps with the neighbour and re-appends the DOM in order. |
 | `chart.maximizePane(index)` | `boolean` | Toggle: one pane takes the whole chart and the rest are **hidden**, not shrunk. Stored weights are untouched, so un-maximizing restores the stack exactly. |
 | `chart.maximizedPane()` | `number \| null` | |
+| `chart.setPaneCollapsed(index, collapsed)` | `boolean` | Fold a lower pane to its header strip, or open it again. `false` for pane 0, an unknown index, a non-boolean, or no change. |
+| `chart.paneCollapsed(index)` | `boolean` | The pane's own setting, kept while it is maximized. Always `false` for pane 0. |
 | `chart.panes()` | `readonly Pane[]` | Live array. |
 
-Each call emits an event: `paneRemoved`, `paneMoved`, `paneMaximized`, and `paneResized` after a divider drag.
+Each call emits an event: `paneRemoved`, `paneMoved`, `paneMaximized`, `paneCollapsed`, and `paneResized` after a divider drag.
 
 **Pane 0 is pinned.** `removePane(0)` and any `movePane` that would displace pane 0 return `false`, including `movePane(1, -1)`. Both also return `false` for an out-of-range index, so check the boolean rather than assuming success.
 
@@ -516,9 +518,22 @@ Each call emits an event: `paneRemoved`, `paneMoved`, `paneMaximized`, and `pane
 
 Panes with no series left are pruned automatically: `removeIndicator` drops an emptied pane above index 0, and `restoreState` sweeps every empty pane backwards.
 
+### Collapsing a pane
+
+`chart.setPaneCollapsed(index, true)` folds a lower pane to a strip one legend row tall (the row height plus a `6` px inset above and below, so `30` px at the default icon size). It is a view of the pane, not an edit to it:
+
+- Its series keep taking data and its studies keep recomputing.
+- Its drawings, scales, ratio locks and stored weight are untouched, so `setPaneCollapsed(index, false)` brings back exactly the height it had. `setPaneWeight` on a collapsed pane stores the weight for when it opens.
+- The strip shows one legend row and nothing else: the pane's first study row, whose buttons include the collapse control, even when the host added its own row to the pane first (that row returns above it once the pane opens). A pane with no study shows its first host row. Rows below the strip neither draw nor answer the pointer. Whichever study row is first on a lower pane carries the pane controls, open or folded: a row that becomes first because the study above it was removed (including by the close button on the strip) or moved gains them, a study added below a host row has them, and a row that stops being first loses them. Series, grid, price ladder, crosshair and every other primitive neither paint nor hit-test on it. `priceAxisLayout(index)` is empty, `click`, `crosshair:move` and `contextmenu` report `price: null` there, and `priceToCoordinate` / `coordinateToPrice` return `null` for the pane, so a drawing tool, a price alert, a pick or a host overlay cannot land on a pane nobody can see. Alerts on the pane's studies and drawings keep firing: the draw tier reads a drawing on a strip through the pane's own scale.
+- The open panes share the rest of the height by weight. Strips taller than the whole chart shrink together rather than overflow it.
+
+Pane 0 never collapses. A collapsed bottom pane keeps the time axis under its strip, at the foot of the chart; the time navigator and chart-bottom furniture (the brand mark) move to the lowest open pane. Maximizing a collapsed pane shows it whole, and un-maximizing folds it again. Collapsing the maximized pane ends the maximize (`paneMaximized` with `null`). The fold follows its pane through `movePane` and through removals above it, and `getState` writes `collapsed: true` on it. A `restoreState` that lists panes or rebuilds studies opens every pane its layout does not fold, including a pane it does not list, so a study rebuilt onto an existing pane never opens inside a stale strip; a restore that touches neither leaves folds alone.
+
+The first study row of a lower pane carries a `collapse` action (`PaneLegendAction`) between `down` and `maximize`, open or folded; its glyph is a header bar over a chevron that points up while the pane is open and down once it is folded (`PaneLegendOptions.collapsed`). This is separate from `setIndicatorLegendCollapsed`, which hides study legend rows behind a count and never changes a pane. With both on, a strip keeps its first study row, because its collapse control is the only way back on the canvas; the row folds behind the count again once the pane opens.
+
 ### Divider dragging
 
-Pressing within `4` media px of a boundary starts a resize; the cursor becomes `row-resize` on hover. The drag moves height between the two adjacent panes only, conserving their summed weight so the rest of the stack is untouched, and clamps each side to at least `min(24px, total/4)`. A pane boundary wins over a primitive hit, because legend rows sit directly below one.
+Pressing within `4` media px of a boundary starts a resize; the cursor becomes `row-resize` on hover. The drag moves height between the two adjacent panes only, conserving their summed weight so the rest of the stack is untouched, and clamps each side to at least `min(24px, total/4)`. A boundary beside a collapsed strip moves height between the nearest open panes either side of it, and is not a divider when there is no open pane on one side. While a pane is maximized there is no divider at all. A pane boundary wins over a primitive hit, because legend rows sit directly below one.
 
 `chart.getState()` persists every pane's weight and all configured scales: margins,
 tick size, precision floor, mode, inversion, auto-fit state, manual/fixed ranges,

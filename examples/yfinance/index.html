@@ -399,6 +399,10 @@
     <!-- Only drawn when the chart says the pointer was over an indicator. -->
     <hr data-sec="ind">
     <button role="menuitem" data-act="indset">Indicator settings...</button>
+    <!-- Only drawn over a lower pane: it folds to its header strip and opens
+         again. The price pane always stays open, so it never offers this. -->
+    <hr data-sec="pane">
+    <button role="menuitem" data-act="panecollapse">Collapse pane</button>
     <!-- The volume histogram's second control. The eye on its legend row is the
          one that sits over the bars; this is the one a reader finds by
          right-clicking the chart and reading down the list. -->

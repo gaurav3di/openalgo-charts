@@ -401,6 +401,8 @@ export class ChartObjects {
     scale.setPriceRange({ min: min - pad, max: max + pad });
     const maximized = chart.maximizedPane();
     if (maximized !== null && maximized !== drawing.paneIndex) chart.maximizePane(maximized);
+    // A strip draws nothing, so focusing a drawing on one opens its pane.
+    chart.setPaneCollapsed(drawing.paneIndex, false);
     chart.setVisibleLogicalRange({ from: (from + to - span) / 2, to: (from + to + span) / 2 });
   }
 

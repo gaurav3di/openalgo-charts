@@ -35,6 +35,10 @@ class FakeNode {
   get firstChild() { return this.childNodes[0] || null; }
   get lastChild() { return this.childNodes[this.childNodes.length - 1] || null; }
   get children() { return this.childNodes.filter((c) => c.nodeType === 1); }
+  get previousElementSibling() {
+    const siblings = this.parentNode ? this.parentNode.children : [];
+    return siblings[siblings.indexOf(this) - 1] || null;
+  }
   get isConnected() {
     let n = this;
     while (n) { if (n.nodeType === 9) return true; n = n.parentNode; }

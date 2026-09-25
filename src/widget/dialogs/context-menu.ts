@@ -337,6 +337,14 @@ export function contextMenuEntries(ctx: WidgetContext, e: ContextMenuEvent, hook
     }
   }
 
+  // A lower pane folds to its header strip and opens again; pane 0 stays open.
+  if (e.paneIndex > 0 && target.kind !== 'time-scale') {
+    const folded = chart.paneCollapsed(e.paneIndex);
+    sep();
+    out.push({ id: 'pane-collapse', label: widgetText(ctx, folded ? 'Expand pane' : 'Collapse pane'),
+      run: () => { chart.setPaneCollapsed(e.paneIndex, !folded); } });
+  }
+
   if (target.kind !== 'time-scale') {
     sep();
     out.push({ id: 'draw-paste', label: widgetText(ctx, 'Paste'), icon: 'paste', chord: 'Ctrl+V',

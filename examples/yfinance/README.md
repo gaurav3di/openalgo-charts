@@ -768,3 +768,14 @@ Chart settings > Readout > **Collapse indicator legends** hides study rows while
 retaining the plots and live readings. The **Indicators N** canvas control toggles
 the rows directly, including on touch screens. Both choices are per chart and
 survive ordinary reloads and named-workspace restoration.
+
+### Collapsed panes
+
+Right-click a study pane and choose **Collapse pane** to fold it to its legend
+row; the row's collapse button, or **Expand pane** from the same menu, opens it
+again at the height it had. The study keeps calculating and its drawings stay
+put while it is folded, and nothing on the strip can be picked or drawn on.
+The price pane is never offered the row, and collapsing the bottom pane leaves
+the time axis at the foot of the chart. The choice is per chart and survives
+reloads and named-workspace restoration. This is not the compact study legend
+above, which hides legend rows and leaves every pane open.

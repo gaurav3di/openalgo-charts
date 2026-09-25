@@ -39,6 +39,7 @@ The rule: **the chart serialises what the chart owns.**
 | Crosshair mode | Yes | |
 | [Timezone](/docs/timezones) | Yes | A saved zone the runtime no longer recognises is skipped, not thrown: one stale name must not cost the whole layout. |
 | Pane weights | Yes | Panes are created as needed. |
+| Collapsed panes | Yes | `collapsed: true` on a folded pane. A pane saved without it restores open; pane 0 always does, and so does a pane a restore that lists panes or rebuilds studies does not list. |
 | Price scales (margins, precision, mode, inversion, auto-scale, manual and fixed ranges, ratio locks) | Yes | Right, left and named hidden scales in every pane. Runtime formatter functions are not serialized. |
 | Indicator instances (descriptor id, instance id, settings, pane, visibility) | Yes | Saved `instanceId` values are preserved so study alerts can resolve their source. Legacy snapshots without IDs receive new ones. Older layouts default to visible. |
 | Drawings | Round-tripped | An opaque slot the drawing tier owns; the base engine only carries it. |
@@ -120,8 +121,9 @@ Each `PriceScaleState` includes the existing scale settings plus optional
 pane height associated with its saved manual range so its proportion survives
 reopening at another size. These fields are additive; older layouts remain readable.
 
-`parsePaneState(value)` validates and copies one pane snapshot. Invalid fields
-throw before chart restoration changes any panes. The optional second argument,
+`parsePaneState(value)` validates and copies one pane snapshot, including its
+optional boolean `collapsed` flag. Invalid fields throw before chart restoration
+changes any panes. The optional second argument,
 `true`, accepts legacy partial primary-scale settings with default values;
 secondary scales always require complete settings. Workspace documents use the
 same validator. Formatter callbacks and source data remain host-owned.

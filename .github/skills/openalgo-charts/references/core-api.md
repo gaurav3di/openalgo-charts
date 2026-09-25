@@ -464,8 +464,8 @@ The widget defaults to 8 CSS pixels per bar unless a count or spacing is supplie
 |---|---|---|
 | `timeToCoordinate(time)` | UTC seconds -> container x, media px | Interpolates and extrapolates past the right edge. |
 | `coordinateToTime(x)` | container x -> UTC seconds | |
-| `priceToCoordinate(price, paneIndex = 0)` | price -> container y, media px \| `null` | `null` when the pane does not exist. Uses the pane's **readout** scale, which is the one its first visible price series maps to, so it is right on a pane whose axis was moved to the left strip. |
-| `coordinateToPrice(y, paneIndex = 0)` | container y -> price \| `null` | Same scale as above. |
+| `priceToCoordinate(price, paneIndex = 0)` | price -> container y, media px \| `null` | `null` when the pane does not exist or is collapsed to its header strip (`setPaneCollapsed`), which plots no price. Uses the pane's **readout** scale, which is the one its first visible price series maps to, so it is right on a pane whose axis was moved to the left strip. |
+| `coordinateToPrice(y, paneIndex = 0)` | container y -> price \| `null` | Same scale, and `null` on the same panes. |
 
 Both price conversions force an autoscale pass first, so they are correct before the first paint.
 
@@ -507,7 +507,7 @@ chart.subscribeDrag(
 
 **The `subscribe*` helpers store exactly one callback each and return `void`.** A second call replaces the first and there is no unsubscribe. For multiple listeners or teardown use the bus: `chart.on(name, cb)` returns an unsubscribe function; `chart.once`, `chart.off(name, cb?)` and `chart.emit(name, payload)` are also public.
 
-Core event names: `ready`, `crosshair:move`, `click`, `hover`, `drag`, `drag:end`, `pan`, `zoom`, `resize`, `dblclick`, `contextmenu`, `lazy-load`, `paneResized`, `paneMoved`, `paneMaximized`, `paneRemoved`, `indicatorRemoved`, `indicatorSettings`. `ReplayController` adds `replay:start|frame|play|pause|end|stop`, and the trading tier routes `trading:*` through the same bus. See [events-and-state](events-and-state.md).
+Core event names: `ready`, `crosshair:move`, `click`, `hover`, `drag`, `drag:end`, `pan`, `zoom`, `resize`, `dblclick`, `contextmenu`, `lazy-load`, `paneResized`, `paneMoved`, `paneMaximized`, `paneCollapsed`, `paneRemoved`, `indicatorRemoved`, `indicatorSettings`. `ReplayController` adds `replay:start|frame|play|pause|end|stop`, and the trading tier routes `trading:*` through the same bus. See [events-and-state](events-and-state.md).
 
 `CrosshairMoveEvent`: `time: number | null`, `index: number | null`, `price: number | null`, `bar: Bar | null`, `point: { x, y } | null`, `paneIndex?: number | null`, and on a move (not the all-null leave payload) `pressed: boolean`, `modifiers: PointerModifiers` (`{ shift, alt, ctrl, meta }`), `pointerType: PointerKind` (`'mouse' | 'touch' | 'pen'`), `pressure` (0..1 as the pointer events spec defines it: measured, else 0.5 while a button is held, else 0) and, only while pressed, `samples: PointerSample[]` (`{ x, y, pressure }` per coalesced position, container x and pane-local y). The same three pointer facts (`PointerInfo`) ride on `ChartClickEvent`, `ChartDragEvent` (which adds `point` and `samples`) and `ChartDragEndEvent` (which adds `point` and also describes `drag:start`); all seven types are exported from the base entry.
 

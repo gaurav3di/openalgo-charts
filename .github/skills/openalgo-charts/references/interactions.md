@@ -16,7 +16,7 @@ Everything is built on Pointer Events, so mouse, touch and pen share one code pa
 | Wheel over a price axis | scale that left or right price range | pointer price stays anchored and that one scale becomes manual |
 | Drag either price axis | rescale price | `exp(dy * 0.005)` about the range centre, then `setAutoScale(false)` |
 | Drag the time axis (bottom strip of the last pane) | left expands bar spacing; right compresses it | `barSpacing * exp(-dx * 0.005)`, preserving the logical right edge |
-| Drag a pane divider | redistribute height between the two adjacent panes | grab tolerance 4 px, cursor `row-resize`, summed weight preserved, neither side below `min(24, total/4)` px; emits `paneResized` on release |
+| Drag a pane divider | redistribute height between the nearest open panes either side of it: the two adjacent panes, or past a collapsed strip, which keeps its height | grab tolerance 4 px, cursor `row-resize`, summed weight preserved, neither side below `min(24, total/4)` px; emits `paneResized` on release. No divider while a pane is maximized, or beside a strip with no open pane on one side |
 | Double-click | `doubleClick` option: `'reset'` (default) is `resetScale()`, the configured default view plus autoscale on every pane; `'maximize'` toggles `maximizePane` for the pane under the pointer; `'none'` only emits | suppressed while placement mode is on, or when a `dblclick` listener set `handled` on the event; the event carries `paneIndex`, `x`, `y` |
 | Press on a draggable primitive | drags the line instead of panning | arms when `hit.draggable` is true, or `hit.cursor === 'ns-resize'` and `subscribeDrag` is registered |
 | Flick and release | kinetic scroll | see below |

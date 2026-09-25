@@ -432,7 +432,7 @@ chart.on('indicatorSettings', (p) => {
 });
 ```
 
-`chart.on` returns an unsubscribe function and payloads are `unknown`, so cast at the boundary. Legend actions `close`, `hide`, `up`, `down`, `maximize` are handled **inside** the chart; only `settings` is delegated. `removeIndicator` also emits `indicatorRemoved` with the same payload shape. See [events-and-state](./events-and-state.md).
+`chart.on` returns an unsubscribe function and payloads are `unknown`, so cast at the boundary. Legend actions `close`, `hide`, `up`, `down`, `collapse`, `maximize` are handled **inside** the chart; `settings` and `source` are delegated (`indicatorSettings`, `indicatorSource`). `removeIndicator` also emits `indicatorRemoved` with the same payload shape. See [events-and-state](./events-and-state.md).
 
 `indicatorStyleInputs`, `plotStyleKeys`, `indicatorDefaults`, `INDICATOR_SOURCES`, `INDICATOR_LINE_STYLES` and `INDICATOR_PLOT_STYLES` are all exported from the package entry (`src/model/indicator-registry.ts`). `INDICATOR_PLOT_STYLES` is the `{ label, value }[]` behind the generated `<plotKey>:type` input, so a settings UI can render the plot-style dropdown without reading the input's `options`.
 

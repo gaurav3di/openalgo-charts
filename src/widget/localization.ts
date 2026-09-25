@@ -62,6 +62,8 @@ export type WidgetBuiltinMessage =
   | "Auto-fit to the data"
   | "Fit primary prices only"
   | "Collapse indicator legends"
+  | "Collapse pane"
+  | "Expand pane"
   | "Axis settings..."
   | "Bar close"
   | "Bar close evaluates confirmed values. Intrabar touch can fire on a wick that is absent from final history."
