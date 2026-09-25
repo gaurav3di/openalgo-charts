@@ -8,6 +8,51 @@ description: Version history for OpenAlgo Charts.
 The full, authoritative changelog lives in
 [`CHANGELOG.md`](https://github.com/marketcalls/openalgo-charts/blob/master/CHANGELOG.md).
 
+## 2.5.4
+
+2026-09-25
+
+### Added
+
+- Go to a date or an explicit range from the widget toolbar or with
+  `widget.goTo({ from, to? })`. Older history loads first, the view is placed
+  after that load, and a pan, a zoom or a newer request cancels one in flight.
+  Custom hosts get the DOM-free `DateNavigator` and the `openDateNavigation` panel.
+- A lower pane collapses to a strip and opens again at its previous height, from
+  its first study row, the right-click menu or `chart.setPaneCollapsed`.
+- Study drawings and markers can target the price pane or a named plot, with
+  their own layers that follow scale reassignment and study moves.
+- Drawings accept a `policy` (`selectable`, `editable`, `persistent`, `listed`)
+  so a host can place levels the user sees but cannot move, save or delete.
+- `createChartGrid` places several widgets on one page in `1x1` to `2x2` presets,
+  with splitters, one active chart, linked crosshair, viewport, symbol and
+  interval, a tabbed view on narrow screens, and portable workspace documents.
+- CSV export of chosen studies over a UTC range, aligned to what the chart shows.
+- Independent pan and zoom policies, styled study text, smooth study polylines,
+  table cell hover details, richer study inputs (paired exchanges, sessions,
+  prices, timestamps), primary-only auto-fit and collapsible study legends.
+
+### Fixed
+
+- Widget dialogs and menus return focus to their opener on WebKit, which covers
+  Safari and every iOS browser.
+- Pane dividers, pane buttons after a study is closed, hover navigation fading
+  and SVG export of very large coordinates.
+
+### Calculations
+
+- SMA, rolling sums, weighted averages and deviations, SMA-seeded EMA and Wilder
+  averages, directional movement, CPR, Money Flow Index, WaveTrend, AlphaTrend,
+  Balance of Power, Seasonality and RSI handle missing, nonfinite and overflowing
+  inputs as unavailable and recover after them.
+- ADX seeds its readings over one common window, and HMA uses integer windows,
+  so odd HMA lengths produce different values.
+
+Saved layouts, workspaces and drawings from 2.5.3 load unchanged. No runtime
+dependencies or package tiers were added.
+
+Try the [interactive examples](/examples) or follow the [widget guide](/docs/widget).
+
 ## 2.5.3
 
 2026-09-23

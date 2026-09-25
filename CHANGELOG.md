@@ -2,7 +2,11 @@
 
 All notable changes to OpenAlgo Charts.
 
-## Unreleased
+## 2.5.4
+
+2026-09-25
+
+### Added
 
 - Go to a date or an explicit range. `widget.goTo({ from, to? })` loads the older
   history the request needs through the widget's feed, then places it after that
@@ -44,12 +48,6 @@ All notable changes to OpenAlgo Charts.
   the reference host, including its split chart, offer the control in their
   right-click menus. This is separate from collapsing study legend rows; with both
   on, a strip keeps its first study row and the control that opens it.
-- The move and maximize buttons of a lower pane follow its first study row, as
-  the collapse button does. Closing the first study on a pane, or adding one below
-  a row the host placed there, used to leave the new first study row without them.
-- Pane dividers no longer rewrite the weights of panes hidden behind a maximized
-  pane, and removing a pane above the time navigator no longer attaches the
-  navigator twice.
 - Study drawings and markers can name where they go. `overlay: true` sends a
   shape to the price pane, measured on the scale that pane quotes prices on
   (the candles' own, on whichever axis they sit), or anchors a marker to the
@@ -123,25 +121,57 @@ All notable changes to OpenAlgo Charts.
   into OHLC fields; projected times are identified without exposing future replay
   observations. Optional formatting preserves raw time identity and protects
   spreadsheet text. Both hosts provide guarded CSV selection dialogs.
-- Closing a widget dialog or menu returns focus to the control that opened it
-  on WebKit, which covers Safari and every iOS browser. WebKit does not focus a
-  button when it is tapped, so after Escape focus previously went nowhere,
-  stranding keyboard and screen reader users. A control that really held focus
-  when the overlay opened still receives it back.
 - Series styles can be read as frozen snapshots, including renderer defaults
   and current plot offsets, through `chart.seriesStyle(series)`.
 - User panning and zooming can be enabled independently at runtime. The policy
   covers plot and axis gestures, wheel, touch, keys, navigation buttons and user
   reset/fit actions, and cancels active motion. Both hosts expose and persist the
   settings. Programmatic view changes, drawing edits and chart picks remain usable.
+- Study labels, box captions and marker text support independent size, font,
+  emphasis and multiline alignment. Marker text can use its own color. Omitted
+  styles preserve existing rendering; styled annotations stay inside the plot.
+- Study polylines support smooth interpolation through their time and price
+  anchors. Curves follow the selected scale, preserve open or closed paths and
+  stay clipped to the plot in canvas and SVG output.
+- Table cells can show plain-text hover details, including merged cells.
+  Measured cell targets keep existing table click IDs, and updates, removal and
+  resizing discard stale targets. Exported SVG omits transient hover details.
+- Native study inputs now support symbols with paired exchanges, session
+  strings, multiline notes, prices and absolute UTC timestamps. Both hosts
+  validate drafts, retain fractional timestamps and support chart picking in
+  the study's actual pane and scale. Dialog cancellation restores prior values;
+  context changes, pane changes and destruction cancel stale captures.
+- Primary-only auto-fit follows the actual primary series across panes and scales,
+  keeping distant overlays from compressing price candles when enabled. The
+  setting preserves manual ranges and ratio locks, and is available in both hosts.
+- Study legends can collapse to a persistent count while plots, calculations and
+  alerts continue. Touch can expand the count without a prior hover; Readout
+  settings provide keyboard access. Both preferences persist independently for
+  each chart in saved layouts and portable workspaces.
+
+### Fixed
+
+- The move and maximize buttons of a lower pane follow its first study row, as
+  the collapse button does. Closing the first study on a pane, or adding one below
+  a row the host placed there, used to leave the new first study row without them.
+- Pane dividers no longer rewrite the weights of panes hidden behind a maximized
+  pane, and removing a pane above the time navigator no longer attaches the
+  navigator twice.
+- Closing a widget dialog or menu returns focus to the control that opened it
+  on WebKit, which covers Safari and every iOS browser. WebKit does not focus a
+  button when it is tapped, so after Escape focus previously went nowhere,
+  stranding keyboard and screen reader users. A control that really held focus
+  when the overlay opened still receives it back.
 - Hover navigation buttons finish fading when the pointer stops moving, so an
   idle chart does not leave them too faint to click. Native image capture pauses
   the fade, and detachment or destruction stops its frame requests.
 - Navigation and annotation examples keep button focus from scrolling the page
   during a click after chart interaction, while retaining keyboard activation.
-- Study labels, box captions and marker text support independent size, font,
-  emphasis and multiline alignment. Marker text can use its own color. Omitted
-  styles preserve existing rendering; styled annotations stay inside the plot.
+- SVG export preserves very large finite coordinates when decimal rounding
+  would otherwise overflow. Ordinary coordinate formatting is unchanged.
+
+### Calculations
+
 - Default scalar SMA and rolling sums use fresh chronological windows. Expired
   gaps and overflow no longer poison later sums, and rounded contributions from
   old bars cannot create false crossover signals. This requires work proportional
@@ -161,22 +191,9 @@ All notable changes to OpenAlgo Charts.
 - CPR keeps a period unavailable if any high or low is nonfinite. It recovers
   after the next complete period, preserving the existing session and calendar
   boundaries and final-close convention.
-- Study polylines support smooth interpolation through their time and price
-  anchors. Curves follow the selected scale, preserve open or closed paths and
-  stay clipped to the plot in canvas and SVG output.
-- Table cells can show plain-text hover details, including merged cells.
-  Measured cell targets keep existing table click IDs, and updates, removal and
-  resizing discard stale targets. Exported SVG omits transient hover details.
 - Money Flow Index omits overflowing price flows and window totals, then
   recovers after those observations expire. Chronological sums align finite
   rounding with the companion engines; missing volume still defaults to zero.
-- SVG export preserves very large finite coordinates when decimal rounding
-  would otherwise overflow. Ordinary coordinate formatting is unchanged.
-- Native study inputs now support symbols with paired exchanges, session
-  strings, multiline notes, prices and absolute UTC timestamps. Both hosts
-  validate drafts, retain fractional timestamps and support chart picking in
-  the study's actual pane and scale. Dialog cancellation restores prior values;
-  context changes, pane changes and destruction cancel stale captures.
 - WaveTrend uses fresh chronological signal windows, avoiding rounding drift
   that could create a false crossing. AlphaTrend windows recover when extreme
   observations expire. These windows require work proportional to the selected
@@ -188,15 +205,6 @@ All notable changes to OpenAlgo Charts.
   from an unavailable seed, and nonfinite running averages no longer emit false
   zero or 100 readings. Ordinary finite results and the public signature remain
   unchanged; built-in studies using RSI inherit the correction.
-
-- Primary-only auto-fit follows the actual primary series across panes and scales,
-  keeping distant overlays from compressing price candles when enabled. The
-  setting preserves manual ranges and ratio locks, and is available in both hosts.
-- Study legends can collapse to a persistent count while plots, calculations and
-  alerts continue. Touch can expand the count without a prior hover; Readout
-  settings provide keyboard access. Both preferences persist independently for
-  each chart in saved layouts and portable workspaces.
-
 - ADX now seeds directional movement and true range over the same first complete
   change window. This removes an initial bias in both directional readings and
   the strength calculation. The first available bars are unchanged.
@@ -204,6 +212,14 @@ All notable changes to OpenAlgo Charts.
   matching Hull Suite's Hma mode and the companion engines. Odd lengths now
   produce different values; lengths such as 13 also require one more warmup bar.
   Length 1 is supported and returns the selected source.
+
+Saved layouts, workspace documents and drawing files from 2.5.3 load unchanged:
+pane `collapsed`, drawing `policy` and a pane's `historyPeriod` are optional
+fields. Studies whose drawings and markers name no target render and stack as
+before. The calculation corrections change values where an input was missing,
+nonfinite or overflowing, and otherwise only in the last digits of rounding,
+except HMA at odd lengths and the early ADX readings, which now follow the
+definitions above. No runtime dependencies or package tiers were added.
 
 ## 2.5.3
 

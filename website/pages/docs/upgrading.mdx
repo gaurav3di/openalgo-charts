@@ -1,9 +1,42 @@
 ---
-title: Upgrading to 2.5.3
+title: Upgrading to 2.5.4
 description: Adopt workspace, open-interest, alert and host contracts while preserving existing integrations.
 ---
 
-# Upgrading to 2.5.3
+# Upgrading to 2.5.4
+
+Version 2.5.4 needs no migration. Saved layouts, drawing documents and workspace
+documents from 2.5.3 load unchanged; pane `collapsed`, drawing `policy` and a
+pane's `historyPeriod` are optional fields that older records simply omit.
+
+Check these points in your host:
+
+- `chart.navigationOptions()` now also reports `panEnabled` and `zoomEnabled`.
+  A test or a comparison that expects exactly `{ mousePan, defaultVisibleBars }`
+  must include them, or compare the fields it cares about.
+- When studies are applied, the top visible pane's legend starts with the
+  persistent **Indicators N** control, so study rows begin one row lower. Code
+  that locates legend rows by fixed pixel offsets must allow for that row.
+- An external-data study requests its values again after the chart's history
+  is resynchronised, because the bars are a new source revision. Resolve that
+  request as you would the first; its status reads as loading until you do.
+- The widget's top bar gains **Go to**. A host that types a complete translation
+  dictionary as `Record<WidgetBuiltinMessage, string>` must add the new go-to and
+  grid messages; a translator that returns `undefined` keeps the English text.
+- HMA at odd lengths and the early ADX readings follow corrected definitions, and
+  several averages treat missing or overflowing inputs as unavailable. Strategies
+  tuned on the old values should be checked. See the
+  [release notes](/docs/release-notes#254).
+
+New and optional: `widget.goTo()` and `DateNavigator` for date navigation,
+`createChartGrid` for a grid of widgets, `chart.setPaneCollapsed()`, `overlay`
+and `plot` targets on study drawings and markers, and a `policy` on drawings.
+A drawing UI of your own should route its edits through the drawing controller,
+which enforces policies, and pass `{ force: true }` only for the host's own
+changes. See [Chart grid](/docs/chart-grid), [Data loading](/docs/data-loading),
+[Scales and panes](/docs/scales-and-panes) and [Drawing tools](/docs/drawing-tools).
+
+## Earlier upgrades
 
 Version 2.5.3 adds the widget's Data and Objects dock, richer symbol lookup,
 direct typing, shared colour controls, and individual running-study removal.
@@ -25,8 +58,6 @@ and form components. Use the context's overlay opener for nested colour popups,
 and call a generated form's `destroy()` before unmounting it. Include
 `WIDGET_COMPONENT_CSS` alongside `WIDGET_CSS` if your host manages styles.
 See [Widget controls](/docs/widget) and [Objects](/docs/objects).
-
-## Earlier upgrades
 
 Version 2.5.2 adds Anchored VWAP and Fixed Range Volume Profile to the drawing
 registry. Existing drawing records still load. Both tools need candle volume;

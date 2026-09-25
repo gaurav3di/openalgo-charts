@@ -4,25 +4,25 @@
 > Historical pre-implementation target: **< 50 KB Brotli** for the full package (engine + trade overlay), no runtime dependencies. *(Brotli is the size metric we hold the budget against - see §11. Gzip runs ~10-15% larger.)*
 > Goal: professional-grade interactive financial-chart rendering + advanced on-chart trading & trade management.
 
-> **Current release: 2.5.3.** Nine independently loadable tiers include optional workspace documents and asynchronous catalog storage. Anchored VWAP and fixed-range Volume Profile drawings join opt-in drawing and appearance links; grouped timeline events keep their model in base and details UI in the widget. Alert threshold drafts preview separately from evaluation and commit once on release. The 2.5.3 build measures **96.54 kB** base, **104.55 kB** base + trade and **266.57 kB** for all tiers (decimal Brotli sizes). Current measurements are in the README size budget; historical estimates and release measurements below remain labeled as such.
+> **Current release: 2.5.4.** Nine independently loadable tiers. The engine gains pane collapse to a header strip, study drawings and markers routed to the price pane or a named plot, and drawing policies (selectable, editable, persistent, listed) for host-owned levels. The widget gains go-to-date navigation that loads older history first, through the DOM-free `DateNavigator`, and `createChartGrid`, which lays out and links one widget per cell and reads and writes the workspace tier's portable documents. The 2.5.4 build measures **117.42 kB** base, **125.42 kB** base + trade and **310.09 kB** for all tiers (decimal Brotli sizes). Current measurements are in the README size budget; historical estimates and release measurements below remain labeled as such.
 >
 > **Earlier implementation history.** Version 2.2.0 expands the drawing registry to 85 tools, adds native curve geometry and guided multi-point placement, and tightens label, volume-window and hit-test work. Version 2.1.9 adds chart-owned vector branding, optional persisted text watermarks and guarded logo gestures.  Version 2.1.8 normalizes trackpad and wheel input, routes gestures by axis, eases automatic price projections and adds dedicated mobile widget controls. Version 2.1.7 adds shared object management, a searchable Objects panel and dialogs sized to their host. Version 2.1.6 adds shared history ownership, request scheduling, resilient cache snapshots, managed external-study context and visible widget retry states. The design below includes the footprint styles, configurable statistics table and quantity/lot display. Version 2.1.4 restores two-axis mouse and pen panning by default, while retaining horizontal-only panning as an explicit preference. Version 2.1.3 added saved navigation preferences and a reset control. Version 2.1.2 isolates external-study data contexts, strengthens history/live recovery, accepts current OpenAlgo protocol frames and adds optional widget stylesheet nonces. The pre-implementation size estimates in this document have been superseded by measured `size-limit` (Brotli) figures, which live in the README size budget and are re-measured on every release: on the 2.2.0 build the base engine is **76.22 KB**, base + trade **83.83 KB**, and everything (all eight tiers) **212.52 KB**. The original "under 50 KB" target below is kept as history; the budgets that are enforced are the per-tier rows in `.size-limit.json`. See the *Revision log* for the point-by-point mapping and §13a for the honest deferred list.
 
 <p align="center">
-  <img src="docs/architecture-diagram.svg" alt="OpenAlgo Charts 2.5.3: host boundary, base engine data flow and controllers, and eight optional capability tiers" width="900" />
+  <img src="docs/architecture-diagram.svg" alt="OpenAlgo Charts 2.5.4: host boundary, base engine data flow and controllers, and eight optional capability tiers" width="900" />
 </p>
 
 The diagram separates host orchestration from the base engine and its eight optional
 tiers. Alerts, replay groups, comparison and shared loading belong to base. The
 workspace tier supplies portable documents and storage; the host builds and activates
-the grid. Brokers remain authoritative for execution, and the host delivers alert
+the grid, or the widget's `createChartGrid` does it for widget cells. Brokers remain authoritative for execution, and the host delivers alert
 notifications. Pipeline arrows show data flow, not package dependencies.
 
 ---
 
 ## Current integration map
 
-For 2.5.3 integrations, start with these current guides and implementation
+For 2.5.4 integrations, start with these current guides and implementation
 boundaries. The numbered design sections below retain historical plans and
 explicitly labeled estimates; use the current API types for implementation.
 
@@ -36,6 +36,10 @@ explicitly labeled estimates; use the current API types for implementation.
 | Linked views | Base appearance adapters and draw-tier `DrawingLinkGroup`; matching symbol and exchange, separate local history and persisted lineage | [Chart linking](https://marketcalls.github.io/openalgo-charts/docs/chart-linking/) |
 | Timeline events | Base grouping and clustering model, with host-supplied data and widget details | [Events](https://marketcalls.github.io/openalgo-charts/docs/events/) |
 | Workspaces | Optional portable documents, revisioned repository and async storage; host builds and activates charts | [Workspaces](docs/workspaces.md) |
+| Chart grids | Widget-tier `createChartGrid`: presets, splitters, one active chart, base `LinkGroup` links and workspace payloads | [Chart grid](https://marketcalls.github.io/openalgo-charts/docs/chart-grid/) |
+| Date navigation | Widget-tier `DateNavigator` and panel; the host's loader reaches older history, the chart places the view | [Data loading](https://marketcalls.github.io/openalgo-charts/docs/data-loading/) |
+| Pane layout | Base pane weights, maximize and collapse to a strip, saved in pane state and workspaces | [Scales and panes](https://marketcalls.github.io/openalgo-charts/docs/scales-and-panes/) |
+| Drawing policies | Draw-tier `policy` on each drawing; forced host calls bypass it and record no undo step | [Drawing tools](https://marketcalls.github.io/openalgo-charts/docs/drawing-tools/) |
 | Chart export | Loaded or revealed bars, study values and comparison closes; host delivers the CSV | [Chart data](docs/chart-data-export.md) |
 | Custom studies | Descriptor registry in base; optional built-ins and external-data helpers | [Indicators](https://marketcalls.github.io/openalgo-charts/docs/indicators/) |
 | Host interface | Canvas containers in base; toolbar, Data/Objects dock, rich symbol search, dialogs and translated controls in the widget | [Widget](docs/widget.md) |
@@ -1024,7 +1028,7 @@ reader of that version sees. Three rules fell out of getting this wrong:
 
 ## 13a. Deferred / not-yet-implemented (honest status)
 
-The current implementation keeps these boundaries in 2.5.3:
+The current implementation keeps these boundaries in 2.5.4:
 
 - **Separate price/time axis-widget canvases** - axes draw within the pane
   canvas by design (small-engine simplification).

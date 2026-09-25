@@ -533,7 +533,7 @@ all component styles, including dialogs and indicator-picker additions. Include 
 beside `WIDGET_CSS` when managing styles yourself; apply widget tokens to the root.
 createWidget/createAlertUi inject the complete component styles automatically.
 
-## Date and range navigation (unreleased)
+## Date and range navigation (2.5.4)
 
 `widget.goTo({ from, to? })` shows a date, or an explicit range, in UTC seconds.
 It waits for a load in flight, loads older history through
@@ -639,7 +639,7 @@ Rules the coordinator applies:
 - A loader that reports `loaded` without adding older bars stops the loop as
   `empty`, so a misbehaving host cannot keep it spinning.
 
-## Chart grid (unreleased)
+## Chart grid (2.5.4)
 
 `createChartGrid(container, options)` returns a `ChartGrid`: one widget per cell on a
 rows by columns grid, with splitters, one active cell, linking through the base

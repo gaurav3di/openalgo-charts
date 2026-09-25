@@ -35,7 +35,8 @@ The map must preserve these distinctions:
   Grouped timeline events and clustering remain in base; the widget owns details
   UI, and hosts supply their event data and optional detail loader.
 - The workspace tier provides documents, templates, revisioned catalogs and
-  asynchronous storage. It does not render or activate a chart grid itself.
+  asynchronous storage. It does not render or activate a chart grid itself; the
+  widget's `createChartGrid` (2.5.4) does, for widget cells, and a custom host still can.
 - Canvas 2D supplies the base renderer. Optional WebGL2 draws supported series;
   axes, text and primitives remain 2D. Study and profile calculation stays on CPU.
 - Base plus eight optional ESM entries makes nine tiers. Custom study contracts
@@ -46,6 +47,12 @@ Measurements were rechecked with `npm run size` and the built registries on
 transform 4.50 kB, trade 8.01 kB, workspace 5.55 kB, webgl 6.39 kB and widget
 51.06 kB, all decimal Brotli. All tiers total 256.08 kB. Registry counts are
 105 indicators, 87 drawing tools and 15 chart types with the transform tier loaded.
+
+Rechecked on 2.5.4: base 117.42 kB, indicators 36.27 kB, draw 42.53 kB, profile
+14.96 kB, transform 4.50 kB, trade 8.01 kB, workspace 8.67 kB, webgl 6.39 kB and
+widget 71.33 kB; all tiers 310.09 kB. Registry counts are unchanged. The widget chip
+names the grid and go-to panel, and the description names pane collapse, study
+output targets and drawing policies.
 
 Source references: `src/index.ts`, `src/feed/data-controller.ts`,
 `src/feed/instrument.ts`, `src/model/bar.ts`, `src/core/pane.ts`,
