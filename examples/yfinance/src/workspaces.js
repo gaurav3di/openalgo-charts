@@ -1,6 +1,7 @@
 import { createIndexedDbWorkspaceStorage } from '/dist/openalgo-charts.workspace.mjs';
 import { ReferenceWorkspaceCatalog } from './workspace-catalog.js';
-import { workspaceFromLayout } from './workspace-document.js';
+import { workspaceFromLayout, needsGridView, fromGridView } from './workspace-document.js';
+import { handOffToGrid, gridViewRefusal } from './grid-view.js';
 import { workspaceUnavailable } from './workspace-host.js';
 import { validateReferenceLayout } from './workspace-transition.js';
 import { layoutSnapshot, readLayout, persistLayoutNow, parseLayoutFile, untrustedDrawings } from './persist.js';
@@ -10,21 +11,32 @@ import { capturePaneTarget } from './pane-target.js';
 import { chartDataUnavailableReason } from './chart-data.js';
 import { openChartDataControls } from './chart-data-controls.js';
 
+/** A portable document with every pane's drawings stripped of their policies. */
+function untrustedPanes(document) {
+  return Array.isArray(document?.panes)
+    ? { ...document, panes: document.panes.map(pane => (pane?.chart ? { ...pane, chart: untrustedDrawings(pane.chart) } : pane)) }
+    : document;
+}
+
 /**
- * Older exported snapshots become named saves without inferring a live
- * source. A file is from elsewhere, so no drawing in it keeps a policy.
+ * Older exported snapshots become named saves without inferring a live source,
+ * and a layout the grid view exported is put in this page's terms. A file is
+ * from elsewhere, so no drawing in it keeps a policy.
  */
 export function workspaceFileDocument(text, filename) {
   const parsed = JSON.parse(text);
-  if (parsed?.kind !== undefined) {
-    return Array.isArray(parsed.panes)
-      ? { ...parsed, panes: parsed.panes.map(pane => (pane?.chart ? { ...pane, chart: untrustedDrawings(pane.chart) } : pane)) }
-      : parsed;
-  }
+  if (parsed?.kind !== undefined) return untrustedPanes(fromGridView(parsed));
   const payload = workspaceFromLayout(parseLayoutFile(text));
   return { ...payload, kind: 'workspace', version: 1, id: 'legacy-file',
     name: String(filename || 'Imported layout').replace(/\.json$/i, '').trim().slice(0, 120) || 'Imported layout',
     createdAt: 0, updatedAt: 0 };
+}
+
+/** A portable document whose geometry only the grid view can show, or null for this page's own import path. */
+export function gridFileDocument(text) {
+  let parsed;
+  try { parsed = JSON.parse(text); } catch { return null; }
+  return needsGridView(parsed) ? untrustedPanes(parsed) : null;
 }
 
 /** Keep named saves durable; a storage failure never changes their backend. */
@@ -36,6 +48,9 @@ export async function initWorkspaces(app) {
   let busy = false, selectionKey = '', pendingDelete = null, localError = '', notice = '', lastError = '';
   let pendingAutosavePreference;
   let dataTarget = null;
+  // A layout file with geometry only the grid view can draw, held until the
+  // user chooses to open it there.
+  let gridLayout = null;
   const snapshot = () => {
     if (workspaceUnavailable(app) || app.workspaceLoading) throw new Error('Finish loading, replay or settings changes before saving layouts');
     return workspaceFromLayout(layoutSnapshot(), { magnet: magnetMode(), stay: stayMode() });
@@ -75,6 +90,8 @@ export async function initWorkspaces(app) {
     for (const id of ['ws-delete', 'ws-export']) el(id).disabled = locked || !selectedDocument;
     el('ws-import').disabled = locked || unavailable || !saved;
     el('ws-file').disabled = locked || unavailable || !saved;
+    el('ws-grid').hidden = gridLayout === null;
+    el('ws-grid').disabled = locked;
     el('ws-refresh').disabled = locked;
     el('ws-autosave').disabled = locked || !saved;
     el('ws-autosave').checked = pendingAutosavePreference ?? saved?.autosave === true;
@@ -171,8 +188,24 @@ export async function initWorkspaces(app) {
   el('ws-file').addEventListener('change', async () => {
     const file = el('ws-file').files?.[0];
     if (!file) return;
+    const text = await file.text();
+    const layout = gridFileDocument(text);
+    // Asked before the page is left, so a layout the grid view would refuse is
+    // refused here, where the file was chosen.
+    const refusal = layout ? gridViewRefusal(layout) : '';
+    gridLayout = refusal ? null : layout;
+    if (layout) {
+      localError = refusal && `${file.name} needs the grid view, which cannot open it: ${refusal}`;
+      notice = refusal ? '' : `${file.name} holds ${layout.panes.length} charts in ${layout.layout.rows} rows and ${layout.layout.columns} columns. Open it in the grid view.`;
+      render();
+      return;
+    }
     await catalog.flushAutosave();
-    action(async () => catalog.import(workspaceFileDocument(await file.text(), file.name)), 'Layout imported and opened');
+    action(async () => catalog.import(workspaceFileDocument(text, file.name)), 'Layout imported and opened');
+  });
+  el('ws-grid').addEventListener('click', () => {
+    if (gridLayout && handOffToGrid(gridLayout)) window.location.assign('grid.html');
+    else { localError = 'The layout could not be handed to the grid view'; render(); }
   });
 
   const recovery = readLayout();

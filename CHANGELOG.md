@@ -96,6 +96,28 @@ All notable changes to OpenAlgo Charts.
   optional `removeMany`. The yfinance host adds session price marks that use all
   three host policies and return after every rebuild, strips policies from imported
   layout files, and keeps its toolbar's Del, Clear, Undo and Redo to what they would do.
+- The widget tier adds `createChartGrid`: one widget per cell in `1x1`, `1x2`,
+  `1x3`, `2x1`, `3x1` or `2x2` presets, with draggable and keyboard splitters, one
+  active chart that owns the keyboard, crosshair, viewport, symbol, interval and
+  appearance links without echo, a compact tabbed view on narrow screens, and
+  persistence. It writes and applies the portable workspace payload, including
+  saved spans and weights; a failed apply destroys the half-built charts, cancels
+  their requests and leaves the old ones untouched. A linked symbol includes its
+  exchange, charts shown again after the compact view take the linked window,
+  discrete changes are saved before the task ends, and a stored desk that fails
+  to restore is kept and reported through `restored()` and a toast instead of
+  being overwritten. After a linked pan or zoom a resize keeps each chart on
+  the window it showed, so charts following new bars keep following them and
+  stay in step; the linked window moves with the navigated chart's new bars and
+  is dropped when viewport linking is switched on again. `feed` may be a
+  function that builds each chart's feed from its pane id and saved
+  `historyPeriod`, which the grid keeps, copies to charts a preset adds and
+  writes back. `WidgetOptions.keyboardRoute` lets any multi-widget host
+  decide which widget answers a key, including through a shared
+  `ShortcutManager`, and keeps a `global` shortcut scope. The yfinance reference
+  host gains a grid view that loads each layout's saved history period; its
+  main page hands over layouts it cannot draw after checking the grid view can
+  open them, and opens the one or two chart layouts the grid view exports.
 - CSV export supports explicit study instances, inclusive UTC ranges and
   display-aligned plot values with effective runtime offsets. Candle plots expand
   into OHLC fields; projected times are identified without exposing future replay

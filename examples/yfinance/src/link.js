@@ -40,6 +40,9 @@ export function openLinkMenu(anchor) {
       icon: 'split', on: isSplit(),
       onSelect: () => (isSplit() ? closeSplit() : openSplit()),
     },
+    // More than two charts, or rows, live in the grid view: a page built on
+    // the widget tier's chart grid over the same feed.
+    { label: 'Open the chart grid', icon: 'grid', onSelect: () => location.assign('grid.html') },
     { group: isSplit() ? 'Sync' : 'Sync (open the second chart to see it)' },
     { label: 'Crosshair', on: o.crosshair, onSelect: () => setLink({ crosshair: !o.crosshair }) },
     { label: 'Viewport', on: o.viewport, onSelect: () => setLink({ viewport: !o.viewport }) },

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Chart grid fixture</title>
+<style>html,body{margin:0;height:100%;background:#0d0e12}#grid{position:absolute;inset:0}</style></head>
+<body><div id="grid"></div>
+<script type="module">
+import { VERSION } from '/dist/openalgo-charts.mjs';
+import '/dist/openalgo-charts.indicators.mjs';
+import { createChartGrid } from '/dist/openalgo-charts.widget.mjs';
+const T = 1700000040;
+const history = [];
+const bars = (count = 120, base = 100) => Array.from({ length: count }, (_, n) => {
+  const close = base + Math.sin(n / 5) * 6 + n * 0.05;
+  return { time: T + n * 60, open: close - 1, high: close + 2, low: close - 2, close, volume: 100 + n };
+});
+const feed = { getBars: request => new Promise((resolve, reject) => history.push({ request, resolve, reject })) };
+const grid = createChartGrid(document.getElementById('grid'), {
+  feed, symbol: 'AAA', exchange: 'NSE', interval: '1m', now: () => (T + 200 * 60) * 1000, lookbackBars: 120,
+  preset: new URLSearchParams(location.search).get('preset') || '2x2', rail: false, statusline: false,
+  links: { crosshair: true, viewport: false },
+});
+window.fixture = {
+  version: VERSION, grid, history, bars,
+  // Answer every open request, each symbol at its own price level.
+  readyAll: () => {
+    for (const entry of history.splice(0)) entry.resolve(bars(120, 100 + entry.request.symbol.charCodeAt(0)));
+  },
+  ranges: () => grid.cells().map(cell => cell.widget.chart.getVisibleLogicalRange()),
+  counts: () => grid.cells().map(cell => cell.widget.series.getData().length),
+  aborted: () => history.filter(entry => entry.request.signal?.aborted).length,
+};
+</script></body></html>

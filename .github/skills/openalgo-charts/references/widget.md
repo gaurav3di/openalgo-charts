@@ -281,6 +281,7 @@ Color swatches stay compact. Theme overrides should target these tokens.
 | `now` | `() => number` | `Date.now` | Clock for the load window and the capture filename. |
 | `onOrder` | `(order: OrderRequest) => void` | none | Order entry from the right-click menu. Without it the menu draws no trade rows. |
 | `styleNonce` | `string` | none | Response CSP nonce for the shared widget and dialog stylesheet. Style-attribute policy remains the host's responsibility. |
+| `keyboardRoute` | `() => boolean \| undefined` | none | For hosts with several widgets: false silences this widget's chords and chart shortcuts, true sends them here, undefined keeps the usual rule (pointer or focus, or always for a `shortcuts` scope of `global`). Applies to a `ShortcutManager` instance too, shared or not. The chart grid sets it per cell. |
 
 Confirm defaults against `WidgetOptions` in the typings rather than assuming.
 
@@ -451,7 +452,7 @@ alert controllers already attached. Do not restore drawings again afterward.
 
 - `package.json` `exports['./widget']`: `types: ./dist/widget/index.d.ts`, `import: ./dist/openalgo-charts.widget.mjs`. Listed in `sideEffects` (importing registers the dialogs).
 - `rollup.config.js`: `openalgo-charts` and every `openalgo-charts/<tier>` are external for tier builds and emitted as sibling paths (`./openalgo-charts.mjs`, `./openalgo-charts.draw.mjs`), so `dist/` serves with no import map. The widget must never inline the base or the draw tier; `check-dts.mjs` fails a build whose `dist/widget/index.d.ts` declares `Chart` or `DrawingController`.
-- `.size-limit.json`: `Widget tier` row (the bundle alone, 60.5 kB budget) and `Widget terminal` row (base + draw + indicators + widget, 229 kB budget); `Everything` includes the widget. Measure with `npm run size`; never quote from memory.
+- `.size-limit.json`: `Widget tier` row (the bundle alone) and `Widget terminal` row (base + draw + indicators + widget); `Everything` includes the widget. Read the budgets there and measure with `npm run size`; never quote either from memory.
 - The standalone IIFE is base-only and cannot host the widget. Use native ESM from `dist/`.
 
 ## Pitfalls
@@ -638,3 +639,83 @@ Rules the coordinator applies:
 - A loader that reports `loaded` without adding older bars stops the loop as
   `empty`, so a misbehaving host cannot keep it spinning.
 
+## Chart grid (unreleased)
+
+`createChartGrid(container, options)` returns a `ChartGrid`: one widget per cell on a
+rows by columns grid, with splitters, one active cell, linking through the base
+`LinkGroup`, and the portable `WorkspacePayload` of `openalgo-charts/workspace`. It is
+part of the widget tier, not a new one. Source of truth: `src/widget/grid.ts`.
+
+```ts
+import { createChartGrid } from 'openalgo-charts/widget';
+import { parseWorkspacePayload } from 'openalgo-charts/workspace';
+
+const grid = createChartGrid('#desk', { feed, symbol: 'RELIANCE', exchange: 'NSE', interval: '5m',
+  preset: '2x2', links: { crosshair: true, viewport: true }, persist: 'desk' });
+grid.setPreset('1x3');
+const report = grid.applyWorkspace(parseWorkspacePayload(fileText)); // { applied, reason? }
+```
+
+- `ChartGridOptions` is `WidgetOptions` (every cell's options) minus `keyboardRoute`,
+  with its own `feed` (below), plus `preset` (`ChartGridPreset`, default `1x1`), `links` (`LinkOptions`), `compactWidth`
+  (default 640 CSS px, 0 off), and grid-level `persist`/`storage`. `symbol`, `exchange`,
+  `interval` and `chartType` seed the first cell. Cells default to `mobile: 'never'`,
+  because a cell in a split is often narrower than the phone threshold.
+- `feed` is one `DataFeed` for every chart, or a function
+  `(chart: { id, historyPeriod? }) => DataFeed` called once per chart as it is built, for a
+  source that answers by period: the grid keeps each pane's `historyPeriod` (from an
+  applied payload, or copied from the active chart when a preset adds charts) and writes
+  it back in `getWorkspace()`, but only such a function honours it. Return the same feed
+  object for charts that should share one request pool.
+- `CHART_GRID_PRESETS`: `1x1`, `1x2`, `1x3`, `2x1`, `3x1`, `2x2` as `[rows, columns]`.
+  `setPreset` keeps surviving cells in reading order (same widget instances), builds new
+  ones on the active chart's instrument, destroys the rest and resets weights. No span
+  editing; spans from a saved payload are drawn and splitters stop where a span crosses.
+- `ChartGridCell` (`id`, `widget`, `element`, `row`, `column`, `rowSpan`, `columnSpan`,
+  `historyPeriod`);
+  `cells()`, `active()`, `setActive(id, { focus })`, `layout()` (`ChartGridLayout`),
+  `linkOptions()`, `setLinks(patch)` (switching symbol or interval on adopts the active
+  chart's), `theme()`, `setTheme()`, `compact()`, `restored()`, `destroy()`.
+- Events (`ChartGridEvents`, `ChartGridEventName`): `active` (from `setActive`, and when
+  a preset or an applied workspace moves the active chart), `layout` (`preset`,
+  `weights`, `workspace`, `compact`), `links`, `theme`.
+- Persistence (`persist`): preset, link, theme, active chart, instrument, keyboard
+  splitter and drawing add or remove changes are written before the task ends. Pans,
+  zooms and drags are debounced (`SAVE_DEBOUNCE_MS`) and flushed when the page hides
+  (`visibilitychange`), on `pagehide` and on `destroy`. A stored desk that fails to
+  restore (a study or chart type registered later, say) is not overwritten: the grid
+  falls back to `preset`, toasts the reason on the active chart, and `restored()`
+  returns `{ applied: false, reason }` (null when nothing was stored). The stored desk
+  stays until the user changes the grid; data loads and focus do not count.
+- Keyboard: only the active cell answers. Pointer down or focus inside a cell makes it
+  active. A key pressed with the focus on the page body, while the pointer is over the
+  grid, goes to the active chart; a focused splitter or tab keeps its arrow keys.
+- `WidgetOptions.keyboardRoute` is the hook behind that: `() => boolean | undefined`.
+  False silences the widget's chords and its chart's shortcuts, true routes them there,
+  undefined keeps the usual rule: pointer or focus, or always when the host's
+  `shortcuts` scope is `global`. A `ShortcutManager` instance is routed too; one
+  instance shared by several widgets (every grid cell gets the same options) is wrapped
+  per widget, so rebinding it still reaches them all. A host with several plain widgets
+  can use it.
+- `getWorkspace()` returns a JSON `WorkspacePayload` that `parseWorkspacePayload` accepts:
+  slots, weights, preset, active pane, sync, per-pane chart state, `settings['widget.theme']`,
+  rail magnet/stay and `historyPeriod` when the chart has one. `volume` is written false
+  and `comparisons` empty: a widget draws neither. `applyWorkspace` checks the whole
+  payload first (size, slots, overlap, weights, intervals, chart types, studies, text
+  history periods, no comparisons, linked symbols or intervals that agree),
+  builds and restores every new cell off screen, and on the first failure destroys them,
+  aborting their history requests, and returns `{ applied: false, reason }` with the old
+  cells untouched. Pass untrusted input through `parseWorkspacePayload` first.
+- Linked viewports ignore moves caused by freshly loaded bars, so a follower on another
+  interval is not squeezed; views converge on the next pan or zoom. The linked window is
+  kept as times, read from the chart last navigated, and moves with that chart's new
+  bars. After a linked navigation a resize keeps each chart on the window it showed: the
+  engine keeps the right edge, so a chart following new bars keeps following, and the
+  grid puts the span back rather than the bar width, so charts of different widths still
+  agree. A chart shown from behind the compact tabs takes the linked window. The window is
+  forgotten when its chart changes instrument or is removed, and when viewport linking
+  is switched on, which starts without one until the next pan or zoom. A linked symbol
+  is the symbol and exchange together, so a change of exchange alone (one ticker on NSE
+  and BSE) reaches the followers.
+- Below `compactWidth` only the active cell shows, with a tab strip to switch; splitters
+  hide. `CHART_GRID_CSS` is part of `WIDGET_COMPONENT_CSS`.

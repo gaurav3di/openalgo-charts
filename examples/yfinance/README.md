@@ -16,7 +16,8 @@ descriptor settings and require no feed adapter.
 The custom host includes linked chart grids, named layouts and indicator templates
 stored through the optional workspace tier. Layout changes prepare history before
 publication, retain visible storage errors and guard simulated order entry during
-replay or a pending workspace switch. It does not use the packaged widget shell.
+replay or a pending workspace switch. The main page does not use the packaged
+widget shell; the grid view, `grid.html`, does (see Grid view below).
 
 Choose **Indicators > Examples > Routed signal sample** to add a momentum study in
 its own pane whose Buy and Sell plates and 30-bar range box are drawn on the
@@ -221,7 +222,8 @@ tier files exactly as a page would.
 ```
 examples/yfinance/
   index.html          markup only: the shell, the dialogs, the menus
-  styles.css          every rule the page uses
+  grid.html           the grid view: the widget tier's chart grid over the same feed
+  styles.css          every rule the pages use
   server.py           static server, /api/history (yfinance or fixture), the self-test
   requirements.txt    yfinance, the one dependency, needed only outside --fixture
   src/
@@ -268,6 +270,8 @@ examples/yfinance/
     workspace-host.js  reference chart ownership, pending guards and transition wiring
     workspace-catalog.js  named saves, revision conflicts, autosave ownership and storage recovery
     workspaces.js     named-layout dialog, startup selection, autosave and portable files
+    grid.js           the grid view's start-up: presets, links, import and export
+    grid-view.js      the grid view's feed adapter, layout hand-off and document helpers
   tests/              vitest specs for the modules that can run without a browser
   vitest.config.ts    the config those specs run under (see Tests)
 ```
@@ -289,6 +293,54 @@ without any module reading another's binding before it exists.
 Opening the page with `?test=1` puts `window.__oac = { chart, draw, app }` on
 the window for the end-to-end suite; `chart` and `draw` are getters, so they
 follow a rebuild.
+
+## Grid view
+
+`grid.html` is the second page of the reference host. It builds the widget
+tier's chart grid (`createChartGrid`) over the same `/api/history` feed, so each
+chart is a complete widget with its own top bar, loading status and retry.
+
+- The bar picks a preset (one chart, two or three columns, two or three rows, two
+  by two), switches crosshair, viewport, symbol and interval links, and imports or
+  exports a layout file.
+- Click or focus a chart to make it active: it gets the outline and the keyboard.
+  Drag a gap to resize, or focus it and use the arrow keys; double click evens it.
+- Below 640 CSS px only the active chart shows, with tabs to switch.
+- The grid keeps its layout in `localStorage` under the `yfinance-grid` namespace.
+  A first visit opens AAPL, MSFT, RELIANCE.NS and ^NSEI in a two by two grid. A
+  saved layout the page cannot restore is kept, and the status line says why.
+- Each chart loads the history period its layout saved (`historyPeriod`, the
+  main page's range) through the grid's `feed` function, when its interval can
+  serve it. Otherwise, and for a chart with no saved period, it loads its
+  interval's usual one (1m 5d; 5m, 15m and 30m 1mo; 1h 6mo; 1d 2y; 1w 10y). A chart
+  keeps its period when its interval changes, for when it changes back, and a
+  preset copies the active chart's period to the charts it adds. The grid writes
+  the periods back into its saved layout and exports. No older history is paged,
+  since the server answers by period.
+- Import accepts a portable workspace document or payload whose charts use those
+  intervals (`1wk` from the main page opens as `1w`) and periods the server knows.
+  It is validated in full, then applied all at once; on failure nothing on screen
+  changes and the status line says why. Comparison symbols are refused, since a
+  widget draws none, and so are the main page's folded calendar frames (`1mo`,
+  `1q`).
+
+The main page draws one chart or two side by side. Importing a layout with more
+charts, or with rows, into its Layouts dialog offers **Open in grid view**, which
+hands the document over through `sessionStorage` (`oac-grid-handoff`). The main
+page checks first that the grid view can open it, and refuses there otherwise. The
+link menu on the main page also opens the grid view. Open `grid.html?test=1` to
+expose the grid as `window.__grid` for the end-to-end suite.
+
+A one or two chart layout exported from the grid view opens on the main page
+through the same Layouts import. The widget's `1w` becomes the page's `1wk`, the
+per-chart theme is dropped because the main page has one theme for the page, and
+each chart opens fitted to its data with its studies and drawings, because the
+saved window counts the grid view's bars. A saved history period the main page
+has no range for opens as the nearest range it has (`1d` and `5d` as `1mo`, `3mo`
+as `6mo`, `ytd` and `2y` as `1y`, `10y` as `5y`), and every saved period is then
+clamped to what the chart's interval can serve, as the main page clamps its own.
+The main page still refuses what it cannot show, such as a `1m` chart or two
+charts with different drawing magnet or stay settings.
 
 ## How it connects
 

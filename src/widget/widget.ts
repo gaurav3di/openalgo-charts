@@ -24,7 +24,7 @@
  *   every listener.
  */
 import {
-  AlertController, ChartObjects, DataLoadingController, createChart, darkTheme, lightTheme, registeredIntervals, registeredChartTypes, tryResolveInterval, resolveInterval, isKnownInterval,
+  AlertController, ChartObjects, DataLoadingController, ShortcutManager, createChart, darkTheme, lightTheme, registeredIntervals, registeredChartTypes, tryResolveInterval, resolveInterval, isKnownInterval,
   type Chart, type ChartOptions, type ChartTheme, type DataFeed, type Bar, type SeriesApi, type SeriesType,
   type RestoreReport, type BarsRequest, type DataLoadingOptions, type DataLoadingSnapshot, type AlertTriggeredPayload, type TradingCapabilityRequest, type TradingCapabilitySource,
 } from 'openalgo-charts';
@@ -122,6 +122,13 @@ export interface WidgetOptions extends Omit<ChartOptions, 'theme'> {
   tradingLocked?: () => boolean;
   /** Host CSP nonce for the widget and dialog stylesheet, assigned before insertion. */
   styleNonce?: string;
+  /**
+   * Which widget answers the keyboard when a host shows several. True sends
+   * chords here as if the chart had focus, false silences this widget and its
+   * chart's shortcuts, and undefined leaves the pointer and the focus to
+   * decide, as they do for a lone widget. The chart grid supplies it per cell.
+   */
+  keyboardRoute?: () => boolean | undefined;
 }
 
 export type WidgetChartState = ReturnType<Chart['getState']>;
@@ -209,7 +216,7 @@ const WIDGET_ONLY_KEYS: ReadonlyArray<keyof WidgetOptions> = [
   'mobile', 'loading', 'persist', 'storage', 'locale', 'translate', 'indicators', 'symbolSearch', 'lookbackBars', 'now', 'onOrder', 'styleNonce',
   'tradingCapabilities', 'tradingMode', 'tradingLocked',
   'eventDetails',
-  'panels', 'typingNavigation',
+  'panels', 'typingNavigation', 'keyboardRoute',
 ];
 
 /**
@@ -446,6 +453,24 @@ class WidgetImpl implements Widget {
     const reducedMotion = doc.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
     if (reducedMotion && chartOpts.animZoom === undefined) chartOpts.animZoom = false;
     if (reducedMotion && chartOpts.animAutoscale === undefined) chartOpts.animAutoscale = false;
+    // A routed widget hands the engine's shortcuts the same decision as its own
+    // chords, so a hovered chart that is not the routed one stays still. A
+    // host's own manager, which a grid shares between its charts, is wrapped
+    // per chart rather than rebuilt, and its scope still decides whenever the
+    // route leaves the choice open.
+    const route = options.keyboardRoute;
+    const given = options.shortcuts;
+    if (route !== undefined && given !== false) {
+      const target = given instanceof ShortcutManager ? given : new ShortcutManager(given);
+      chartOpts.shortcuts = new Proxy(target, {
+        get: (t, key) => {
+          if (key === 'scope') return 'global';
+          if (key === 'resolve') return (e: KeyboardEvent) => ((route() ?? (t.scope === 'global' || this._inChart())) ? t.resolve(e) : null);
+          const value = Reflect.get(t, key) as unknown;
+          return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(t) : value;
+        },
+      });
+    }
     this.chart = createChart(chartEl, { ...(chartOpts as ChartOptions), theme: this._chartTheme, document: doc });
     chartEl.setAttribute('aria-label', options.ariaLabel ?? widgetText(options, 'Price chart'));
     this._series = this.chart.addSeries(this._chartType as SeriesType);
@@ -986,12 +1011,19 @@ class WidgetImpl implements Widget {
     if (this.context.overlays.size() > 0) return ['overlay'];
     const out: KeyScope[] = [];
     const active = this._doc.activeElement;
-    if (active !== null && this._dataStatus.el.contains(active)) return [];
+    const routed = this._opts.keyboardRoute?.();
+    if (routed === false || (active !== null && this._dataStatus.el.contains(active))) return [];
     if (this._rail !== null && active !== null && this._rail.el.contains(active)) out.push('rail');
-    if (this._pointerInChart || (active !== null && this._chartEl.contains(active))) out.push('chart');
-    if (this._pointerInside || (active !== null && this.root.contains(active))) out.push('widget');
+    if (routed || this._inChart()) out.push('chart');
+    if (routed || this._pointerInside || (active !== null && this.root.contains(active))) out.push('widget');
     out.push('global');
     return out;
+  }
+
+  /** The engine's own test for its shortcuts: the pointer over the chart, or the focus in it. */
+  private _inChart(): boolean {
+    const active = this._doc.activeElement;
+    return this._pointerInChart || (active !== null && this._chartEl.contains(active));
   }
 
   private _installKeys(): void {
