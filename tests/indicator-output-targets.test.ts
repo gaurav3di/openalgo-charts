@@ -544,6 +544,27 @@ describe('marker targets', () => {
     expect(markerLayers(chart, second).map(layer => layer.ids)).toEqual([['plain'], ['sig']]);
   });
 
+  it('waits for candles before drawing a price-pane group', () => {
+    const id = `targets-late-${seq++}`;
+    registerIndicator({
+      id, name: 'Late candles', placement: 'pane', plots: PLOTS, calc: CALC, inputs: [],
+      markers: ({ bars }) => bars.length < 5 ? [] : [{ time: bars[4].time, position: 'aboveBar', shape: 'circle', size: 'small',
+        color: '#ef5350', id: 'late', overlay: true } as never],
+    });
+    const document = fakeDocument();
+    const chart = new Chart(document.createElement('div') as unknown as FakeElement, {
+      document, pixelRatio: () => 1, shortcuts: false, timeNavigator: false, animZoom: false, animAutoscale: false,
+      raf: { schedule: (cb: () => void) => { cb(); return 1; }, cancel: () => {} },
+    });
+    charts.push(chart);
+    chart.applySize(800, 600);
+    const study = chart.addIndicator(id);
+    expect(markerObjects(study)).toHaveLength(0);
+    chart.addSeries('candlestick').setData(BARS);
+    study.values();
+    expect(markerLayers(chart, study)).toEqual([{ pane: 0, overlay: true, series: 'primary', ids: ['late'] }]);
+  });
+
   it('keeps two charts sharing one descriptor independent of each other', () => {
     const marks = routedMarks();
     const draws = routedDraws();
