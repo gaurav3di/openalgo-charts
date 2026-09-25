@@ -32,7 +32,21 @@ let ctxPrice = 0;
 let ctxIndicator = null;   // instance id when the pointer was over an indicator
 let ctxAlerts = [];
 let ctxOwner = null;
+let ctxPane = null;        // the pane row's action, when the pointer was over a lower pane
 export const hideCtx = () => { ctxMenu.hidden = true; };
+
+/**
+ * The pane row: fold a lower pane to its header strip, or open it again. The
+ * strip keeps the pane's studies, drawings and height, so this is a view
+ * choice, not an edit. Null over the price pane, which always stays open, and
+ * on an engine that predates pane collapse.
+ */
+export function paneCollapseRow(chart, paneIndex) {
+  if (!(paneIndex > 0) || typeof chart?.paneCollapsed !== 'function') return null;
+  const folded = chart.paneCollapsed(paneIndex);
+  return { label: folded ? 'Expand pane' : 'Collapse pane',
+    onSelect: () => { chart.setPaneCollapsed(paneIndex, !folded); } };
+}
 
 export function openContextMenu(e, pane = 1) {
   const owner = capturePaneTarget(app, pane);
@@ -46,6 +60,8 @@ export function openContextMenu(e, pane = 1) {
       onSelect: () => { if (owner.current()) setVolumeShown(!volumeShown(2), 2); } });
     if (e.target?.kind === 'indicator') rows.push({ label: 'Study settings...',
       onSelect: () => openSettings(e.target.instanceId, owner) });
+    const paneRow = e.target?.kind === 'time-scale' ? null : paneCollapseRow(owner.chart, e.paneIndex);
+    if (paneRow) rows.push({ label: paneRow.label, onSelect: () => { if (owner.current()) paneRow.onSelect(); } });
     if (rows.length) popupMenu({ getBoundingClientRect: () => ({ left: rect.left + e.point.x, bottom: rect.top + e.point.y }) }, rows, { role: 'menu' });
     return;
   }
@@ -113,6 +129,12 @@ export function openContextMenu(e, pane = 1) {
     const inst = app.chart.indicators().find((i) => i.id === ctxIndicator);
     rowInd.textContent = (inst ? inst.name : 'Indicator') + ' settings...';
   }
+
+  ctxPane = target.kind === 'time-scale' ? null : paneCollapseRow(app.chart, e.paneIndex);
+  const rowPane = ctxMenu.querySelector('[data-act="panecollapse"]');
+  rowPane.hidden = !ctxPane;
+  ctxMenu.querySelector('hr[data-sec="pane"]').hidden = !ctxPane;
+  if (ctxPane) rowPane.textContent = ctxPane.label;
 
   // Volume is a fixture of a time-indexed chart only: a Renko brick or a
   // P&F column has no source bar to hang it off, so `render()` leaves the
@@ -652,6 +674,7 @@ export function initMenus(a) {
     if (act === 'volshow') { if (ctxOwner?.current()) setVolumeShown(!volumeShown(1), 1); return; }
     if (act === 'chartset') { openChartSettings(undefined, ctxOwner); return; }
     if (act === 'indset') { if (ctxIndicator) openSettings(ctxIndicator, ctxOwner); return; }
+    if (act === 'panecollapse') { if (ctxOwner?.current()) ctxPane?.onSelect(); return; }
     placeOrder(btn.getAttribute('data-side'), btn.getAttribute('data-type'), ctxPrice);
   });
 

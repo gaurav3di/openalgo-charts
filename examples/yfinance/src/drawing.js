@@ -39,7 +39,7 @@ export function attachDrawing() {
     }
   });
   for (const ev of ['draw:add', 'draw:remove', 'draw:update']) app.chart.on(ev, autosave);
-  for (const ev of ['paneResized', 'paneMoved', 'paneMaximized', 'paneRemoved', 'indicatorRemoved']) {
+  for (const ev of ['paneResized', 'paneMoved', 'paneMaximized', 'paneCollapsed', 'paneRemoved', 'indicatorRemoved']) {
     app.chart.on(ev, autosave);
   }
   syncRail(app.draw.activeTool());
