@@ -476,7 +476,11 @@ export class DrawingController {
     const members = [...new Set(ids)].filter(id => this.get(id) !== undefined && (options.force || !pinned(this.get(id))));
     if (this._destroyed || !name.trim() || !members.length) return null;
     let id: string;
-    do { id = `group-${this._nextGroup++}`; } while (this._groups.some(group => group.id === id));
+    // An id that only a recorded step still holds is taken as well: that
+    // step would bring its group back over this one. Serialised, a group id
+    // is its quoted self; the same text anywhere else only skips a number.
+    do { id = `group-${this._nextGroup++}`; } while (this._groups.some(group => group.id === id)
+      || [...this._undo, ...this._redo].some(entry => (entry.before + entry.after).includes(`"${id}"`)));
     const group = { id, name: name.trim(), members };
     const moved = new Set(members);
     this._regroup(options.force, groups => groups

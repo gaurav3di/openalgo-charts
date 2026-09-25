@@ -11,7 +11,7 @@ import { fakeDocument } from './helpers/fake-dom';
 import { darkTheme } from '../src/theme';
 import {
   DrawingController, DrawingLayer, migrateDrawings, encodeClipboardPayload, cloneDrawing, registerDrawingTool,
-  type ClipboardPort, type Drawing, type DrawingInput, type DrawingPolicy,
+  type ClipboardPort, type Drawing, type DrawingGroup, type DrawingInput, type DrawingPolicy,
 } from '../src/draw/index';
 import type { DrawingChartHost } from '../src/draw/controller';
 import type { Bar } from '../src/model/bar';
@@ -460,6 +460,28 @@ describe('the host\'s forced calls and the undo history', () => {
     expect(draw.get(a.id)?.style.lineWidth).toBe(5);
     expect(draw.get(a.id)?.style.color).toBeUndefined();
     expect(draw.get(a.id)?.policy).toEqual({ listed: false });
+  });
+
+  it('never gives the host\'s group an id a recorded step still holds, so an undo keeps both groups', () => {
+    const at = (id: string, time: number, policy?: DrawingPolicy) => ({ id, tool: 'trend-line', paneIndex: 0, zIndex: 0, style: {},
+      points: [{ time, price: 10 }, { time: time + 1000, price: 20 }], ...(policy ? { policy } : {}) });
+    const byId = (groups: readonly DrawingGroup[]) => [...groups].sort((x, y) => x.id.localeCompare(y.id));
+    // The host's drawing read-only, and not.
+    for (const policy of [{ editable: false }, undefined]) {
+      const draw = new DrawingController(busHost());
+      draw.fromJSON({ version: 2, drawings: [at('a', 1000), at('b', 3000), at('c', 5000, policy)],
+        groups: [{ id: 'group-1', name: 'Mine', members: ['a', 'b'] }] });
+      // `group-1` is now only in the step that removed it.
+      expect(draw.removeGroup('group-1')).toBe(true);
+      const host = draw.createGroup('Host', ['c'], { force: true })!;
+      expect(draw.undo()).toBe(true);
+      expect(byId(draw.groups())).toEqual(byId([
+        { id: 'group-1', name: 'Mine', members: ['a', 'b'] },
+        { id: host.id, name: 'Host', members: ['c'] },
+      ]));
+      expect(draw.redo()).toBe(true);
+      expect(draw.groups()).toEqual([{ id: host.id, name: 'Host', members: ['c'] }]);
+    }
   });
 });
 
