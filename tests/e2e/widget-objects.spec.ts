@@ -209,6 +209,8 @@ test('drawing policies hold on the canvas, the keys, the menu and the objects pa
   const at = await midpoint(page, ids.fixed);
   await page.mouse.click(at.x, at.y);
   await expect.poll(() => page.evaluate(() => window.__objectsDemo.widget.draw.selection())).toEqual([ids.fixed]);
+  // Its anchors show at the faint hover weight: selected, and nothing to grab.
+  await page.screenshot({ path: info.outputPath('read-only-selected.png') });
   const from = () => page.evaluate(() => window.__objectsDemo.widget.chart.getVisibleLogicalRange().from);
   const start = await from();
   await page.mouse.move(at.x, at.y);

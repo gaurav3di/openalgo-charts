@@ -595,6 +595,17 @@ test('a session mark selects read-only, stays out of the layout, and only the ho
   expect(await marks()).toEqual([placed]);
   expect(await page.evaluate(() => JSON.stringify((window as any).__oac.draw.toJSON()))).not.toContain(`"${placed.id}"`);
 
+  // The toolbar's Del has nothing to take, and a chart-type switch, which
+  // rebuilds the chart from the saved state, brings the mark back as it was.
+  await expect(page.locator('#drawdel')).toBeDisabled();
+  await page.evaluate(() => {
+    const select = document.getElementById('ctype') as HTMLSelectElement;
+    select.value = 'line';
+    select.dispatchEvent(new Event('change'));
+  });
+  await expect.poll(marks).toEqual([placed]);
+  await page.screenshot({ path: info.outputPath('session-mark-after-rebuild.png') });
+
   // The host's own row clears it.
   await page.mouse.click(at.x, at.y, { button: 'right' });
   const clear = page.locator('#ctxmenu [data-act="unmark"]');
