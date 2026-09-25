@@ -358,10 +358,12 @@ opens the panel again on the new chart to carry the request through: an interval
 that cannot serve an older period reports there where history starts. Daily and
 longer frames take a date alone, since a time could not change the bar it names.
 Closing the panel while history loads drops the request, and the view stays where
-it was. Replay never loads history, a symbol or interval change cancels a pending
-request, and the linked second chart follows the placement by time. The navigation
-rules are the widget tier's `DateNavigator`; only the period loader in `src/goto.js`
-belongs to this page.
+it was; so does a pan or zoom on the chart while the longer period loads. Replay
+never loads history, a symbol or interval change cancels a pending request, and
+the linked second chart follows the placement by time. The navigation rules are
+the widget tier's `DateNavigator`; only the period loader and the pan and zoom
+watch in `src/goto.js` belong to this page, since only the page knows which view
+moves are its own.
 
 ## What each module proves
 

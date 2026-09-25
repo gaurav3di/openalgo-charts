@@ -1,17 +1,22 @@
 // Go to a date or a range on the selected chart.
 //
-// The navigation rules (which bar a date names, when history is short, what
-// cancels a request) are the widget tier's DateNavigator, shared with the
-// packaged widget. What is this page's own is how missing history arrives:
-// the reference feed serves history by period rather than by page, so older
-// bars come from the shortest longer period that reaches the requested time,
-// loaded through the pane's ordinary load path. The range menu then shows the
-// period that was actually loaded, which is the honest record of it.
+// The navigation rules (which bar a date names, when history is short, how a
+// newer request or a destroyed chart ends one) are the widget tier's
+// DateNavigator, shared with the packaged widget. What is this page's own is
+// how missing history arrives: the reference feed serves history by period
+// rather than by page, so older bars come from the shortest longer period
+// that reaches the requested time, loaded through the pane's ordinary load
+// path. The range menu then shows the period that was actually loaded, which
+// is the honest record of it.
 //
 // That load rebuilds the pane's chart, and the panel goes with the chart's
 // overlays. The request itself carries on, so the panel is opened again on
 // the new chart to show it through: a result short of a placement (history
 // that starts later, no bars, a failed load) is reported where it was asked.
+// A pan or zoom while the period loads drops the request instead, as the
+// packaged widget does: the user has moved on, and a placement would undo it.
+// That watch is the page's too, since only the page knows which view moves
+// are its own.
 import { DateNavigator, openDateNavigation } from '/dist/openalgo-charts.widget.mjs';
 import { el } from './ui.js';
 import { PERIOD_DAYS, periodsFor } from './intervals.js';
@@ -46,6 +51,12 @@ export async function loadPaneHistory(pane, time) {
   const request = pane === 2 ? app.p2 : app.req;
   const next = widerPeriod(request.interval, request.period, Math.floor(Date.now() / 1000) - time);
   if (!next) return 'exhausted';
+  // The page moves this chart's view on its own only after the rebuild has
+  // replaced it, so a pan or zoom before then is the user's, made here or on
+  // a linked chart. The listeners go with the chart they were added to.
+  const chart = pane === 2 ? app.chart2 : app.chart;
+  const moved = () => navigatorFor(pane).cancel();
+  const offs = ['pan', 'zoom'].map(name => chart.on(name, moved));
   try {
     if (pane === 2) {
       app.p2.period = next;
@@ -55,6 +66,7 @@ export async function loadPaneHistory(pane, time) {
       await app.load();
     }
   } finally {
+    for (const off of offs) off();
     // The load rebuilt the chart the panel belonged to; show the request on the new one.
     if (current?.pane === pane && !panel) openGoTo(el('goto') || undefined, current);
   }

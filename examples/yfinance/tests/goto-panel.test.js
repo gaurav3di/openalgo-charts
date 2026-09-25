@@ -124,6 +124,32 @@ describe('reference go-to panel across a chart rebuild', () => {
   });
 });
 
+describe('reference go-to request and the view it would move', () => {
+  beforeEach(() => setup('1d'));
+
+  it('drops the request when the user pans or zooms while the longer period loads', async () => {
+    let release;
+    gate = { promise: new Promise(resolve => { release = resolve; }) };
+    const panel = ask(ymd(NOW - 200 * DAY));
+    await flush();
+    const message = panel.querySelector('.oac-goto__message');
+    expect(message.textContent).toBe('Loading history');
+    const view = app.chart.getVisibleLogicalRange();
+    app.chart.setVisibleLogicalRange({ from: view.from - 3, to: view.to - 3 });
+    await flush();
+    // Still open over the chart it was on, no longer claiming to load.
+    expect(panel.isConnected).toBe(true);
+    expect(message.textContent).toBe('');
+    release();
+    await flush();
+    expect(app.req.period).toBe('1y');
+    expect(dom.doc.querySelector('.oac-goto')).toBeNull();
+    expect(dom.doc.getElementById('status').textContent).not.toMatch(/^Showing /);
+    const target = app.chart.primaryBars().find(bar => ymd(bar.time) === ymd(NOW - 200 * DAY)).time;
+    expect(centre(app.chart)).not.toBe(target);
+  });
+});
+
 describe('reference go-to panel reporting short history', () => {
   beforeEach(() => setup('1h'));
 

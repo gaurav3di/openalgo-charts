@@ -21,9 +21,19 @@ describe('reference go-to history', () => {
 
 describe('reference go-to loading', () => {
   let app;
+  /** View listeners the loader holds on either chart, which must not outlive a load. */
+  let listening;
+  const chart = () => ({ on: (name, cb) => {
+    const entry = { name, cb };
+    listening.add(entry);
+    return () => listening.delete(entry);
+  } });
   beforeEach(() => {
     fakeDom({ period: '1y' });
+    listening = new Set();
     app = {
+      chart: chart(),
+      chart2: chart(),
       req: { symbol: 'AAPL', interval: '1d', period: '1y' },
       p2: { symbol: 'MSFT', interval: '1d', period: '1mo' },
       load: vi.fn(async () => { app.req.period = document.getElementById('period').value; }),
@@ -38,6 +48,7 @@ describe('reference go-to loading', () => {
     expect(document.getElementById('period').value).toBe('5y');
     expect(app.load).toHaveBeenCalledTimes(1);
     expect(app.req.period).toBe('5y');
+    expect(listening.size).toBe(0);
   });
 
   it('reports exhaustion without loading once the longest period is held', async () => {
@@ -50,6 +61,7 @@ describe('reference go-to loading', () => {
   it('surfaces a failed load and never loads during replay', async () => {
     app.load = vi.fn(async () => { app.loadFailed = true; });
     await expect(loadPaneHistory(1, 0)).rejects.toThrow('could not load');
+    expect(listening.size).toBe(0);
     app.loadFailed = false;
     app.replay = {};
     expect(await loadPaneHistory(1, 0)).toBe('unavailable');
@@ -64,5 +76,6 @@ describe('reference go-to loading', () => {
     expect(app.load).not.toHaveBeenCalled();
     app.loadSecondary = vi.fn(async () => { app.loadFailed2 = true; return false; });
     await expect(loadPaneHistory(2, 0)).rejects.toThrow('could not load');
+    expect(listening.size).toBe(0);
   });
 });

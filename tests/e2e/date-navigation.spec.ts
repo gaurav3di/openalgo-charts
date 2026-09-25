@@ -311,3 +311,32 @@ test('reference host reports short history in the panel it reopens after the reb
   await page.screenshot({ path: info.outputPath('reference-short-history.png') });
   expect(errors).toEqual([]);
 });
+
+test('reference host drops a go-to request on a wheel zoom while the longer period loads', async ({ page, request }, info) => {
+  const errors = await openReference(page, request);
+  await page.getByRole('button', { name: 'History range' }).click();
+  await page.locator('.menu button', { hasText: '1mo' }).click();
+  await page.waitForFunction(() => (window as any).__oac.app.req.period === '1mo' && !(window as any).__oac.app.loading);
+  // Hold the longer period on the wire, so the zoom lands while it loads.
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/history**', async route => { await held; await route.continue(); });
+  const target = await daysBack(page, 200);
+  await page.getByRole('button', { name: 'Go to a date or range' }).click();
+  const panel = page.locator('.oac-goto');
+  await panel.locator('input[type=date]').first().fill(target);
+  await panel.getByRole('button', { name: 'Go', exact: true }).click();
+  const message = panel.locator('.oac-goto__message');
+  await expect(message).toHaveText('Loading history');
+  const plot = await page.locator('#chart').boundingBox();
+  await page.mouse.move(plot!.x + plot!.width * 0.3, plot!.y + plot!.height * 0.7);
+  await page.mouse.wheel(0, -240);
+  await expect(message).toHaveText('');
+  release();
+  await page.waitForFunction(() => (window as any).__oac.app.req.period === '1y' && !(window as any).__oac.app.loading, undefined, { timeout: 20_000 });
+  // The rebuild takes the panel, and a dropped request is not reopened.
+  await expect(page.locator('.oac-goto')).toHaveCount(0);
+  await expect(page.locator('#status')).not.toHaveText(/^Showing /);
+  await page.screenshot({ path: info.outputPath('reference-zoomed-during-load.png') });
+  expect(errors).toEqual([]);
+});
