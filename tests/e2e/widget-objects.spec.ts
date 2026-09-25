@@ -176,3 +176,74 @@ for (const [width, height] of [[350, 440], [350, 240], [700, 240]]) {
     expect(errors).toEqual([]);
   });
 }
+
+/** Where a two-anchor drawing's midpoint sits on the page. */
+async function midpoint(page: Page, id: string): Promise<{ x: number; y: number }> {
+  return page.evaluate((drawingId) => {
+    const { widget } = window.__objectsDemo;
+    const [p, q] = widget.draw.get(drawingId)!.points;
+    const rect = widget.root.querySelector('.oac-chart')!.getBoundingClientRect();
+    return { x: rect.left + widget.chart.timeToCoordinate((p.time + q.time) / 2)!,
+      y: rect.top + widget.chart.priceToCoordinate((p.price + q.price) / 2)! };
+  }, id);
+}
+
+test('drawing policies hold on the canvas, the keys, the menu and the objects panel', async ({ page }, info) => {
+  const errors = await mount(page);
+  // A read-only, transient line the host owns, and an unlisted one beside it.
+  const ids = await page.evaluate(() => {
+    const { widget } = window.__objectsDemo;
+    const t = (i: number): number => 1700000000 + i * 60;
+    const fixed = widget.draw.add({ tool: 'trend-line', paneIndex: 0,
+      points: [{ time: t(60), price: 96 }, { time: t(90), price: 102 }],
+      style: { color: '#ff00ff', lineWidth: 4 }, policy: { editable: false, persistent: false } }).id;
+    const quiet = widget.draw.add({ tool: 'horizontal-line', paneIndex: 0,
+      points: [{ time: t(20), price: 99 }], style: {}, policy: { listed: false } }).id;
+    widget.draw.select(null);
+    return { fixed, quiet };
+  });
+  const points = () => page.evaluate((id) => JSON.stringify(window.__objectsDemo.widget.draw.get(id)?.points), ids.fixed);
+  const before = await points();
+
+  // A click selects it; a press-drag on it pans the chart and leaves it where it was.
+  const at = await midpoint(page, ids.fixed);
+  await page.mouse.click(at.x, at.y);
+  await expect.poll(() => page.evaluate(() => window.__objectsDemo.widget.draw.selection())).toEqual([ids.fixed]);
+  const from = () => page.evaluate(() => window.__objectsDemo.widget.chart.getVisibleLogicalRange().from);
+  const start = await from();
+  await page.mouse.move(at.x, at.y);
+  await page.mouse.down();
+  await page.mouse.move(at.x + 120, at.y + 30, { steps: 6 });
+  await page.mouse.up();
+  expect(await points()).toBe(before);
+  expect(await from()).not.toBe(start);
+
+  // Delete, Backspace and the arrows leave it; the menu greys every edit with the reason.
+  await page.evaluate((id) => window.__objectsDemo.widget.draw.select(id), ids.fixed);
+  const now = await midpoint(page, ids.fixed);
+  await page.mouse.move(now.x, now.y);
+  for (const key of ['Delete', 'Backspace', 'ArrowUp']) await page.keyboard.press(key);
+  expect(await points()).toBe(before);
+  await page.mouse.click(now.x, now.y, { button: 'right' });
+  const del = page.locator('.oac-ctx [data-act="draw-delete"]');
+  await expect(del).toHaveAttribute('aria-disabled', 'true');
+  await expect(del).toContainText('read-only');
+  await expect(page.locator('.oac-ctx [data-act="draw-copy"]')).not.toHaveAttribute('aria-disabled', 'true');
+  await page.screenshot({ path: info.outputPath('read-only-menu.png') });
+  await page.keyboard.press('Escape');
+
+  // The panel lists the read-only line without hide, lock or remove, and not the unlisted one.
+  const panel = await open(page);
+  const row = panel.locator(`[data-object-id="drawing:${ids.fixed}"]`);
+  await expect(row).toHaveCount(1);
+  for (const action of ['visibility', 'lock', 'remove']) await expect(row.locator(`[data-action="${action}"]`)).toHaveCount(0);
+  await expect(panel.locator(`[data-object-id="drawing:${ids.quiet}"]`)).toHaveCount(0);
+  await panel.getByRole('button', { name: 'Done', exact: true }).click();
+
+  // The transient line is on screen but never in the saved state.
+  await expect.poll(() => drawingInk(page)).toBeGreaterThan(50);
+  const saved = await page.evaluate(() => JSON.stringify(window.__objectsDemo.widget.getState()));
+  expect(saved).not.toContain(`"${ids.fixed}"`);
+  expect(saved).toContain(`"${ids.quiet}"`);
+  expect(errors).toEqual([]);
+});

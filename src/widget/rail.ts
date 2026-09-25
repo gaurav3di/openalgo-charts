@@ -19,7 +19,7 @@ import {
   iconSprite, iconUse, chromeIconSvg, toolCursor, DRAWING_TOOL_ICONS,
   type MagnetMode,
 } from 'openalgo-charts/draw';
-import { h, glyph, TIP_DWELL_MS, type TipSpec, type WidgetContext } from './context';
+import { h, glyph, editableIds, TIP_DWELL_MS, type TipSpec, type WidgetContext } from './context';
 
 export const MAGNET_MODES: readonly MagnetMode[] = ['off', 'weak', 'strong'];
 
@@ -250,6 +250,9 @@ export function mountRail(ctx: WidgetContext, host: HTMLElement, opts: RailOptio
     return one === null ? [] : [one];
   };
   const allLocked = (ids: readonly string[]): boolean => ids.length > 0 && ids.every((id) => draw.get(id)?.locked === true);
+  /** Why lock, eye and trash are off for a selection the user may not edit, else nothing. */
+  const readOnlyNote = (ids: readonly string[]): string | undefined =>
+    editableIds(draw, ids).length === 0 ? widgetText(ctx, 'read-only') : undefined;
   const allHidden = (ids: readonly string[]): boolean => ids.length > 0 && ids.every((id) => draw.get(id)?.visible === false);
 
   const armCursor = (tool: string | null): void => {
@@ -548,7 +551,7 @@ export function mountRail(ctx: WidgetContext, host: HTMLElement, opts: RailOptio
       tip: () => {
         const sel = selectionOf();
         if (sel.length === 0) return { title: widgetText(ctx, 'Lock drawing'), sub: widgetText(ctx, 'Select a drawing first'), side: 'right' };
-        return { title: allLocked(sel) ? widgetText(ctx, 'Unlock drawing') : widgetText(ctx, 'Lock drawing'), side: 'right' };
+        return { title: allLocked(sel) ? widgetText(ctx, 'Unlock drawing') : widgetText(ctx, 'Lock drawing'), sub: readOnlyNote(sel), side: 'right' };
       },
       onClick: () => {
         const sel = selectionOf();
@@ -565,8 +568,8 @@ export function mountRail(ctx: WidgetContext, host: HTMLElement, opts: RailOptio
         const sel = selectionOf();
         if (sel.length === 0) return { title: widgetText(ctx, 'Hide drawing'), sub: widgetText(ctx, 'Select a drawing first'), side: 'right' };
         return allHidden(sel)
-          ? { title: widgetText(ctx, 'Show drawing'), side: 'right' }
-          : { title: widgetText(ctx, 'Hide drawing'), sub: widgetText(ctx, 'Stays selected, so the eye brings it back'), side: 'right' };
+          ? { title: widgetText(ctx, 'Show drawing'), sub: readOnlyNote(sel), side: 'right' }
+          : { title: widgetText(ctx, 'Hide drawing'), sub: readOnlyNote(sel) ?? widgetText(ctx, 'Stays selected, so the eye brings it back'), side: 'right' };
       },
       onClick: () => {
         const sel = selectionOf();
@@ -582,7 +585,7 @@ export function mountRail(ctx: WidgetContext, host: HTMLElement, opts: RailOptio
       tip: () => {
         const sel = selectionOf();
         return sel.length > 0
-          ? { title: sel.length > 1 ? widgetText(ctx, 'Delete {count} drawings', { count: sel.length }) : widgetText(ctx, 'Delete drawing'), chord: 'Del', sub: widgetText(ctx, 'Right-click to remove all'), side: 'right' }
+          ? { title: sel.length > 1 ? widgetText(ctx, 'Delete {count} drawings', { count: sel.length }) : widgetText(ctx, 'Delete drawing'), chord: 'Del', sub: readOnlyNote(sel) ?? widgetText(ctx, 'Right-click to remove all'), side: 'right' }
           : { title: widgetText(ctx, 'Delete drawing'), chord: 'Del', sub: widgetText(ctx, 'Select one first. Right-click to remove all'), side: 'right' };
       },
       onClick: () => {
@@ -590,10 +593,14 @@ export function mountRail(ctx: WidgetContext, host: HTMLElement, opts: RailOptio
         refreshControls();
       },
       onContext: () => {
-        const n = draw.drawings().length;
+        // Each count is what the row would act on: an unselectable drawing
+        // never joins a selection and a read-only one survives a clear.
+        const all = draw.drawings();
+        const picked = all.filter((d) => d.policy?.selectable !== false).length;
+        const n = editableIds(draw, all.map((d) => d.id)).length;
         openRailMenu(ctl.trash, [
-          { label: widgetText(ctx, 'Select all ({count})', { count: n }), icon: 'cursor', disabled: n === 0, onSelect: () => {
-            draw.select(draw.drawings().map((d) => d.id));
+          { label: widgetText(ctx, 'Select all ({count})', { count: picked }), icon: 'cursor', disabled: picked === 0, onSelect: () => {
+            draw.select(all.map((d) => d.id));
             refreshControls();
           } },
           { label: widgetText(ctx, 'Remove all drawings ({count})', { count: n }), icon: 'trash', danger: true, disabled: n === 0, onSelect: () => {
@@ -644,7 +651,8 @@ export function mountRail(ctx: WidgetContext, host: HTMLElement, opts: RailOptio
     ctl.magnet.dataset.mode = prefs.magnet;
     setState(ctl.stay, { on: prefs.stay, pressed: prefs.stay });
     const sel = selectionOf();
-    const none = sel.length === 0;
+    // A read-only selection has nothing these three could change.
+    const none = editableIds(draw, sel).length === 0;
     const locked = !none && allLocked(sel);
     const hidden = !none && allHidden(sel);
     setState(ctl.lock, { off: none, on: locked, pressed: locked, glyph: locked ? 'unlock' : 'lock' });

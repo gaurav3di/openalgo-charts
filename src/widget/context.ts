@@ -49,6 +49,16 @@ export function glyph(doc: Document, svg: string, kind: 'tool' | 'chrome'): HTML
   return span;
 }
 
+/**
+ * The ids among `ids` the user may edit: a drawing whose policy sets
+ * `editable` false is not one of them. Every widget control that edits a
+ * drawing takes its enabled state from this, so none is offered and then
+ * refused by the controller.
+ */
+export function editableIds(draw: DrawingController, ids: readonly string[]): string[] {
+  return ids.filter((id) => draw.get(id)?.policy?.editable !== false);
+}
+
 /** Whether a key event came from a text control, where chords stay out of the way. */
 export function inTextField(target: unknown): boolean {
   const t = target as { tagName?: string; isContentEditable?: boolean; type?: string } | null;
