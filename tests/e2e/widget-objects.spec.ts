@@ -197,8 +197,9 @@ test('drawing policies hold on the canvas, the keys, the menu and the objects pa
     const fixed = widget.draw.add({ tool: 'trend-line', paneIndex: 0,
       points: [{ time: t(60), price: 96 }, { time: t(90), price: 102 }],
       style: { color: '#ff00ff', lineWidth: 4 }, policy: { editable: false, persistent: false } }).id;
+    // Below the trend line's whole price span, so no click aimed at it lands on both.
     const quiet = widget.draw.add({ tool: 'horizontal-line', paneIndex: 0,
-      points: [{ time: t(20), price: 99 }], style: {}, policy: { listed: false } }).id;
+      points: [{ time: t(20), price: 93 }], style: {}, policy: { listed: false } }).id;
     widget.draw.select(null);
     return { fixed, quiet };
   });

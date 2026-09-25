@@ -47,6 +47,13 @@ test('loading, retry, recovery and a compact study status remain usable', async 
   await expect(status).toContainText('History is stale');
   await retry.click();
   await page.evaluate(() => (window as any).fixture.ready(3));
+  // Resynced history is a new source revision, so the external study asks again.
+  await expect(status).toContainText('External value: Loading');
+  expect(await page.evaluate(() => (window as any).fixture.studies.length)).toBe(2);
+  await page.evaluate(() => {
+    const fixture = (window as any).fixture;
+    fixture.studies[1].resolve([{ time: fixture.bars()[0].time, values: { v: 11 } }]);
+  });
   await expect(status).toBeHidden();
   expect(errors).toEqual([]);
 });
