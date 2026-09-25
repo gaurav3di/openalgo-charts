@@ -240,9 +240,93 @@ const rsi = chart.addIndicator('rsi', {}, { paneIndex: macd.paneIndex }); // sha
 
 One consequence for a descriptor author: **`calc` must be a pure function of `(bars, settings)`**. It always had to be, but running per tick used to disguise an indicator that counted its own calls or accumulated into `store`. The number of calls is now a property of the frame rate. If you need per-tick work, that is what `attach` and its own subscription are for.
 
-`chart.indicators()` lists live instances in add order; `chart.removeIndicator(instanceId)` returns `boolean` and prunes the pane if it emptied.
+`chart.indicators()` lists live instances in display order; `chart.removeIndicator(instanceId)` returns `boolean` and prunes the pane if it emptied.
 
 **Repeated instances get rotated colours.** The 2nd and later instances of the same descriptor id fill any *unset* plot colour key from `INSTANCE_PALETTE` (`#f5a623`, `#26a69a`, `#ab47bc`, `#ef5350`, `#26c6da`, `#8bc34a`, `#ff7043`, `#5c6bc0`), strided by plot count. An explicit colour in `settings` always wins, and the first instance is never touched. Three EMAs in one blue are indistinguishable on the chart and in the legend alike.
+
+## Study outputs as inputs
+
+`IndicatorStudySource` is a stable scalar-output reference with exactly three own
+data fields: `{ kind: 'indicator', instanceId, plotKey }`. The two identifiers must
+be nonempty strings; plain and null-prototype objects are accepted. Accessors,
+extra fields, self references and cycles are rejected before settings or chart
+resources change. The descriptor must declare the setting as a `type: 'source'`
+input with `allowStudyOutputs: true`. Other inputs remain unchanged.
+
+`sma`, `ema` and `wma` currently opt in. Each exposes the scalar plot key `ma`:
+
+```ts
+const first = chart.addIndicator('sma', { length: 2 });
+const second = chart.addIndicator('sma', {
+  length: 2,
+  source: { kind: 'indicator', instanceId: first.id, plotKey: 'ma' },
+});
+// Price closes [1, 3, 5, 7] produce [null, null, 3, 5] in second.values().ma.
+first.setSettings({ length: 3 }); // second becomes [null, null, null, 4].
+```
+
+For custom descriptors, add `allowStudyOutputs: true` to the source input and call
+`sourceValues(bars, settings.source as IndicatorSource | IndicatorStudySource, ctx)`
+inside `calc(bars, settings, store, ctx)`. `IndicatorCalcContext.resolveSource`
+resolves only references tracked through declared, opted-in settings. A reference
+without a resolver throws `IndicatorInputError`. Do not read another instance's
+`values()` from inside `calc` or invent references dynamically outside those inputs.
+
+`sourceValues` returns a detached, bar-aligned column with its `null`, `NaN` and
+infinite entries preserved. A resolved column must have exactly `bars.length`
+entries. Choose a missing-value policy explicitly; never coerce a gap to zero.
+For study references, the three moving averages require consecutive finite
+observations for a full window, and EMA reseeds after a gap. Their ordinary
+price-string inputs retain their existing outputs and initialization.
+
+Alignment follows the primary bar index. Hiding or moving a producer, changing its
+scale or plot offset, and changing display order do not change its input column.
+The chart calculates producers before consumers, independently of display order;
+settings and external-data changes also refresh consumers without a price tick.
+Only a proven unchanged output prefix permits an incremental downstream pass.
+
+Select a declared scalar plot. An OHLC plot requires a separately declared scalar
+output, and an undeclared calculation column is not selectable. A missing producer
+retains its reference, clears dependent output, reports an error through
+`dataStatus()` and suppresses dependent alerts. Failed or unavailable producer
+output is also unavailable to consumers, even if older producer visuals remain.
+Adding a different instance never retargets a reference. Rebind deliberately with
+`second.setSettings({ source: { kind: 'indicator', instanceId: replacement.id, plotKey: 'ma' } })`.
+Accepted references and references returned from `settings()` are detached.
+
+`IndicatorState.instanceId` preserves identity across `getState()` / `restoreState()`.
+Restore validates the graph before mutation, creates producers before consumers,
+and retains saved display order even when the consumer is listed first. Unknown
+descriptors keep the existing skip behavior; their consumers remain unavailable.
+`IndicatorState.studyInputs?: readonly string[]` identifies reference-bearing
+settings for portable templates. It is remapping metadata, not permission to read
+a study: the current descriptor still controls which inputs opt in. Dependency
+templates must include their producers; the workspace `planIndicatorTemplate`
+allocates fresh identities and rewrites internal references when copying them.
+Template references outside the copied group are rejected.
+
+### Custom hosts
+
+The base types `IndicatorHost` and `IndicatorStudyOutput` describe the optional
+integration for a host using `IndicatorInstance` directly. Old hosts can omit the
+hooks and retain ordinary independent calculations. A host supporting dependencies
+must validate and schedule the graph, then expose committed snapshots:
+
+| Optional host hook | Responsibility |
+|---|---|
+| `validateIndicatorSettings(id, descriptor, settings)` | Validate the proposed whole graph before accepting settings. |
+| `studyOutput(reference)` | Return a committed `Readonly<IndicatorStudyOutput>`, or `undefined` for a missing source. Do not recursively flush through `values()`. |
+| `indicatorOutputChanged(id, refresh)` | Invalidate downstream calculations after output or availability changes. |
+| `indicatorRecompute(id, refresh, fallback)` | Schedule the requested recalculation with its producers; invoke the supplied calculation callback at the correct point. |
+
+An `IndicatorStudyOutput` carries `generation` (producer lifetime), `revision`
+(output changes), `historyRevision` (the earlier prefix may have changed), optional
+`source: Readonly<SeriesDataState>`, `available` and readonly `values`. Advance
+metadata when the corresponding guarantee changes, supply current primary-source
+identity/revisions when known, and set `available: false` while an output cannot
+be consumed. The chart implements these hooks itself. This native opt-in does not
+change the existing compiled-script descriptor boundary or automatically add
+study-reference inputs to a script adapter.
 
 ## Source access and legend sizing (2.4.6)
 

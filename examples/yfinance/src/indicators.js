@@ -1,5 +1,5 @@
 import { registeredIndicators, getIndicator, indicatorStyleInputs, INDICATOR_SOURCES } from '/dist/openalgo-charts.mjs';
-import { el, esc, currentTheme, chartTheme } from './ui.js';
+import { el, esc, currentTheme, chartTheme, toast } from './ui.js';
 import { autosave } from './persist.js';
 import { capturePaneTarget } from './pane-target.js';
 import { createColorPicker, applyTokens, widgetTokens } from '/dist/openalgo-charts.widget.mjs';
@@ -81,6 +81,12 @@ let settingsFor = null; // the IndicatorApi handle being edited
 let settingsTarget = null;
 let disposeSettings = null;
 const formPickers = new WeakMap();
+const sourceReferences = new WeakMap();
+
+function studySource(value) {
+  return value !== null && typeof value === 'object' && value.kind === 'indicator'
+    && typeof value.instanceId === 'string' && typeof value.plotKey === 'string';
+}
 
 let settingsTab = 'inputs';
 export function openSettings(instanceId, target = capturePaneTarget(app)) {
@@ -90,7 +96,11 @@ export function openSettings(instanceId, target = capturePaneTarget(app)) {
   disposeSettings?.();
   settingsTarget = target;
   settingsFor = inst;
-  disposeSettings = target.chart.on('destroy', closeSettings);
+  const offDestroy = target.chart.on('destroy', closeSettings);
+  const offRemoved = target.chart.on('indicatorRemoved', () => {
+    if (currentSettings()) renderSettingsTab(collectInputRows(el('set-body')));
+  });
+  disposeSettings = () => { offDestroy(); offRemoved(); };
   el('set-title').textContent = getIndicator(inst.indicatorId).name + ' settings';
   renderSettingsTab();
   el('setmodal').hidden = false;
@@ -148,7 +158,26 @@ function inputField(host, key, kind, spec, value, onChange, unavailable) {
   let field;
   if (kind === 'select' || kind === 'source') {
     field = document.createElement('select');
-    for (const o of (kind === 'source' ? INDICATOR_SOURCES : spec.options)) {
+    const options = [...(kind === 'source' ? INDICATOR_SOURCES : spec.options)];
+    const references = new Map();
+    if (kind === 'source') {
+      for (const output of spec.studyOutputs ?? []) {
+        const token = `study-output:${references.size}`;
+        references.set(token, { ...output.reference });
+        options.push({ value: token, label: output.label });
+      }
+      if (studySource(value)) {
+        let token = [...references].find(([, reference]) => reference.instanceId === value.instanceId && reference.plotKey === value.plotKey)?.[0];
+        if (token === undefined) {
+          token = `study-output:${references.size}`;
+          references.set(token, { ...value });
+          options.push({ value: token, label: `Unavailable study output: ${value.instanceId} / ${value.plotKey}` });
+        }
+        value = token;
+      }
+      sourceReferences.set(field, references);
+    }
+    for (const o of options) {
       const opt = document.createElement('option');
       opt.value = o.value; opt.textContent = o.label;
       // One option of a select can be the part with nothing behind it: the
@@ -278,6 +307,8 @@ function colorPairRow(host, input, values, onChange, unavailable) {
 
 /** A field's value in the type its input declared. */
 export function fieldValue(field) {
+  const reference = sourceReferences.get(field)?.get(field.value);
+  if (reference) return { ...reference };
   const kind = field.dataset.kind;
   return kind === 'number' ? Number(field.value) : kind === 'boolean' ? field.checked
     : kind === 'color' && field._colorPicker ? field._colorPicker.read() : field.value;
@@ -293,23 +324,37 @@ export function collectInputRows(host) {
 // Inputs = the descriptor's own `inputs`. Style = `indicatorStyleInputs()`,
 // generated per plot (colour, opacity, thickness, line style) so every
 // indicator gets the same controls without declaring them.
-export function renderSettingsTab() {
+export function renderSettingsTab(draft) {
   const inst = settingsFor;
   if (!inst) return;
   const descriptor = getIndicator(inst.indicatorId);
-  const inputs = settingsTab === 'style' ? indicatorStyleInputs(descriptor) : descriptor.inputs;
-  renderInputRows(el('set-body'), inputs, inst.settings());
+  const inputs = settingsTab === 'style' ? indicatorStyleInputs(descriptor) : descriptor.inputs.map(input => {
+    if (input.type !== 'source' || !input.allowStudyOutputs) return input;
+    const studyOutputs = settingsTarget.chart.indicators().flatMap(producer => producer.id === inst.id ? []
+      : getIndicator(producer.indicatorId).plots.filter(plot => !plot.ohlc).map(plot => ({
+        reference: { kind: 'indicator', instanceId: producer.id, plotKey: plot.key },
+        label: `${producer.name} [${producer.id}] / ${plot.title ?? plot.key}`,
+      })));
+    return { ...input, studyOutputs };
+  });
+  renderInputRows(el('set-body'), inputs, draft ?? inst.settings());
 }
 
 export function collectSettings() {
   if (!currentSettings()) return false;
-  settingsFor.setSettings(collectInputRows(el('set-body')));  // recomputes + restyles
+  try { settingsFor.setSettings(collectInputRows(el('set-body'))); }
+  catch (error) {
+    const message = error instanceof Error ? error.message : 'The study settings could not be applied';
+    el('status').textContent = message;
+    toast('error', message);
+    return false;
+  }
   rememberSettings();
   return true;
 }
 
 function currentSettings() {
-  if (settingsTarget?.current() && settingsTarget.chart.indicators().some(inst => inst.id === settingsFor?.id)) return true;
+  if (settingsTarget?.current() && settingsTarget.chart.indicators().includes(settingsFor)) return true;
   closeSettings();
   el('status').textContent = 'study changed; open its settings again';
   return false;

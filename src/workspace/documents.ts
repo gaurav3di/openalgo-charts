@@ -43,11 +43,27 @@ function indicatorStates(input: Json | undefined, preserveIdentity = true): Indi
   const ids = new Set<string>();
   return list(input, 'indicators', 256).map(item => {
     const entry = record(item, 'indicator');
+    const settings = record(entry.settings, 'indicator settings');
     const out: IndicatorState = {
       indicatorId: string(entry.indicatorId, 'indicatorId'),
-      settings: record(entry.settings, 'indicator settings'),
+      settings,
       paneIndex: number(entry.paneIndex, 'indicator paneIndex', 0, 31, true),
     };
+    if (entry.studyInputs !== undefined) {
+      const keys = list(entry.studyInputs, 'indicator studyInputs', 100000).map(key => {
+        if (typeof key !== 'string' || !key.trim()) throw new WorkspaceDocumentError('Invalid study input key');
+        const source = record(settings[key], 'study input reference');
+        if (source.kind !== 'indicator' || Object.keys(source).length !== 3) {
+          throw new WorkspaceDocumentError('Invalid study input reference');
+        }
+        const instanceId = string(source.instanceId, 'study input instanceId');
+        if (typeof source.plotKey !== 'string' || !source.plotKey.trim()) throw new WorkspaceDocumentError('Invalid study input plotKey');
+        settings[key] = { kind: 'indicator', instanceId, plotKey: source.plotKey };
+        return key;
+      });
+      if (new Set(keys).size !== keys.length) throw new WorkspaceDocumentError('Duplicate study input key');
+      out.studyInputs = keys;
+    }
     if (entry.visible !== undefined) out.visible = boolean(entry.visible, 'indicator visibility');
     if (entry.priceScaleId !== undefined) {
       const id = entry.priceScaleId;
@@ -67,6 +83,40 @@ function indicatorStates(input: Json | undefined, preserveIdentity = true): Indi
 
 /** Keep repeated/custom descriptor IDs; availability is checked by the applying host. */
 export function parseIndicatorStates(input: unknown): IndicatorState[] { return indicatorStates(readJson(input)); }
+
+function templateIndicatorStates(input: Json | undefined): IndicatorState[] {
+  const entries = list(input, 'indicators', 256);
+  const connected = entries.some(item => {
+    const keys = record(item, 'indicator').studyInputs;
+    return Array.isArray(keys) && keys.length > 0;
+  });
+  const states = indicatorStates(entries, connected);
+  if (!connected) return states;
+  const identities = new Map(states.flatMap((state, index) => state.instanceId === undefined ? [] : [[state.instanceId, index] as const]));
+  const dependencies = states.map((state, index) => (state.studyInputs ?? []).map(key => {
+    const reference = state.settings[key] as { instanceId: string };
+    const target = identities.get(reference.instanceId);
+    if (target === undefined) throw new WorkspaceDocumentError(`External study dependency: ${reference.instanceId}`);
+    if (target === index) throw new WorkspaceDocumentError('A study cannot depend on itself');
+    return target;
+  }));
+  const active = new Set<number>(), complete = new Set<number>();
+  const visit = (index: number): void => {
+    if (active.has(index)) throw new WorkspaceDocumentError('Study dependencies contain a cycle');
+    if (complete.has(index)) return;
+    active.add(index);
+    for (const target of dependencies[index]) visit(target);
+    active.delete(index);
+    complete.add(index);
+  };
+  for (let index = 0; index < states.length; index++) visit(index);
+  return states;
+}
+
+/** Internal shared normalization; only metadata declares portable graph edges. */
+export function parseTemplateIndicatorStates(input: unknown): IndicatorState[] {
+  return templateIndicatorStates(readJson(input));
+}
 
 function chartState(input: Json | undefined): WorkspaceChartState {
   const source = record(input, 'chart');
@@ -209,7 +259,7 @@ export function parseWorkspaceDocument(input: unknown): WorkspaceDocument {
 export function parseWorkspacePayload(input: unknown): WorkspacePayload { return payload(record(readJson(input), 'workspace')); }
 export function parseIndicatorTemplate(input: unknown): IndicatorTemplateDocument {
   const source = record(readJson(input), 'indicator template');
-  return { kind: 'indicator-template', ...metadata(source, 'indicator-template'), indicators: indicatorStates(source.indicators, false) };
+  return { kind: 'indicator-template', ...metadata(source, 'indicator-template'), indicators: templateIndicatorStates(source.indicators) };
 }
 
 /** Explicit migration of the existing single-widget state; no input is modified. */

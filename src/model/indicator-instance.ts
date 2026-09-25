@@ -10,6 +10,7 @@
 import type { Bar } from './bar';
 import { runAbortable } from './abortable-request';
 import { IndicatorAlertPolicy } from './indicator-alert-policy';
+import { cloneIndicatorSettings, planIndicatorDependencies, type IndicatorDependencyNode } from './indicator-dependencies';
 import type { PriceFormat, PriceScaleId, SeriesApi, SeriesDataState } from './series';
 import type { PriceLine } from '../primitives/price-line';
 import type { PaneLegend, LegendValue } from '../primitives/pane-legend';
@@ -29,6 +30,9 @@ import {
   indicatorDefaults,
   indicatorStyleInputs,
   plotStyleKeys,
+  IndicatorInputError,
+  type IndicatorStudySource,
+  type IndicatorStudyOutput,
   type IndicatorBarsRequest,
   type IndicatorSnapshotRequest,
   type RequestedBarsSnapshot,
@@ -81,6 +85,10 @@ function formatValue(v: number, tick?: number): string {
 
 /** The slice of the chart the runtime needs. Keeps this module testable alone. */
 export interface IndicatorHost {
+  validateIndicatorSettings?(id: string, descriptor: IndicatorDescriptor, settings: Readonly<IndicatorSettings>): void;
+  studyOutput?(source: IndicatorStudySource): Readonly<IndicatorStudyOutput> | undefined;
+  indicatorOutputChanged?(id: string, refresh: boolean): void;
+  indicatorRecompute?(id: string, refresh: boolean, fallback: () => void): void;
   assignIndicatorScale?(id: string,
     series: readonly { api: SeriesApi; scaleId: PriceScaleId }[],
     primitives: readonly { primitive: IPrimitive; scaleId: PriceScaleId }[],
@@ -279,6 +287,16 @@ export interface IndicatorApi {
 }
 
 let nextInstance = 1;
+let nextGeneration = 1;
+
+class StudyInputUnavailable extends IndicatorInputError {}
+
+interface StudyBindings {
+  snapshots: Map<string, Readonly<IndicatorStudyOutput>>;
+  canTail: boolean;
+  current(): boolean;
+  resolve(source: IndicatorStudySource): readonly (number | null)[];
+}
 
 export class IndicatorInstance implements IndicatorApi {
   public readonly id: string;
@@ -347,6 +365,15 @@ export class IndicatorInstance implements IndicatorApi {
   private _calcFailed = false;
   /** A successful cached calculation cannot settle an unfinished provider lifecycle. */
   private _lifecycleStatus: Readonly<IndicatorDataStatus> | null = null;
+  private readonly _generation = nextGeneration++;
+  private _outputRevision = 0;
+  private _outputHistoryRevision = 0;
+  private _outputSource: Readonly<SeriesDataState> | undefined;
+  private _studySnapshots = new Map<string, Readonly<IndicatorStudyOutput>>();
+  private _dependencyUnavailable = false;
+  private _alertNeedsSeed = false;
+  private _outputPending = false;
+  private _publishedBarColors: readonly (string | null)[] | null = null;
 
   public constructor(
     host: IndicatorHost,
@@ -369,11 +396,11 @@ export class IndicatorInstance implements IndicatorApi {
     // Declared inputs plus the generated per-plot appearance settings, so every
     // indicator supports colour / opacity / thickness / line style with no
     // per-descriptor boilerplate.
-    this._settings = {
+    this._settings = this._validatedSettings({
       ...indicatorDefaults(descriptor),
       ...styleDefaults(descriptor),
       ...settings,
-    };
+    });
 
     if (paneIndex !== undefined) {
       this.paneIndex = paneIndex;
@@ -508,7 +535,10 @@ export class IndicatorInstance implements IndicatorApi {
       if (input.type === 'color' || input.type === 'boolean') continue;
       const v = this._settings[input.key];
       if (v === undefined || v === null || v === '') continue;
-      out.push(String(v));
+      if (input.type === 'source' && input.allowStudyOutputs && typeof v === 'object') {
+        const source = v as IndicatorStudySource;
+        out.push(`${source.instanceId}/${source.plotKey}`);
+      } else out.push(String(v));
     }
     return out.join(' ');
   }
@@ -581,6 +611,11 @@ export class IndicatorInstance implements IndicatorApi {
 
   /** Republish candle colors after a change in instance stacking order. */
   public refreshBarColors(): void { this._syncBarColors(this._host.sourceBars()); }
+
+  /** Calculation order must not choose the visual color-overlay winner. */
+  public republishBarColors(): void {
+    if (this._d.barColors) this._host.setBarColors?.(this._publishedBarColors, this.id);
+  }
 
   /** The legend row, for the host to add pane-level actions to the first one. */
   public legend(): PaneLegend | null {
@@ -673,6 +708,7 @@ export class IndicatorInstance implements IndicatorApi {
    * keeps the common no-marker indicator free of an extra primitive.
    */
   private _syncMarkers(bars: readonly Bar[]): void {
+    if (this._dependencyUnavailable) return;
     if (this._d.markers === undefined) return;
     const markers = this._visible
       ? this._d.markers({ bars, values: this._values, settings: this._descriptorSettings() })
@@ -704,6 +740,7 @@ export class IndicatorInstance implements IndicatorApi {
    * indicator without the hook never costs an extra primitive.
    */
   private _syncTable(bars: readonly Bar[]): void {
+    if (this._dependencyUnavailable) return;
     if (this._d.tables !== undefined) { this._syncTables(bars); return; }
     if (this._d.table === undefined) return;
     const spec = this._visible
@@ -796,9 +833,10 @@ export class IndicatorInstance implements IndicatorApi {
    */
   private _syncBarColors(bars: readonly Bar[]): void {
     if (this._d.barColors === undefined) return;
-    const colors = this._visible
+    const colors = this._visible && !this._dependencyUnavailable
       ? this._d.barColors({ bars, values: this._values, settings: this._descriptorSettings() })
       : null;
+    this._publishedBarColors = colors;
     this._host.setBarColors?.(colors, this.id);
   }
 
@@ -1001,7 +1039,7 @@ export class IndicatorInstance implements IndicatorApi {
       requestRecompute: () => {
         if (this._removed) return;
         this._barCount = 0; // external data invalidates any calcTail state
-        this.recompute(true);
+        this._requestRecompute(true);
       },
       store: this._store,
       symbol: () => this._host.symbol?.(),
@@ -1030,6 +1068,9 @@ export class IndicatorInstance implements IndicatorApi {
     if (previous?.state === status.state &&
       (status.state !== 'error' || (previous.state === 'error' && previous.error === status.error))) return;
     this._dataStatus = Object.freeze({ ...status });
+    this._outputRevision++;
+    this._outputHistoryRevision++;
+    this._host.indicatorOutputChanged?.(this.id, true);
     for (const listener of this._dataListeners) listener(this._dataStatus);
     this._host.emit?.('indicator:data-status', {
       id: this.id, indicatorId: this.indicatorId, status: this._dataStatus,
@@ -1047,8 +1088,96 @@ export class IndicatorInstance implements IndicatorApi {
 
   public retryData(): void { if (!this._removed) this._dataRetry?.(); }
 
+  public dependencyNode(): IndicatorDependencyNode {
+    return { id: this.id, descriptor: this._d, settings: this._settings };
+  }
+
+  public invalidateStudyOutput(): void { this._outputPending = true; }
+
+  private _validatedSettings(settings: Readonly<IndicatorSettings>): IndicatorSettings {
+    const copy = cloneIndicatorSettings(settings);
+    planIndicatorDependencies([{ id: this.id, descriptor: this._d, settings: copy }]);
+    this._host.validateIndicatorSettings?.(this.id, this._d, copy);
+    for (const input of this._d.inputs) {
+      if (input.type === 'source' && typeof copy[input.key] === 'object' && copy[input.key] !== null) Object.freeze(copy[input.key]);
+    }
+    return copy;
+  }
+
+  public studyOutput(plotKey: string): Readonly<IndicatorStudyOutput> | undefined {
+    const plot = this._d.plots.find(item => item.key === plotKey);
+    if (!plot || plot.ohlc) return undefined;
+    return {
+      generation: this._generation, revision: this._outputRevision, historyRevision: this._outputHistoryRevision,
+      source: this._outputSource, values: this._values[plotKey] ?? [],
+      available: !this._removed && this._outputRevision > 0 && !this._outputPending && !this._calcFailed && !this._dependencyUnavailable
+        && (this._lifecycleStatus === null || this._lifecycleStatus.state === 'ready'),
+    };
+  }
+
+  private _studyBindings(bars: readonly Bar[], source: SeriesDataState | undefined): StudyBindings {
+    const edges = planIndicatorDependencies([this.dependencyNode()]).dependencies.get(this.id) ?? [];
+    const snapshots = new Map<string, Readonly<IndicatorStudyOutput>>();
+    const columns = new Map<string, readonly (number | null)[]>();
+    let canTail = this._studySnapshots.size === edges.length;
+    for (const { inputKey, source: reference } of edges) {
+      const output = this._host.studyOutput?.(reference);
+      if (!output?.available || output.values.length !== bars.length ||
+        (source !== undefined && (output.source?.sourceId !== source.sourceId ||
+          output.source.revision !== source.revision || output.source.historyRevision !== source.historyRevision))) {
+        throw new StudyInputUnavailable(`Study input ${inputKey} is unavailable: ${reference.instanceId}/${reference.plotKey}`);
+      }
+      snapshots.set(inputKey, output);
+      columns.set(inputKey, Object.freeze(output.values.slice()));
+      const previous = this._studySnapshots.get(inputKey);
+      if (!previous || previous.generation !== output.generation || previous.historyRevision !== output.historyRevision
+        || previous.revision > output.revision) canTail = false;
+    }
+    return {
+      snapshots, canTail,
+      current: () => edges.every(({ inputKey, source: reference }) => {
+        const previous = snapshots.get(inputKey)!;
+        const current = this._host.studyOutput?.(reference);
+        return current?.available === true && previous.generation === current.generation
+          && previous.revision === current.revision && previous.historyRevision === current.historyRevision;
+      }),
+      resolve: reference => {
+        const edge = edges.find(item => item.source.instanceId === reference.instanceId && item.source.plotKey === reference.plotKey);
+        if (!edge) throw new IndicatorInputError('Study source must be declared by an opted-in input');
+        return columns.get(edge.inputKey)!;
+      },
+    };
+  }
+
+  private _requestRecompute(refresh: boolean): void {
+    if (this._host.indicatorRecompute) this._host.indicatorRecompute(this.id, refresh, () => this.recompute(refresh));
+    else this.recompute(refresh);
+  }
+
+  private _clearUnavailableOutput(bars: readonly Bar[]): void {
+    this._dependencyUnavailable = true;
+    this._alertNeedsSeed = true;
+    this._studySnapshots.clear();
+    const keys = new Set([...Object.keys(this._values), ...this._d.plots.map(plot => plot.key)]);
+    this._values = Object.fromEntries([...keys].map(key => [key, new Array<null>(bars.length).fill(null)]));
+    this._barCount = 0;
+    this._outputHistoryRevision++;
+    for (const series of this._series.values()) series.setData([]);
+    for (const fill of this._fills) fill.setPoints([]);
+    this._markers?.setMarkers([]);
+    this._table?.setRows([]);
+    for (const { table } of this._tables.values()) table.setRows([]);
+    this._draws?.setItems([]);
+    this._background?.setColors([], bars);
+    for (const level of this._levels) this._host.removeIndicatorLevel(level);
+    this._levels = [];
+    this._publishedBarColors = null;
+    this._host.setBarColors?.(null, this.id);
+    this.updateLegendValues();
+  }
+
   public settings(): IndicatorSettings {
-    return { ...this._settings };
+    return cloneIndicatorSettings(this._settings);
   }
 
   /**
@@ -1092,7 +1221,9 @@ export class IndicatorInstance implements IndicatorApi {
 
   public setSettings(patch: Readonly<IndicatorSettings>): void {
     if (this._removed) return;
-    this._settings = { ...this._settings, ...patch };
+    this._settings = this._validatedSettings({ ...this._settings, ...patch });
+    this._outputPending = true;
+    this._host.indicatorOutputChanged?.(this.id, true);
     // Restyle before recomputing — appearance is independent of the maths, so a
     // colour or thickness change must not wait on a full recalculation.
     for (const plot of this._d.plots) {
@@ -1120,7 +1251,7 @@ export class IndicatorInstance implements IndicatorApi {
     this._applyRange();
     this._values = {};
     this._barCount = 0; // force a full recompute; settings invalidate any tail state
-    this.recompute(true);
+    this._requestRecompute(true);
     this._detach?.();
     this._attach();
     this._host.resourcesChanged?.();
@@ -1137,25 +1268,30 @@ export class IndicatorInstance implements IndicatorApi {
     const epoch = ++this._calculationEpoch;
     const settingsIdentity = this._settings;
     const source = this._host.sourceState?.();
+    const bars = this._host.sourceBars();
+    let bindings: StudyBindings | undefined;
     const current = (): boolean => {
       if (this._removed || epoch !== this._calculationEpoch || settingsIdentity !== this._settings) return false;
+      if (bindings && !bindings.current()) return false;
       const latest = this._host.sourceState?.();
       return source === undefined ? latest === undefined : latest !== undefined
         && source.sourceId === latest.sourceId && source.revision === latest.revision
         && source.historyRevision === latest.historyRevision && source.provenance === latest.provenance;
     };
-    // The constructor's pass throws through: see the note there.
-    if (!this._constructed) { this._recompute(refresh, source, current); return; }
     try {
-      this._recompute(refresh, source, current);
+      bindings = this._studyBindings(bars, source);
+      this._recompute(refresh, bars, source, bindings, current);
     } catch (error) {
       if (!current()) return;
+      if (!this._constructed && !(error instanceof StudyInputUnavailable)) throw error;
+      if (error instanceof StudyInputUnavailable) this._clearUnavailableOutput(bars);
       // One study's bad input must not stall the frame for every other one, and
       // a study that silently stops drawing tells the user nothing. So the
       // failure goes where a Tier-2 fetch failure already goes, the previous
       // plots stay up, and the next recompute that succeeds clears it.
       this._calcFailed = true;
       this._publishStatus({ state: 'error', error });
+      this._host.indicatorOutputChanged?.(this.id, true);
       return;
     }
     // A callback can complete a newer pass. Its status owns recovery too.
@@ -1164,10 +1300,11 @@ export class IndicatorInstance implements IndicatorApi {
       this._calcFailed = false;
       this._publishStatus(this._lifecycleStatus ?? { state: 'ready' });
     }
+    if (current()) this._host.indicatorOutputChanged?.(this.id, refresh);
   }
 
-  private _recompute(refresh: boolean, source: SeriesDataState | undefined, current: () => boolean): void {
-    const bars = this._host.sourceBars();
+  private _recompute(refresh: boolean, bars: readonly Bar[], source: SeriesDataState | undefined,
+    bindings: StudyBindings, current: () => boolean): void {
     const n = bars.length;
     // Resolved once: the zone is fixed for the frame, and calc, calcTail and
     // every colorBy below must be told the same calendar.
@@ -1191,15 +1328,23 @@ export class IndicatorInstance implements IndicatorApi {
     // Older hosts have no mutation provenance and retain the live heuristic.
     if (source === undefined && tailOnly) this._live = true;
     const ctx = this._calcContext(bars, appended, source);
-    if (tailOnly && this._d.calcTail !== undefined) {
+    ctx.resolveSource = bindings.resolve;
+    let usedTail = false;
+    if (tailOnly && bindings.canTail && this._d.calcTail !== undefined) {
       const from = this._barCount - 1; // the previously-last bar may have been replaced
       const tail = this._d.calcTail(bars, settings, from, this._values, this._store, ctx);
-      if (tail !== null) values = spliceTail(this._values, tail, from, n);
+      if (tail !== null) { values = spliceTail(this._values, tail, from, n); usedTail = true; }
     }
     if (values === null) values = this._d.calc(bars, settings, this._store, ctx);
     if (!current()) return;
 
     this._values = values;
+    this._outputPending = false;
+    this._dependencyUnavailable = false;
+    this._studySnapshots = bindings.snapshots;
+    this._outputRevision++;
+    if (!usedTail) this._outputHistoryRevision++;
+    this._outputSource = source ? { ...source } : undefined;
     this._barCount = n;
     this._firstTime = n > 0 ? bars[0].time : 0;
     this._lastTime = n > 0 ? bars[n - 1].time : 0;
@@ -1247,7 +1392,11 @@ export class IndicatorInstance implements IndicatorApi {
     this._syncBackground(bars);
     this._syncBarColors(bars);
     this._applyLevels(bars, settings);
-    this._syncAlerts(bars, settings, tailOnly, ctx, refresh, current);
+    if (this._alertNeedsSeed) {
+      this._alertNeedsSeed = false;
+      const seed = { ...ctx, execution: ctx.execution ? { ...ctx.execution, provenance: 'history' as const } : undefined };
+      this._syncAlerts(bars, settings, false, seed, false, current);
+    } else this._syncAlerts(bars, settings, tailOnly, ctx, refresh, current);
     if (!current()) return;
     this.updateLegendValues(this._host.legendIndex?.());
   }

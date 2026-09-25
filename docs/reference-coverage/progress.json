@@ -31,11 +31,10 @@
         "Native request revisions and timed replay availability clock",
         "Raw external point refresh across same-time updates, provider and source changes",
         "Cache reconciliation for safe prepends, corrections and revised external history",
-        "External lifecycle status retained across cached calculation recovery"
+        "External lifecycle status retained across cached calculation recovery",
+        "Dependent-study availability propagation, revision fences and recovery without retroactive alerts"
       ],
-      "remaining": [
-        "Dependent-study availability propagation"
-      ],
+      "remaining": [],
       "evidence": [
         "tests/indicator-confirmation.test.ts",
         "tests/indicator-provenance.test.ts",
@@ -45,7 +44,8 @@
         "tests/indicator-request-lifecycle.test.ts",
         "tests/indicators-external-native.test.ts",
         "tests/indicators-external-review.test.ts",
-        "tests/indicator-calc-guard.test.ts"
+        "tests/indicator-calc-guard.test.ts",
+        "tests/indicator-study-inputs.test.ts"
       ]
     },
     {
@@ -104,11 +104,35 @@
     },
     {
       "id": "study-dependencies",
-      "status": "incomplete",
+      "status": "partial",
+      "implemented": [
+        "Opted-in scalar study source references and context resolution",
+        "Stable topological calculation with independent display order and bar-color precedence",
+        "Atomic reference and cycle validation with detached accepted and returned references",
+        "Source identity, generation, output revision and history fences for full and tail execution",
+        "Removal and error propagation without price fallback or implicit retargeting",
+        "SMA, EMA and WMA study sources with missing-value and warmup propagation",
+        "Widget and example-host source selectors with guarded writes, rollback and unavailable labels",
+        "Complete graph restore preflight and original display order",
+        "Portable template closure, fresh copy identities and internal reference remapping",
+        "Automatic identity reservation for saved indicator and drawing-input alerts before restore callbacks"
+      ],
+      "evidence": [
+        "tests/indicator-dependencies.test.ts",
+        "tests/indicator-study-source.test.ts",
+        "tests/indicator-study-inputs.test.ts",
+        "tests/indicator-study-averages.test.ts",
+        "tests/indicator-study-state.test.ts",
+        "tests/indicator-restore-identities.test.ts",
+        "tests/dependency-templates.test.ts",
+        "tests/widget-dependency-source.test.ts",
+        "examples/yfinance/tests/dependency-source.test.js",
+        "examples/yfinance/tests/dependency-templates.test.js",
+        "tests/e2e/native-study-dependencies.spec.ts",
+        "tests/e2e/native-study-source-ui.spec.ts"
+      ],
       "remaining": [
-        "Study output inputs",
-        "Dependency ordering and cycles",
-        "Removal and persistence"
+        "Deliberate source opt-in and gap contracts for additional built-in consumers"
       ]
     },
     {
@@ -209,7 +233,8 @@
         "Compiled expression alignment against explicit requested-observation availability",
         "Compiled managed expression confirmation and provider replacement through the unchanged adapter",
         "Compiled external rolling mean refresh on fixed-time source changes and provider replacement",
-        "Native close alerts using compiled output and explicit provider confirmation through the unchanged adapter"
+        "Native close alerts using compiled output and explicit provider confirmation through the unchanged adapter",
+        "Compiled scalar output consumed by a native study across same-time updates and reverse-order restoration"
       ],
       "remaining": [
         "Wider output and request fixtures",
@@ -240,21 +265,21 @@
     ]
   },
   "validation": {
-    "chartTests": 6906,
-    "chartTestFiles": 297,
-    "compiledProgramTests": 14,
-    "demoTests": 424,
-    "demoTestFiles": 35,
-    "browserEvidence": "This batch passed 12 browser cases across all three engines: nine alert-policy cases and three example autofit regressions. The right axis expands when an extreme enters view and contracts when it leaves. The built website alert example passed ten interaction states in each engine, with no page or example errors. Twenty-four alert and six autofit screenshots plus six representative built-site screenshots were inspected. Traffic uses fixtures rather than live brokers.",
-    "website": "63 static pages built successfully; alert example verified on the built site in all three engines",
-    "chartOnlyBrotliKiB": 63.52,
-    "chartOnlyBudgetKiB": 63.75,
-    "baseBrotliKB": 104.08,
-    "indicatorBrotliKB": 35.89,
-    "allTiersBrotliKB": 280.29,
-    "budgetChange": "Native indicator alert policies add 1.14 kB to the base bundle (102.94 to 104.08) and 1.05 KiB to chart-only imports (62.47 to 63.52). Limits are now 104.25 kB base, 112.25 kB base plus trade, 241 kB terminal, 280.5 kB all tiers and 63.75 KiB chart-only. Optional tier limits are unchanged and removal checks pass.",
-    "review": "Review closed lost dirty flushes during nested reads, old success clearing a newer calculation error and old failure overwriting a newer success. Alert suites pass 63 cases: 28 pure policy, 14 native frequency and 21 native reentry cases. Eleven frequency and 17 reentry cases demonstrated failures before implementation; three additional status regressions failed before the review fix. Nine browser cases also reproduced missing same-time alerts on the old bundle.",
-    "packageVerification": "Full verify passed lint, typecheck, 6906 unit tests, seven endurance-harness checks, build, 424 example tests, declaration identity, measured size limits and tree-shake checks. Fourteen compiled-program checks and public adapter typechecking passed with the unchanged engine adapter.",
+    "chartTests": 7037,
+    "chartTestFiles": 305,
+    "compiledProgramTests": 15,
+    "demoTests": 432,
+    "demoTestFiles": 37,
+    "browserEvidence": "This batch passed 18 browser cases across all three engines: nine connected-study cases, six widget/example source-selector cases and three original example autofit regressions. Pixels and SVG text verify plotted values, readable legends, cycle rejection, removal and explicit rebinding. The right axis expands when an extreme enters view and contracts when it leaves. The actual built website passed 42 desktop states and three mobile checks at 390 pixels, with no page or example errors. All controls avoid the example badge, and the mobile chart retains at least 278 pixels of height. Final graph, selector, autofit and built-site screenshots were inspected. Traffic uses fixtures rather than live brokers.",
+    "website": "63 static pages built successfully; dependent-study example verified on the built site at desktop and mobile widths in all three engines",
+    "chartOnlyBrotliKiB": 66.13,
+    "chartOnlyBudgetKiB": 66.25,
+    "baseBrotliKB": 106.87,
+    "indicatorBrotliKB": 35.97,
+    "allTiersBrotliKB": 284.31,
+    "budgetChange": "Native dependency scheduling, committed snapshots, graph restore and identity protection add 2.79 kB to the base bundle (104.08 to 106.87) and 2.61 KiB to chart-only imports (63.52 to 66.13). Limits are now 107 kB base, 115 kB base plus trade, 244.5 kB terminal, 284.5 kB all tiers, 6.25 kB workspace and 66.25 KiB chart-only. Selector and template-copy implementations remain in optional tiers; removal checks pass.",
+    "review": "Review closed stale grandchild output after a reentrant producer change, copied graph identity reuse, saved alert anchor collisions, restore-start callback allocation and object stringification in legends. Numerical source, graph and browser regressions demonstrated wrong price fallback before implementation. Template reuse and nine native identity cases demonstrated failures before their fixes; the legend regression failed before formatting was added. Existing calculation-guard and alert-reentry suites remain green.",
+    "packageVerification": "Full verify passed lint, typecheck, 7037 unit tests, seven endurance-harness checks, build, 432 example tests, declaration identity, measured size limits and tree-shake checks. Fifteen compiled-program checks and public adapter typechecking passed with the unchanged engine adapter.",
     "latestEngineSourceReview": "d95bd70daf598892d40a9265607537b86ce712dd has no source changes relative to the pinned tested engine revision.",
     "apiDocumentation": "Generated with warnings treated as errors",
     "skillsCoverage": "975 of 975 named exports and registry entries; not functional coverage"

@@ -11,8 +11,9 @@ import {
   utcSecondsToIstParts, IST_OFFSET_SECONDS,
   DEFAULT_TIMEZONE, isValidTimezone,
 } from 'openalgo-charts';
-import type { Bar, IndicatorDescriptor, IndicatorSource } from 'openalgo-charts';
+import type { Bar, IndicatorDescriptor, IndicatorSource, IndicatorStudySource } from 'openalgo-charts';
 import { sma, wma, stdev, highest, lowest, nulls, smaSeededEma } from './calc';
+import type { NumericalWindowOptions } from './statistics';
 
 const num = (s: Readonly<Record<string, unknown>>, k: string, d: number): number => {
   const v = s[k];
@@ -48,7 +49,7 @@ function movingAverage(
   id: string,
   name: string,
   color: string,
-  kernel: (values: readonly number[], period: number) => number[],
+  kernel: (values: readonly number[], period: number, options?: NumericalWindowOptions) => number[],
 ): IndicatorDescriptor {
   return {
     id,
@@ -57,11 +58,17 @@ function movingAverage(
     placement: 'onchart',
     inputs: [
       { key: 'length', type: 'number', label: 'Length', default: 9, min: 1, max: 1000, step: 1 },
-      { key: 'source', type: 'source', label: 'Source', default: 'close' },
+      { key: 'source', type: 'source', label: 'Source', default: 'close', allowStudyOutputs: true },
       { key: 'color', type: 'color', label: 'Color', default: color },
     ],
     plots: [{ key: 'ma', type: 'line', title: name, colorKey: 'color', style: { color, lineWidth: 1.5 } }],
-    calc: (bars, s) => ({ ma: nulls(kernel(sourceValues(bars, src(s)), num(s, 'length', 9))) }),
+    calc: (bars, s, _store, context) => {
+      const source = src(s) as IndicatorSource | IndicatorStudySource;
+      const values = typeof source === 'string' ? sourceValues(bars, source)
+        : sourceValues(bars, source, context).map(value => value ?? NaN);
+      return { ma: nulls(kernel(values, num(s, 'length', 9),
+        typeof source === 'string' ? undefined : { missing: 'propagate' })) };
+    },
   };
 }
 

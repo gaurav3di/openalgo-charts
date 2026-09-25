@@ -684,6 +684,94 @@ chart.destroy = () => { disposed = true; unsubscribe(); destroy(); };
 render();
 return chart;`} />
 
+## Study outputs as moving-average inputs
+
+The blue SMA reads closes `[1, 3, 5, 7]`; the orange SMA reads the blue plot.
+Both start with length two, so the orange values are `[null, null, 3, 5]`.
+Last close 9 changes the final orange value to 5.5. Reset prices, then choose
+Producer length 3: its settings update alone changes that final value to 4.
+
+Visibility, pane and display order do not change the selected input. Remove
+producer clears the orange output. Add replacement leaves the old reference
+unavailable until Rebind source explicitly selects the new instance. Restore
+reversed save rebuilds the same graph with the consumer first in display order.
+
+<RunnableExample height={530} tiers={['indicators']} caption="The orange average uses the blue study's bar-aligned output, including its warmup gaps." code={`const start = 1700000000;
+el.style.display = 'flex';
+el.style.flexDirection = 'column';
+const controls = document.createElement('div');
+controls.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;padding:8px 64px 8px 8px';
+const status = document.createElement('div');
+status.style.cssText = 'padding:0 8px 8px;color:#94a3b8;font:12px/18px monospace;min-height:36px';
+status.setAttribute('role', 'status');
+const host = document.createElement('div');
+host.style.cssText = 'flex:1;min-height:180px';
+el.append(controls, status, host);
+const chart = lib.createChart(host, { timezone: 'Etc/UTC', branding: false, animAutoscale: false });
+chart.setDataContext({ symbol: 'DEPENDENT', interval: '1m' });
+const prices = chart.addSeries('line', { style: { color: '#64748b', lineWidth: 1 } });
+const original = () => [1, 3, 5, 7].map((value, index) => ({ time: start + index * 60, value }));
+prices.setData(original());
+const addProducer = () => chart.addIndicator('sma', {
+  length: 2, color: '#4f8cff', 'ma:width': 3, 'ma:type': 'line-markers',
+});
+let producer = addProducer();
+let consumer = chart.addIndicator('sma', {
+  length: 2, color: '#f5a623', 'ma:width': 3, 'ma:type': 'line-markers',
+  source: { kind: 'indicator', instanceId: producer.id, plotKey: 'ma' },
+});
+const buttons = new Map();
+const bound = () => producer && consumer.settings().source.instanceId === producer.id;
+const render = () => {
+  const values = consumer.values().ma;
+  status.textContent = 'Producer: ' + (producer ? 'length ' + producer.settings().length : 'removed')
+    + '; downstream ' + JSON.stringify(values) + '; ' + (consumer.dataStatus()?.state ?? 'ready');
+  for (const [label, button] of buttons) {
+    button.disabled = label === 'Add replacement' ? Boolean(producer)
+      : label === 'Rebind source' ? !producer || Boolean(bound())
+      : label === 'Restore reversed save' ? !bound()
+      : label === 'Swap order' ? !producer || producer.paneIndex !== consumer.paneIndex
+      : ['Producer length 2', 'Producer length 3', 'Toggle producer', 'Move producer', 'Remove producer'].includes(label) ? !producer : false;
+    button.style.opacity = button.disabled ? '0.45' : '1';
+    button.style.cursor = button.disabled ? 'default' : 'pointer';
+  }
+};
+for (const [label, action] of [
+  ['Last close 9', () => prices.update({ time: start + 180, value: 9 })],
+  ['Reset prices', () => prices.setData(original())],
+  ['Producer length 2', () => producer.setSettings({ length: 2 })],
+  ['Producer length 3', () => producer.setSettings({ length: 3 })],
+  ['Toggle producer', () => producer.setVisible(!producer.visible())],
+  ['Move producer', () => chart.moveIndicator(producer.id, producer.paneIndex === 0 ? chart.panes().length : 0)],
+  ['Swap order', () => {
+    const display = chart.indicators();
+    chart.reorderIndicator(producer.id, display.indexOf(producer) < display.indexOf(consumer) ? 1 : -1);
+  }],
+  ['Remove producer', () => { producer.remove(); producer = null; }],
+  ['Add replacement', () => { producer = addProducer(); }],
+  ['Rebind source', () => consumer.setSettings({ source: { kind: 'indicator', instanceId: producer.id, plotKey: 'ma' } })],
+  ['Restore reversed save', () => {
+    const producerId = producer.id, consumerId = consumer.id;
+    const saved = chart.getState();
+    saved.indicators = [saved.indicators.find(item => item.instanceId === consumerId),
+      saved.indicators.find(item => item.instanceId === producerId)];
+    const report = chart.restoreState(saved);
+    if (!report.applied) throw new Error(report.reason);
+    producer = chart.indicators().find(item => item.id === producerId);
+    consumer = chart.indicators().find(item => item.id === consumerId);
+  }],
+]) {
+  const button = document.createElement('button');
+  button.textContent = label;
+  button.style.cssText = 'padding:5px 9px;border:1px solid #334155;border-radius:4px;background:#172033;color:#e2e8f0;font:12px sans-serif';
+  button.onclick = () => { action(); chart.fitContent(); render(); };
+  buttons.set(label, button);
+  controls.appendChild(button);
+}
+chart.fitContent();
+render();
+return chart;`} />
+
 ## Indicator alerts on live updates
 
 Cross threshold changes the current forming bar from false to true. Repeat tick

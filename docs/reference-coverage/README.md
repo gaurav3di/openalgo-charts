@@ -12,6 +12,8 @@ The [design](design.md) sets the boundaries and the [plan](plan.md) lists the re
 - Indicators can own multiple named tables, including price-pane overlays. Their resources follow visibility, updates, pane moves and removal.
 - Table cells support merged rows and columns, multiline text, italic and font-family choices, vertical alignment and an independent outer frame.
 - Explicit indicator alert policies support each observed live update, the first match within a bar, known bar close and one delivery per instance lifetime. Historical loads, replay and settings or external refreshes remain silent. Predicates and subscribers cannot resume obsolete calculations or erase a newer error status.
+- Opted-in source inputs accept scalar outputs from another study. Dependency ordering, revision fences and unavailable-state propagation preserve gaps and prevent stale downstream calculations. SMA, EMA and WMA expose these inputs through the widget and example host.
+- Saved layouts restore connected studies in calculation order while preserving display order. Template copies remap internal identities, and removed study references and alert anchors stay unavailable until explicitly rebound.
 - Fourteen numerical helpers add statistics, running extrema and crossing/rising/falling predicates with explicit missing-observation rules.
 - Eleven established numerical helpers accept optional missing-value policies while retaining omitted-option behavior. The new paths preserve finite extreme averages and deviations.
 - Nine window helpers accept aligned per-bar lengths; both pivot helpers accept per-bar left/right widths. Scalar behavior remains unchanged, and missing observations retain their original indices.
@@ -38,7 +40,7 @@ The [design](design.md) sets the boundaries and the [plan](plan.md) lists the re
 
 ## Verification
 
-The confirmation regression suite has 12 cases; nine reproduced failures before the fix. A further 23 provenance cases cover native source lifecycle. Fourteen compiled-program integration cases passed against the pinned engine revision `833ce15f7ec1bb0ab8ae203b800c8858ce3b4339`, including native timeframe composition, persistent calculations, forming-bar rollback, provider confirmation, managed requested observations, same-time external refresh and native close alerts. These checks cover specific behaviors, not every capability.
+The confirmation regression suite has 12 cases; nine reproduced failures before the fix. A further 23 provenance cases cover native source lifecycle. Fifteen compiled-program integration cases passed against the pinned engine revision `833ce15f7ec1bb0ab8ae203b800c8858ce3b4339`, including native timeframe composition, persistent calculations, forming-bar rollback, provider confirmation, managed requested observations, same-time external refresh, native close alerts and connected scalar outputs through updates and restoration. These checks cover specific behaviors, not every capability.
 
 Run against a built script-engine checkout:
 
@@ -52,4 +54,4 @@ The unchanged chart baseline `a1828e9ac948d2f9aebe0657f421987a85d6f2a7` measured
 
 ## Remaining work
 
-Dependent study inputs, numerical helpers, typed and interactive inputs, remaining visual variants, chart APIs, persistence and provider capabilities still need implementation and behavioral checks. [Scale ownership](scale-ownership.md) records the completed transaction and remaining axis work. [Requested providers](requested-providers.md) documents native snapshots, [external lifecycle](external-lifecycle.md) covers raw-point requests and [alert policies](alert-policies.md) records the implemented live-frequency contract. [Study dependencies](study-dependencies.md) defines upcoming work. Comparative research belongs outside the repository. Implement features from documented behavior using independently written code and tests.
+Additional built-in source consumers, numerical helpers, typed and interactive inputs, remaining visual variants, chart APIs, persistence and provider capabilities still need implementation and behavioral checks. [Scale ownership](scale-ownership.md) records the completed transaction and remaining axis work. [Requested providers](requested-providers.md) documents native snapshots, [external lifecycle](external-lifecycle.md) covers raw-point requests and [alert policies](alert-policies.md) records the implemented live-frequency contract. [Study dependencies](study-dependencies.md) records tracked inputs and graph restoration. Comparative research belongs outside the repository. Implement features from documented behavior using independently written code and tests.

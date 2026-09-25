@@ -24,6 +24,24 @@ import type { IPrimitive } from '../primitives/primitive';
 /** Which price a calculation reads from each bar. */
 export type IndicatorSource = 'open' | 'high' | 'low' | 'close' | 'hl2' | 'hlc3' | 'ohlc4' | 'volume';
 
+/** A scalar study output, aligned with the primary source bars. */
+export interface IndicatorStudySource {
+  readonly kind: 'indicator';
+  readonly instanceId: string;
+  readonly plotKey: string;
+}
+
+/** Committed scalar output supplied by a host that schedules study dependencies. */
+export interface IndicatorStudyOutput {
+  generation: number;
+  revision: number;
+  /** Changes whenever an earlier output prefix may have changed. */
+  historyRevision: number;
+  source?: Readonly<SeriesDataState>;
+  available: boolean;
+  values: readonly (number | null)[];
+}
+
 /**
  * One tunable input. `type` is what a settings UI renders; the core only reads
  * `key`/`default`.
@@ -40,7 +58,7 @@ export type IndicatorInput =
   | { key: string; type: 'color'; label: string; default: string; group?: string; tooltip?: string }
   | { key: string; type: 'text'; label: string; default: string; group?: string; tooltip?: string }
   | { key: string; type: 'select'; label: string; default: string; options: readonly { label: string; value: string }[]; group?: string; tooltip?: string }
-  | { key: string; type: 'source'; label: string; default: IndicatorSource; group?: string; tooltip?: string }
+  | { key: string; type: 'source'; label: string; default: IndicatorSource; allowStudyOutputs?: boolean; group?: string; tooltip?: string }
   /**
    * A timeframe code (`'5m'`, `'1d'`), for a study that folds the chart's bars
    * up to a coarser interval. A settings UI renders it as a select over the
@@ -430,6 +448,8 @@ export interface IndicatorExecutionContext {
  * point: a calculation that ignores the context computes what it always did.
  */
 export interface IndicatorCalcContext {
+  /** Resolves declared, opted-in study inputs without recursively flushing the chart. */
+  resolveSource?(source: IndicatorStudySource): readonly (number | null)[];
   /** Native mutation provenance. Older custom hosts may omit it. */
   execution?: IndicatorExecutionContext;
   /**
@@ -950,8 +970,28 @@ export function sourceValue(bar: Bar, source: IndicatorSource): number {
   }
 }
 
-/** Read a whole bar array for a price source. */
-export function sourceValues(bars: readonly Bar[], source: IndicatorSource): number[] {
+/** Read a price source or an explicitly resolved scalar study output. */
+export function sourceValues(bars: readonly Bar[], source: IndicatorSource): number[];
+export function sourceValues(bars: readonly Bar[], source: IndicatorSource | IndicatorStudySource,
+  context?: Pick<IndicatorCalcContext, 'resolveSource'>): (number | null)[];
+export function sourceValues(bars: readonly Bar[], source: IndicatorSource | IndicatorStudySource,
+  context?: Pick<IndicatorCalcContext, 'resolveSource'>): (number | null)[] {
+  if (typeof source !== 'string') {
+    if (source === null || typeof source !== 'object' ||
+      (Object.getPrototypeOf(source) !== Object.prototype && Object.getPrototypeOf(source) !== null)) {
+      throw new IndicatorInputError('Invalid study source reference');
+    }
+    const fields = Object.getOwnPropertyDescriptors(source);
+    if (Reflect.ownKeys(fields).length !== 3 || fields.kind?.value !== 'indicator' ||
+      typeof fields.instanceId?.value !== 'string' || !fields.instanceId.value.trim() ||
+      typeof fields.plotKey?.value !== 'string' || !fields.plotKey.value.trim()) {
+      throw new IndicatorInputError('Invalid study source reference');
+    }
+    if (!context?.resolveSource) throw new IndicatorInputError('Study source requires a calculation resolver');
+    const values = context.resolveSource(source);
+    if (!Array.isArray(values) || values.length !== bars.length) throw new IndicatorInputError('Study source length must align with source bars');
+    return values.slice();
+  }
   const out = new Array<number>(bars.length);
   for (let i = 0; i < bars.length; i++) out[i] = sourceValue(bars[i], source);
   return out;

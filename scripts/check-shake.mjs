@@ -108,7 +108,11 @@ const BUNDLE = new URL('../dist/openalgo-charts.mjs', import.meta.url).pathname.
 // adding 1.05 KiB to chart-only imports (62.47 to 63.52) and 1.14 kB to the
 // base bundle (102.94 to 104.08). Allow 63.75 KiB while notification controls,
 // feed adapters and optional tiers must still disappear below.
-const LIMIT_BYTES = 63.75 * 1024;
+// Dependency ordering, committed source snapshots and restore preflight serve
+// native hosts as well as the widget. They add 2.61 KiB to chart-only imports
+// (63.52 to 66.13) and 2.79 kB to the base bundle (104.08 to 106.87).
+// Allow 66.25 KiB; source selectors and template copying stay in optional tiers.
+const LIMIT_BYTES = 66.25 * 1024;
 
 // Absent from a chart-only build. Each is a string that appears in the adapter
 // source and nowhere in the rendering core.

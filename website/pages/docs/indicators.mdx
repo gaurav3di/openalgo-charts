@@ -703,6 +703,107 @@ absent filter means every day. Whitespace around the parts is ignored.
 Removing an indicator also prunes the pane it emptied, so a host UI cannot strand a blank
 pane under the chart.
 
+## Using another study's output
+
+SMA, EMA and WMA accept a scalar plot from another indicator as their source:
+
+```ts
+const first = chart.addIndicator('sma', { length: 2, color: '#4f8cff' });
+const second = chart.addIndicator('sma', {
+  length: 2, color: '#f5a623',
+  source: { kind: 'indicator', instanceId: first.id, plotKey: 'ma' },
+});
+// Closes [1, 3, 5, 7] give [null, null, 3, 5] in second.values().ma.
+first.setSettings({ length: 3 }); // The last downstream value becomes 4 without a tick.
+```
+
+The base type `IndicatorStudySource` names an instance and a declared scalar plot.
+Its object has exactly the own data fields `kind`, `instanceId` and `plotKey`.
+The identifiers must be nonempty strings. Plain and null-prototype objects work;
+getters and extra fields do not. The chart rejects malformed references, cycles,
+self references and unsupported inputs before changing settings or resources.
+
+Try the [dependent moving-average example](/examples#study-outputs-as-moving-average-inputs)
+to change the final price, change a producer setting, hide or move the producer,
+remove and explicitly rebind it, and restore a saved consumer-first display order.
+
+The chart computes producers before consumers while keeping visual order separate.
+A producer's settings or external-data update refreshes its consumers without
+waiting for a price tick. The selected column follows the original primary bar
+indices, unaffected by visibility, pane, scale or painted plot offset. An OHLC
+plot requires a separately declared scalar output before it can be selected.
+
+Warmup and gaps remain gaps. For study references, these three averages require
+full windows of consecutive finite observations; EMA restarts its seed after a
+gap. Their existing price-source strings retain their prior calculations.
+Removing a producer retains the consumer's reference, clears its output and
+reports unavailable input through `dataStatus().state === 'error'`. A failed or
+unavailable producer also blocks consumers and their alerts. Adding a new instance
+does not retarget the old reference; pass its new ID in `setSettings` to rebind.
+References are copied when accepted and when returned by `settings()`.
+
+### Opting a custom descriptor in
+
+Declare `allowStudyOutputs: true` only on source inputs that your calculation can
+handle, and pass the calculation context to `sourceValues`:
+
+```ts
+import { registerIndicator, sourceValues,
+  type IndicatorSource, type IndicatorStudySource } from 'openalgo-charts';
+
+registerIndicator({
+  id: 'double-source', name: 'Double source', placement: 'pane',
+  inputs: [{ key: 'source', type: 'source', label: 'Source', default: 'close', allowStudyOutputs: true }],
+  plots: [{ key: 'value', title: 'Value', type: 'line' }],
+  calc: (bars, settings, _store, ctx) => {
+    const selected = settings.source as IndicatorSource | IndicatorStudySource;
+    const input = sourceValues(bars, selected, ctx);
+    return { value: input.map(value => typeof value === 'number' && Number.isFinite(value) ? value * 2 : null) };
+  },
+});
+```
+
+`IndicatorCalcContext.resolveSource` resolves only the references declared through
+those opted-in settings. `sourceValues` throws `IndicatorInputError` when a study
+reference has no resolver or the returned array is not exactly `bars.length`.
+It copies the column while preserving `null` and nonfinite values; the calculation
+chooses how to handle them. Do not convert missing entries to zero, or call another
+instance's `values()` from inside `calc`. Two-argument price-source calls keep
+their existing behavior. Other built-ins and the existing compiled-script adapter
+do not gain study-reference inputs automatically.
+
+### Saving and hosting dependencies
+
+`getState()` includes stable `IndicatorState.instanceId` values. `restoreState()`
+validates the whole graph before mutation, creates studies in dependency order,
+and retains saved display order. A missing descriptor is skipped as before,
+leaving references to it unavailable. Optional `IndicatorState.studyInputs` lists
+the settings keys carrying references so portable templates can remap identities.
+This metadata expresses template intent; each installed descriptor remains the
+authority for accepted source inputs. Include the producer group when saving a
+dependency template. The workspace `planIndicatorTemplate` copies the group with
+fresh IDs and rewrites its internal references; references outside the group are
+rejected.
+
+For a custom host using `IndicatorInstance` directly, four optional `IndicatorHost`
+hooks support the same contract:
+
+| Hook | Purpose |
+|---|---|
+| `validateIndicatorSettings(id, descriptor, settings)` | Validate proposed references against the complete graph before mutation. |
+| `studyOutput(reference)` | Supply a committed `IndicatorStudyOutput`, or `undefined` when missing. |
+| `indicatorOutputChanged(id, refresh)` | Schedule consumers when output or availability changes. |
+| `indicatorRecompute(id, refresh, fallback)` | Run the supplied calculation callback after its producers. |
+
+The base `IndicatorStudyOutput` type carries `generation`, `revision`,
+`historyRevision`, optional `source: Readonly<SeriesDataState>`, `available`, and
+readonly `values`. Generation distinguishes producer lifetimes; history revision
+changes whenever an earlier output prefix may have changed. Source metadata
+identifies the primary bars used by the result. Consumers require available,
+aligned, current snapshots. Custom hosts must maintain those guarantees and avoid
+recursive `values()` reads. Existing hosts can omit the hooks for independent
+indicators; native Chart already supplies them.
+
 ## Inspecting the registry
 
 The registry is readable, so a host can build its indicator UI from what is actually

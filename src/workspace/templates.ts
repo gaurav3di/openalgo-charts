@@ -1,5 +1,5 @@
 import type { IndicatorState } from 'openalgo-charts';
-import { parseIndicatorStates } from './documents';
+import { parseIndicatorStates, parseTemplateIndicatorStates } from './documents';
 import { WorkspaceDocumentError } from './json';
 
 export type IndicatorTemplateMode = 'replace' | 'append';
@@ -7,7 +7,8 @@ export type IndicatorTemplateMode = 'replace' | 'append';
 /**
  * Validate and detach a study plan before the host changes a chart. Append keeps
  * current instance identities and places positive incoming pane groups after the
- * existing panes; pane zero remains the price pane. Copied studies have no identity.
+ * existing panes; pane zero remains the price pane. Dependency copies receive fresh
+ * identities; legacy independent studies leave identity allocation to the chart.
  * Pass the chart's pane count as nextPaneIndex. This function creates no chart or UI.
  */
 export function planIndicatorTemplate(
@@ -16,9 +17,34 @@ export function planIndicatorTemplate(
 ): IndicatorState[] {
   if (mode !== 'replace' && mode !== 'append') throw new WorkspaceDocumentError('Unsupported indicator template mode');
   const previous = parseIndicatorStates(current);
-  const additions = parseIndicatorStates(incoming);
-  // Templates copy settings; existing alerts must keep their original anchors.
-  for (const item of additions) delete item.instanceId;
+  // User-authored dependency templates supply studyInputs explicitly. Ordinary
+  // settings records are opaque, even when they resemble a source reference.
+  const additions = parseTemplateIndicatorStates(incoming);
+  if (additions.some(item => item.studyInputs?.length)) {
+    const reserved = new Set([...previous, ...additions].flatMap(item => item.instanceId === undefined ? [] : [item.instanceId]));
+    // A missing producer's identity must not be acquired by a newly copied study.
+    for (const item of previous) for (const key of item.studyInputs ?? []) {
+      reserved.add((item.settings[key] as { instanceId: string }).instanceId);
+    }
+    const remapped = new Map<string, string>();
+    // Removed studies can still own saved alert anchors, including after a reload.
+    // A random copy namespace stays distinct when current contains no old studies.
+    if (!globalThis.crypto?.getRandomValues) throw new WorkspaceDocumentError('Random IDs are unavailable for connected template copies');
+    const namespace = Array.from(globalThis.crypto.getRandomValues(new Uint32Array(4)),
+      value => value.toString(16).padStart(8, '0')).join('');
+    let next = 1;
+    for (const item of additions) {
+      let id: string;
+      do { id = `template-study-${namespace}-${next++}`; } while (reserved.has(id));
+      reserved.add(id);
+      if (item.instanceId !== undefined) remapped.set(item.instanceId, id);
+      item.instanceId = id;
+    }
+    for (const item of additions) for (const key of item.studyInputs ?? []) {
+      const reference = item.settings[key] as { kind: 'indicator'; instanceId: string; plotKey: string };
+      item.settings[key] = { ...reference, instanceId: remapped.get(reference.instanceId)! };
+    }
+  }
   if (mode === 'append') {
     const lastOccupied = Math.max(0, ...previous.map(item => item.paneIndex));
     if (!Number.isInteger(nextPaneIndex) || nextPaneIndex <= lastOccupied || nextPaneIndex > 32) {

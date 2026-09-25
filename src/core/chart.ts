@@ -23,6 +23,7 @@ import { createSeriesRecord, type SeriesApi, type SeriesRecord, type PriceScaleI
 import { bindSeriesProvenance, SeriesProvenance, validateSeriesOptions } from '../model/series-provenance';
 import { replayWindow, observeReplayWindow } from '../model/replay-window';
 import { runAbortable } from '../model/abortable-request';
+import { cloneIndicatorSettings, planIndicatorDependencies } from '../model/indicator-dependencies';
 import { getChartType, type SeriesType } from '../model/chart-type-registry';
 import {
   getIndicator, hasIndicator, plotStyleKeys,
@@ -37,6 +38,12 @@ import {
 /** PaneLegend's own defaults, restated so a pane can be reset to them. */
 const DEFAULT_LEGEND_TOP = 6;
 const DEFAULT_LEGEND_LEFT = 8;
+
+interface PreparedIndicatorRestore {
+  specs: IndicatorState[];
+  order: readonly string[];
+  descriptors: ReadonlyMap<string, IndicatorDescriptor>;
+}
 /** How close to the chart top counts as "in the host's corner", in media px. */
 const LEGEND_TOP_EPS = 12;
 
@@ -85,6 +92,7 @@ import {
   type PriceScaleState,
   type SeriesState,
   type RestoreReport,
+  type IndicatorState,
 } from '../model/chart-state';
 import type { SeriesStyle } from '../render/series-style';
 import type { Bar, SeriesDataItem } from '../model/bar';
@@ -823,6 +831,10 @@ export class Chart {
   /** Guards indicator recompute against re-entry via its own `series.setData`. */
   private _recomputing = false;
   private _indicatorsDirty = false;
+  private readonly _indicatorRefreshes = new Map<string, boolean>();
+  private _indicatorWork: Map<string, boolean> | null = null;
+  private _indicatorProcessed: Set<string> | null = null;
+  private readonly _indicatorReservedIds = new Set<string>();
   /** Instance id of the indicator whose colours are on the price bars, if any. */
   private _barColorOwner: string | null = null;
   private _barColors: readonly (string | null)[] | null = null;
@@ -1505,16 +1517,23 @@ export class Chart {
   ): IndicatorApi {
     if (options.priceScaleId !== undefined && !this._validPriceScaleId(options.priceScaleId)) throw new TypeError('Invalid indicator price scale');
     const descriptor = getIndicator(indicatorId);
+    this._flushIndicators();
+    const reserved = new Set([...this._indicatorReservedIds, ...this._indicators.map(item => item.id)]);
+    for (const edges of planIndicatorDependencies(this._indicators.map(item => item.dependencyNode())).dependencies.values()) {
+      for (const edge of edges) reserved.add(edge.source.instanceId);
+    }
     const instance = new IndicatorInstance(
       this._indicatorHost(),
       descriptor,
       this._distinctColors(descriptor, settings),
       options.paneIndex,
       undefined,
-      new Set(this._indicators.map(item => item.id)),
+      reserved,
       options.priceScaleId,
     );
     this._indicators.push(instance);
+    this._indicatorReservedIds.add(instance.id);
+    this._queueIndicatorDependents(instance.id, true);
     this.emit('objects:change', {});
     return instance;
   }
@@ -1665,6 +1684,9 @@ export class Chart {
     }
     const { indicatorId, paneIndex } = this._indicators[i];
     this._indicators.splice(i, 1);
+    this._indicatorReservedIds.add(instanceId);
+    this._indicatorRefreshes.delete(instanceId);
+    this._queueIndicatorDependents(instanceId, true);
     this.emit('indicatorRemoved', { instanceId, indicatorId, paneIndex });
     // An indicator pane that just emptied has nothing left to show. This lived
     // in the legend's close handler, so only the on-chart × pruned the pane — a
@@ -1821,6 +1843,29 @@ export class Chart {
       legendIndex: () => this._readoutIndex(),
       indicatorRemoved: (id, failedOwnedPane): void => this._forgetIndicator(id, failedOwnedPane),
       flushIndicators: (): void => this._flushIndicators(),
+      validateIndicatorSettings: (id, descriptor, settings) => {
+        const nodes = this._indicators.filter(item => item.id !== id).map(item => item.dependencyNode());
+        nodes.push({ id, descriptor, settings });
+        planIndicatorDependencies(nodes);
+      },
+      studyOutput: reference => this._indicators.find(item => item.id === reference.instanceId)?.studyOutput(reference.plotKey),
+      indicatorOutputChanged: (id, refresh) => this._queueIndicatorDependents(id, refresh),
+      indicatorRecompute: (id, refresh, fallback) => {
+        if (!this._indicators.some(item => item.id === id)) { fallback(); return; }
+        if (this._recomputing) {
+          fallback();
+          this._indicatorWork?.delete(id);
+          this._indicatorProcessed?.add(id);
+          return;
+        }
+        this._indicatorRefreshes.set(id, refresh || this._indicatorRefreshes.get(id) === true);
+        this._queueIndicatorDependents(id, refresh);
+        const sourcePending = this._indicatorsDirty;
+        this._flushIndicators();
+        // An explicit refresh cannot consume the source pass already queued by
+        // a data write. That pass can recover a failed external calculation.
+        if (sourcePending) { this._indicatorsDirty = true; this._loop.requestFrame(); }
+      },
       resourcesChanged: (): void => this._reorderIndicatorResources(),
       // The scale that draws the ladder is the one that decides how a number on
       // that pane is written, floor, tick, custom formatter and all.
@@ -2121,19 +2166,54 @@ export class Chart {
    * that marked us dirty.
    */
   private _flushIndicators(): void {
-    if (!this._indicatorsDirty) return;
+    if (!this._indicatorsDirty && this._indicatorRefreshes.size === 0) return;
     if (this._recomputing) return;
     if (this._indicators.length === 0) {
       this._indicatorsDirty = false;
+      this._indicatorRefreshes.clear();
       return;
     }
+    const all = this._indicatorsDirty;
+    const order = planIndicatorDependencies(this._indicators.map(item => item.dependencyNode())).order;
+    const work = new Map(this._indicatorRefreshes);
+    this._indicatorRefreshes.clear();
+    if (all) for (const id of order) if (!work.has(id)) work.set(id, false);
     this._indicatorsDirty = false;
     this._recomputing = true;
+    this._indicatorWork = work;
+    this._indicatorProcessed = new Set();
     try {
-      for (const indicator of this._indicators) indicator.recompute();
+      for (const id of order) {
+        if (!work.has(id) || this._indicatorProcessed.has(id)) continue;
+        const indicator = this._indicators.find(item => item.id === id);
+        if (!indicator) continue;
+        this._indicatorProcessed.add(id);
+        indicator.recompute(work.get(id));
+      }
+      for (const indicator of this._indicators) indicator.republishBarColors();
     } finally {
+      this._indicatorWork = null;
+      this._indicatorProcessed = null;
       this._recomputing = false;
     }
+  }
+
+  private _queueIndicatorDependents(id: string, refresh: boolean): void {
+    const plan = planIndicatorDependencies(this._indicators.map(item => item.dependencyNode()));
+    const pending = [id];
+    const visited = new Set(pending);
+    for (let i = 0; i < pending.length; i++) {
+      for (const [consumer, edges] of plan.dependencies) {
+        if (visited.has(consumer) || !edges.some(edge => edge.source.instanceId === pending[i])) continue;
+        visited.add(consumer);
+        pending.push(consumer);
+        this._indicators.find(item => item.id === consumer)?.invalidateStudyOutput();
+        const target = this._indicatorWork && !this._indicatorProcessed?.has(consumer)
+          ? this._indicatorWork : this._indicatorRefreshes;
+        target.set(consumer, refresh || target.get(consumer) === true);
+      }
+    }
+    if (this._indicatorRefreshes.size > 0) this._loop.requestFrame();
   }
 
   /** Subscribe to clicks on hit-testable primitives (markers, events, lines). */
@@ -3242,6 +3322,7 @@ export class Chart {
    * rebuilds its own series can re-apply their styling and placement.
    */
   public getState(): ChartState & ChartSettingsState & { timezone: string } {
+    const studyInputs = planIndicatorDependencies(this._indicators.map(item => item.dependencyNode())).dependencies;
     const panes: PaneState[] = this._panes.map((pane) => {
       const states = pane.scaleStates();
       for (const [instanceId, claim] of this._indicatorRanges) {
@@ -3300,6 +3381,7 @@ export class Chart {
         settings: i.settings(),
         paneIndex: i.paneIndex,
         visible: i.visible(),
+        ...(studyInputs.get(i.id)?.length ? { studyInputs: studyInputs.get(i.id)!.map(edge => edge.inputKey) } : {}),
         ...(i.priceScaleId() === null ? {} : { priceScaleId: i.priceScaleId()! }),
       })),
     };
@@ -3333,6 +3415,7 @@ export class Chart {
 
     let alerts: AlertsDocument | undefined;
     let panes: PaneState[] | undefined;
+    let studies: PreparedIndicatorRestore | undefined;
     const reservedIds = new Set<string>();
     try {
       if (s.panes !== undefined) {
@@ -3350,13 +3433,42 @@ export class Chart {
           }
           reservedIds.add(spec.instanceId);
         }
+        this._reserveAlertStudyIds(alerts, reservedIds);
+        const used = new Set([...reservedIds, ...this._indicatorReservedIds, ...this._indicators.map(item => item.id)]);
+        const specs = s.indicators.map(spec => ({ ...spec, settings: cloneIndicatorSettings(spec.settings ?? {}) }));
+        // Missing producers remain reserved even when no descriptor can recreate them.
+        for (const spec of specs) for (const value of Object.values(spec.settings)) {
+          if (value && typeof value === 'object' && 'kind' in value && value.kind === 'indicator'
+            && 'instanceId' in value && typeof value.instanceId === 'string') {
+            used.add(value.instanceId);
+            reservedIds.add(value.instanceId);
+          }
+        }
+        let generated = 0;
+        for (const spec of specs) {
+          if (spec.instanceId === undefined) {
+            do { spec.instanceId = `restored-study-${++generated}`; } while (used.has(spec.instanceId));
+            used.add(spec.instanceId);
+          }
+          reservedIds.add(spec.instanceId);
+        }
+        const descriptors = new Map(specs.filter(spec => hasIndicator(spec.indicatorId))
+          .map(spec => [spec.instanceId!, getIndicator(spec.indicatorId)]));
+        const nodes = specs.flatMap(spec => {
+          const descriptor = descriptors.get(spec.instanceId!);
+          return descriptor ? [{ id: spec.instanceId!, descriptor, settings: spec.settings }] : [];
+        });
+        studies = { specs, order: planIndicatorDependencies(nodes).order, descriptors };
       }
     } catch (error) {
       return { applied: false, series: [], indicators: 0, reason: error instanceof Error ? error.message : 'Invalid saved alerts or identities' };
     }
+    // Restore callbacks may add studies before the saved layout is applied.
+    this._reserveAlertStudyIds(alerts, reservedIds);
+    for (const id of reservedIds) this._indicatorReservedIds.add(id);
     this.emit('state:restore:start', {});
     const before = this._timeScale.visibleRange();
-    try { return this._mutateTimeScale(() => this._restoreState(s, alerts, reservedIds, panes)); }
+    try { return this._mutateTimeScale(() => this._restoreState(s, alerts, reservedIds, panes, studies)); }
     finally {
       // Restore listeners can replace the viewport after its last internal paint.
       this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
@@ -3366,7 +3478,7 @@ export class Chart {
   }
 
   private _restoreState(s: ChartState & ChartSettingsState & { timezone?: unknown }, alerts: AlertsDocument | undefined,
-    reservedIds: Set<string>, panes: PaneState[] | undefined): RestoreReport {
+    reservedIds: Set<string>, panes: PaneState[] | undefined, studies: PreparedIndicatorRestore | undefined): RestoreReport {
 
     // Old locks describe the outgoing ranges, not the settings about to be restored.
     if (panes) for (const pane of this._panes) pane.clearRatioLocks();
@@ -3403,11 +3515,13 @@ export class Chart {
     // Indicators are fully derivable from the source data, so they *can* be
     // recreated. Replace rather than append, so restore is idempotent.
     let indicators = 0;
-    if (s.indicators) {
+    if (studies) {
+      this._indicatorRefreshes.clear();
       for (const instance of this._indicators.splice(0)) instance.remove();
-      for (const spec of s.indicators) {
-        if (!hasIndicator(spec.indicatorId)) continue; // tier not loaded — skip, don't throw
-        const descriptor = getIndicator(spec.indicatorId);
+      const byId = new Map(studies.specs.map(spec => [spec.instanceId!, spec]));
+      for (const id of studies.order) {
+        const spec = byId.get(id)!;
+        const descriptor = studies.descriptors.get(id)!;
         const instance = new IndicatorInstance(
           this._indicatorHost(), descriptor, spec.settings, spec.paneIndex,
           spec.instanceId, reservedIds, spec.priceScaleId,
@@ -3417,6 +3531,9 @@ export class Chart {
         if (spec.visible === false) instance.setVisible(false);
         indicators += 1;
       }
+      const display = new Map(studies.specs.map((spec, index) => [spec.instanceId!, index]));
+      this._indicators.sort((a, b) => display.get(a.id)! - display.get(b.id)!);
+      this._reorderIndicatorResources();
     }
 
     // Price scales last of all, for the same reason the canvas block goes
@@ -3535,6 +3652,15 @@ export class Chart {
       for (const alert of document.alerts) validateAlert(alert);
     }
     this._alertState = document === undefined ? undefined : { version: 1, alerts: document.alerts.map(copyAlert) };
+    this._reserveAlertStudyIds(this._alertState, this._indicatorReservedIds);
+  }
+
+  private _reserveAlertStudyIds(document: AlertsDocument | undefined, reserved: Set<string>): void {
+    // Missing anchors must stay missing when a later study is allocated an ID.
+    for (const { source } of document?.alerts ?? []) {
+      if (source.kind === 'indicator') reserved.add(source.instanceId);
+      else if (source.kind === 'drawing' && source.input) reserved.add(source.input.instanceId);
+    }
   }
 
   public invalidate(build: (mask: InvalidateMask) => void): void {

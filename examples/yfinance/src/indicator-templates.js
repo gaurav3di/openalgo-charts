@@ -1,5 +1,5 @@
 import { registeredIndicators } from '/dist/openalgo-charts.mjs';
-import { parseIndicatorStates, planIndicatorTemplate } from '/dist/openalgo-charts.workspace.mjs';
+import { parseIndicatorStates, parseIndicatorTemplate, planIndicatorTemplate } from '/dist/openalgo-charts.workspace.mjs';
 
 export function templateUnavailableReason(app, target) {
   if (!target?.current() || target.chart.isDestroyed) return 'The chart changed; reopen Templates for its current owner';
@@ -17,9 +17,12 @@ function assertOwner(app, target) {
 
 export function captureIndicatorTemplate(app, target) {
   assertOwner(app, target);
-  const indicators = parseIndicatorStates(target.chart.getState().indicators || []);
-  for (const indicator of indicators) delete indicator.instanceId;
-  return indicators;
+  // Capture every study so source dependencies travel with their consumers.
+  // The shared parser keeps graph identities and drops only legacy copy IDs.
+  return parseIndicatorTemplate({ kind: 'indicator-template', version: 1,
+    id: 'capture', name: 'Captured studies', createdAt: 0, updatedAt: 0,
+    indicators: target.chart.getState().indicators || [],
+  }).indicators;
 }
 
 /** Apply to the captured chart's displayed data; never reload a source to add studies. */

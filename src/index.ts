@@ -108,6 +108,8 @@ export type {
   IndicatorLineStyle,
   IndicatorSettings,
   IndicatorSource,
+  IndicatorStudySource,
+  IndicatorStudyOutput,
   IndicatorStore,
   IndicatorValues,
   IndicatorAttachContext,

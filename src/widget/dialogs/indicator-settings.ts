@@ -11,7 +11,7 @@ import { widgetText } from '../localization';
  * this session touched.
  */
 import { getIndicator, indicatorDefaults, indicatorStyleInputs } from 'openalgo-charts';
-import type { IndicatorApi, IndicatorDescriptor, IndicatorInput, IndicatorSettings } from 'openalgo-charts';
+import type { IndicatorApi, IndicatorDescriptor, IndicatorInput, IndicatorSettings, IndicatorStudySource } from 'openalgo-charts';
 import { chromeIconSvg } from 'openalgo-charts/draw';
 import type { WidgetContext } from '../context';
 import {
@@ -36,6 +36,16 @@ export interface IndicatorSettingsOptions {
 }
 
 const STYLE_GLYPH = 'M3 13c2.5 0 3.5-1.5 4-3.5M7.5 9.5 13 4a1.4 1.4 0 0 1 2 2l-5.5 5.5';
+
+function studySource(value: unknown): value is IndicatorStudySource {
+  if (value === null || typeof value !== 'object') return false;
+  const source = value as Partial<IndicatorStudySource>;
+  return source.kind === 'indicator' && typeof source.instanceId === 'string' && typeof source.plotKey === 'string';
+}
+
+const detached = (settings: Readonly<IndicatorSettings>): IndicatorSettings => Object.fromEntries(
+  Object.entries(settings).map(([key, value]) => [key, studySource(value) ? { ...value } : value]),
+);
 
 /** The defaults of a list of inputs, as a settings patch. */
 export function inputDefaults(inputs: readonly IndicatorInput[]): IndicatorSettings {
@@ -79,20 +89,28 @@ export function mountIndicatorSettings(
   if (style.length > 0) tabs.push({ id: 'style', label: widgetText(ctx, 'Style'), icon: glyphSvg(STYLE_GLYPH), inputs: style });
   if (tabs.length === 0) return declined(ctx, widgetText(ctx, '{name} has nothing to configure', { name: inst.name }));
 
-  const before = inst.settings();
+  const before = detached(inst.settings());
   const dirty = new Set<string>();
   let activeTab: IndicatorSettingsTab = tabs.some((t) => t.id === opts.tab) ? (opts.tab as IndicatorSettingsTab) : tabs[0].id;
   let form: FormHandle | null = null;
   let committed = false;
+  let offRemoved = (): void => {};
 
   /** What the form shows: the instance's settings over every declared default. */
   const values = (): IndicatorSettings => ({
     ...indicatorDefaults(descriptor), ...inputDefaults(style), ...inst.settings(),
   });
-  const write = (patch: IndicatorSettings): void => {
+  const current = (): boolean => !ctx.chart.isDestroyed && ctx.chart.indicators().includes(inst);
+  const report = (error: unknown): void => {
+    ctx.toast(error instanceof Error ? error.message : widgetText(ctx, 'The study settings could not be applied'), 'error');
+  };
+  const write = (patch: IndicatorSettings): boolean => {
+    if (!current()) { cancel(); return false; }
+    try { inst.setSettings(detached(patch)); }
+    catch (error) { report(error); return false; }
     for (const k of Object.keys(patch)) dirty.add(k);
-    inst.setSettings(patch);
     opts.onChange?.(inst);
+    return true;
   };
 
   const frame = dialogFrame(doc, { translate: ctx.translate, title: widgetText(ctx, '{name} settings', { name: inst.name }), className: 'oac-indset', onClose: () => cancel() });
@@ -108,13 +126,56 @@ export function mountIndicatorSettings(
     form?.destroy();
     const tab = tabs.find((t) => t.id === activeTab) ?? tabs[0];
     body.innerHTML = '';
-    form = renderForm(body, controlsFromInputs(tab.inputs, { translate: ctx.translate, scope: `indicator.${descriptor.id}` }), {
-      values: values(), translate: ctx.translate, openOverlay: ctx.openOverlay,
+    const controls = controlsFromInputs(tab.inputs, { translate: ctx.translate, scope: `indicator.${descriptor.id}` });
+    const sources = new Map<string, Map<string, IndicatorStudySource>>();
+    for (const input of tab.inputs) {
+      if (input.type !== 'source') continue;
+      const control = controls.find(item => item.key === input.key)!;
+      const options = [...(control.options ?? [])], references = new Map<string, IndicatorStudySource>();
+      if (input.allowStudyOutputs) for (const producer of ctx.chart.indicators()) {
+        if (producer.id === inst.id) continue;
+        for (const plot of getIndicator(producer.indicatorId).plots) {
+          if (plot.ohlc) continue;
+          const token = `study-output:${references.size}`;
+          references.set(token, { kind: 'indicator', instanceId: producer.id, plotKey: plot.key });
+          const title = widgetText(ctx, `schema.indicator.${producer.indicatorId}.plot.${plot.key}`, {}, plot.title ?? plot.key);
+          options.push({ value: token, label: `${producer.name} [${producer.id}] / ${title}` });
+        }
+      }
+      control.options = options;
+      sources.set(input.key, references);
+    }
+    const shown = (): IndicatorSettings => {
+      const result = values();
+      for (const [key, references] of sources) {
+        const value = result[key];
+        if (!studySource(value)) continue;
+        let token = [...references].find(([, reference]) => reference.instanceId === value.instanceId && reference.plotKey === value.plotKey)?.[0];
+        if (token === undefined) {
+          token = `study-output:${references.size}`;
+          references.set(token, { ...value });
+          const control = controls.find(item => item.key === key)!;
+          (control.options as { value: string; label: string }[]).push({ value: token,
+            label: widgetText(ctx, 'Unavailable study output: {instanceId} / {plotKey}', { instanceId: value.instanceId, plotKey: value.plotKey }) });
+        }
+        result[key] = token;
+      }
+      return result;
+    };
+    form = renderForm(body, controls, {
+      values: shown(), translate: ctx.translate, openOverlay: ctx.openOverlay,
       idPrefix: `oac-ind-${inst.id}`,
       live: true,
       onChange: (key, value) => {
-        write({ [key]: value });
-        form?.sync(values());
+        const reference = typeof value === 'string' ? sources.get(key)?.get(value) : undefined;
+        if (!write({ [key]: reference ? { ...reference } : value })) {
+          if (!current()) return;
+          const focused = (doc.activeElement as HTMLElement | null)?.id;
+          renderPane();
+          if (focused) doc.getElementById(focused)?.focus();
+          return;
+        }
+        form?.sync(shown());
       },
     });
   }
@@ -133,20 +194,40 @@ export function mountIndicatorSettings(
   frame.actions.appendChild(button(doc, { label: widgetText(ctx, 'Cancel'), onClick: () => cancel() }));
   frame.actions.appendChild(button(doc, { label: widgetText(ctx, 'OK'), variant: 'primary', onClick: () => ok() }));
 
-  // Escape and the scrim are the shell's, and both mean Cancel.
-  const handle = openPanel(ctx, frame.el, { placement: 'center', modal: true, onClose: () => form?.destroy() }, () => cancel());
+  // A graph change can make rollback invalid; Escape must follow the same
+  // guarded Cancel path before the overlay is removed.
+  frame.el.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault(); event.stopPropagation(); cancel();
+  });
+  const handle = openPanel(ctx, frame.el, { placement: 'center', modal: true, dismissOnEscape: false,
+    onClose: () => { offRemoved(); form?.destroy(); },
+  }, () => {
+    cancel();
+    // A host destroying its overlay cannot keep a rejected rollback open.
+    if (handle.isOpen()) { form?.destroy(); handle.close(); opts.onClose?.(false); }
+  });
+  offRemoved = ctx.chart.on('indicatorRemoved', () => {
+    if (!current()) cancel(); else renderPane();
+  });
 
-  function revert(): void {
-    if (committed || dirty.size === 0) return;
+  function revert(): boolean {
+    if (!current()) {
+      ctx.toast(widgetText(ctx, 'That indicator is no longer on the chart'), 'info');
+      return true;
+    }
+    if (committed || dirty.size === 0) return true;
     const back: IndicatorSettings = {};
     for (const key of dirty) back[key] = before[key];
+    try { inst.setSettings(detached(back)); }
+    catch (error) { report(error); renderPane(); return false; }
     dirty.clear();
-    inst.setSettings(back);
     opts.onChange?.(inst);
+    return true;
   }
   function cancel(): void {
     if (!handle.isOpen()) return;
-    revert();
+    if (!revert()) return;
     form?.destroy();
     handle.close();
     opts.onClose?.(false);

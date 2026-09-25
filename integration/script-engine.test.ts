@@ -10,6 +10,7 @@ import { securityExpression } from '../src/indicators/security';
 import { alignRequestedExpression, type RequestedExpression } from '../src/indicators/requested-context';
 import { createRequestedIndicator } from '../src/indicators/requested-indicator';
 import { createTier2Indicator } from '../src/indicators/external';
+import { SMA } from '../src/indicators/trend';
 import { ReplayController } from '../src/replay/controller';
 import { fakeDocument } from '../tests/helpers/fake-dom';
 
@@ -52,6 +53,31 @@ function makeChart(data: Bar[], now: number, updatesOnly = false) {
 const bar = (time: number, close: number): Bar => ({ time, open: 1, high: close + 1, low: 0, close });
 
 describe('compiled script engine on an actual Chart', () => {
+  it('uses compiled scalar outputs as native study inputs through updates and restoration', () => {
+    const compiled = compile(`version 1
+study("Connected output")
+plot(close * 3, "Value")
+`);
+    registerIndicator(compiled);
+    registerIndicator(SMA);
+    const { chart, series } = makeChart([1, 3, 5, 7].map((close, index) => bar(index * 60, close)), 190);
+    const producer = chart.addIndicator(compiled.id);
+    const consumer = chart.addIndicator('sma', { length: 2, source: {
+      kind: 'indicator', instanceId: producer.id, plotKey: compiled.plots[0].key,
+    } });
+    expect(consumer.values().ma).toEqual([null, 6, 12, 18]);
+    series.update(bar(180, 9));
+    expect(consumer.values().ma).toEqual([null, 6, 12, 21]);
+    producer.setVisible(false);
+    const saved = chart.getState();
+    saved.indicators!.reverse();
+    chart.restoreState(saved);
+    const restored = chart.indicators().find(item => item.id === consumer.id)!;
+    expect(restored.values().ma).toEqual([null, 6, 12, 21]);
+    series.update(bar(240, 11));
+    expect(restored.values().ma).toEqual([null, 6, 12, 21, 30]);
+  });
+
   it('evaluates native close alerts from compiled outputs with provider confirmation', () => {
     const compiled = compile(`version 1
 study("Confirmed output")

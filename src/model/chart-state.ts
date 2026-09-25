@@ -127,8 +127,10 @@ export interface SeriesState {
 
 export interface IndicatorState {
   indicatorId: string;
-  /** Stable workspace identity. Omitted by legacy states and reusable templates. */
+  /** Stable workspace identity. Dependency templates remap it when copied. */
   instanceId?: string;
+  /** Settings keys carrying declared study references, for portable template remapping. */
+  studyInputs?: readonly string[];
   /** Whole-study scale override. Omission retains the descriptor's plot assignments. */
   priceScaleId?: PriceScaleId;
   settings: IndicatorSettings;
