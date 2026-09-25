@@ -63,7 +63,7 @@ does not need to be loaded again.
 | `animAutoscale` | `boolean` | value of `animZoom` | Ease automatic price-range changes while navigation reveals new extrema. Manual and fixed scales remain authoritative. Programmatic viewport replacement, primary data replacement, reset and destruction cancel pending navigation motion. Not re-appliable. |
 | `zoomAnchor` | `'cursor' \| 'right'` | `'cursor'` | What a wheel zoom holds still: the bar under the cursor, or the right edge (the latest bar), which a live chart usually wants. Not re-appliable. |
 | `doubleClick` | `'reset' \| 'maximize' \| 'none'` | `'reset'` | Restore the configured default view and autoscale, toggle that pane to the whole stack, or only emit `dblclick`. A listener that sets `handled` on the event suppresses the action for that press. |
-| `navigation` | `Partial<ChartNavigationOptions>` | `{ mousePan: 'both', defaultVisibleBars: 0 }` | Mouse/pen plot-pan direction and the initial/reset view. Touch retains two-axis panning. Use `setNavigationOptions` at runtime. |
+| `navigation` | `Partial<ChartNavigationOptions>` | `{ panEnabled: true, zoomEnabled: true, mousePan: 'both', defaultVisibleBars: 0 }` | Independent native user navigation, mouse/pen plot-pan direction and the initial/reset view. Touch retains two-axis panning. Use `setNavigationOptions` at runtime. |
 | `conflate` | `boolean` | `false` | OHLC-preserving downsampling when bars fall under ~0.5 device px. |
 | `conflationFactor` | `number` | `1` | Conflation aggressiveness. |
 | `renderer` | `'canvas2d' \| 'webgl2' \| 'auto'` | `'canvas2d'` | Which backend paints the series. `'webgl2'` throws until `openalgo-charts/webgl` has been imported, and on a device without WebGL2 falls back to `canvas2d` with one console warning; `'auto'` takes `webgl2` when it is registered and works on this device, else `canvas2d`, silently. Decided once, at construction; read the result from `chart.rendererKind`. See [Render backends](#render-backends). |
@@ -381,6 +381,8 @@ Exported from `openalgo-charts`:
 
 ```ts
 interface ChartNavigationOptions {
+  panEnabled?: boolean;
+  zoomEnabled?: boolean;
   mousePan: 'horizontal' | 'both';
   defaultVisibleBars: number;
   defaultBarSpacing?: number;
@@ -397,6 +399,20 @@ chart.setNavigationOptions({ defaultVisibleBars: 80 });  // Partial<ChartNavigat
 Choose `'horizontal'` to move only time while preserving price autoscale.
 Touch retains two-axis panning for either value.
 
+`panEnabled` and `zoomEnabled` default to `true` independently. Pan controls plot
+translation, horizontal/shift wheel, pinch translation, keyboard steps and
+momentum. Zoom controls ordinary/control wheel, axis drags and wheels, pinch
+scaling, zoom keys and user reset/fit actions. Disabled native navigator actions
+are hidden. Turning an action off cancels its active motion; enabling it again
+does not resume the cancelled pointer sequence. Rejected wheel input remains
+available to the page. Crosshair, selections, drawings and chart picks remain
+usable. Programmatic scale setters, `fitContent`, `resetScale`, linked charts,
+data updates and state restoration remain available.
+
+Both fields accept own boolean data properties. Missing, inherited, accessor
+or malformed values are ignored without invoking a getter; unchanged patches
+do not interrupt motion. Old state without these keys retains the current policy.
+
 `defaultVisibleBars` defaults to `0`, fitting all loaded bars. A positive count targets
 the newest N loaded bars plus four empty slots on the right, bounded by available data
 and the time scale's spacing limits. Initial data loads and `resetScale()` honour this
@@ -405,7 +421,8 @@ fits all loaded bars. The count does not change history requests or discard load
 Apply a host's custom viewport after loading data when it should take precedence. The
 widget's ordinary load views use the configured count.
 
-The Axes / Navigation settings fields are `navigation.mousePan` and
+The Axes / Navigation settings fields include `navigation.panEnabled`,
+`navigation.zoomEnabled`, `navigation.mousePan` and
 `navigation.defaultVisibleBars`, plus `navigation.defaultBarSpacing`. They round-trip through `readChartSettings` /
 `applyChartSettings` and the optional `navigation` block in `getState` / `restoreState`.
 

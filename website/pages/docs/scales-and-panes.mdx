@@ -53,6 +53,66 @@ all call `resetScale()`. The explicit `chart.fitContent()` and
 widget, ordinary data loads use the configured count; a host that explicitly applies a
 visible range after loading data takes control of that view.
 
+### Allow panning and zooming independently
+
+Both actions are enabled by default. Change them at creation or at runtime:
+
+```ts
+const chart = createChart(el, {
+  navigation: { panEnabled: true, zoomEnabled: false },
+});
+chart.setNavigationOptions({ panEnabled: false });
+chart.navigationOptions().zoomEnabled; // false
+```
+
+Panning covers plot drags, horizontal or shift-wheel movement, pinch translation,
+keyboard steps and momentum. Zooming covers ordinary or control-wheel movement,
+price/time-axis drags, pinch scaling, zoom keys and user reset/fit actions. The
+native navigation row hides disabled actions. Turning an action off cancels its
+active motion; re-enabling it requires a fresh gesture. Rejected wheel input is
+left available to the page.
+
+Crosshair, selection, drawings and chart picking remain usable. Programmatic
+scale setters, `fitContent()`, `resetScale()`, linked charts, state restoration and
+data updates still work. These options control native user navigation rather
+than freezing the viewport. Custom hosts should check the policy before invoking
+their own user-facing fit or reset buttons, as the packaged widget and reference
+host do. Both controls are available in **Axes / Navigation** settings and saved
+with the chart. An older saved state that omits a key retains its current value.
+
+<RunnableExample height={320} code={`el.style.position = 'relative';
+const controls = document.createElement('div');
+controls.style.cssText = 'position:absolute;left:10px;top:8px;right:64px;display:flex;gap:8px;z-index:2';
+controls.addEventListener('pointerdown', event => event.stopPropagation());
+el.appendChild(controls);
+const surface = document.createElement('div');
+surface.style.cssText = 'position:absolute;inset:44px 0 0';
+el.appendChild(surface);
+const chart = lib.createChart(surface, { branding: false,
+  navigation: { mousePan: 'horizontal', defaultVisibleBars: 60 } });
+chart.addSeries('candlestick').setData(lib.generateBars(1700000000, 180, 60));
+for (const [key, label] of [['panEnabled', 'Pan'], ['zoomEnabled', 'Zoom']]) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.onpointerdown = () => button.focus({ preventScroll: true });
+  button.onmousedown = event => {
+    event.preventDefault();
+    button.focus({ preventScroll: true });
+  };
+  button.style.cssText = 'padding:5px 9px;border:1px solid #64748b;border-radius:4px;background:#172033;color:#e2e8f0;font:12px sans-serif;cursor:pointer';
+  const refresh = () => {
+    const on = chart.navigationOptions()[key] !== false;
+    button.textContent = label + (on ? ' on' : ' off');
+    button.setAttribute('aria-pressed', String(on));
+  };
+  button.onclick = () => {
+    chart.setNavigationOptions({ [key]: chart.navigationOptions()[key] === false });
+    refresh();
+  };
+  refresh(); controls.appendChild(button);
+}
+return chart;`} />
+
 ### Preserve zoom across a data reload
 
 Snapshot the visible logical range before replacing the data and restore it after, so a

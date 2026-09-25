@@ -181,6 +181,7 @@ export function focusChart(pane) {
 }
 const eachDraw = (fn) => { for (const d of [app.draw, app.draw2]) if (d) fn(d); };
 const mobileObserved = new WeakSet();
+const navigationObserved = new WeakSet();
 const selectionOf = (d) => {
   if (!d) return [];
   if (typeof d.selection === 'function') return d.selection().slice();
@@ -855,6 +856,7 @@ export function initRail(a, opts = {}) {
 export function zoomVisibleRange(chart, factor) {
   if (!chart || typeof chart.getVisibleLogicalRange !== 'function'
       || typeof chart.setVisibleLogicalRange !== 'function'
+      || chart.navigationOptions?.().zoomEnabled === false
       || !Number.isFinite(factor) || factor <= 0) return false;
   const range = chart.getVisibleLogicalRange();
   if (!range || !Number.isFinite(range.from) || !Number.isFinite(range.to) || range.to <= range.from) return false;
@@ -869,8 +871,22 @@ export function zoomVisibleRange(chart, factor) {
   return true;
 }
 
+/** Update buttons in place so policy changes do not close an open toolbar dialog. */
+export function syncNavigationControls() {
+  if (!app) return;
+  const allowed = chart => Boolean(chart && chart.isDestroyed !== true && chart.navigationOptions?.().zoomEnabled !== false);
+  const selected = allowed(activeChart());
+  for (const id of ['mobile-zoom-in', 'mobile-zoom-out', 'mobile-fit', 'toolbar-fit', 'fit']) {
+    const control = el(id);
+    if (!control) continue;
+    control.disabled = !(id === 'fit' ? allowed(app.chart) : selected);
+    control.setAttribute('aria-disabled', String(control.disabled));
+  }
+}
+
 /** Keep the compact picker and stateful controls aligned with the shared host state. */
 export function syncMobileControls(tool) {
+  syncNavigationControls();
   const picker = el('mobile-draw');
   if (picker) picker.value = tool || '';
   const magnet = el('mobile-magnet');
@@ -888,7 +904,12 @@ export function syncMobileControls(tool) {
 
 /** Follow history changes regardless of whether they came from touch, keyboard or another host control. */
 export function observeMobileControls(chart, draw) {
-  if (!chart || !draw || typeof chart.on !== 'function' || mobileObserved.has(chart)) return;
+  if (!chart || typeof chart.on !== 'function') return;
+  if (!navigationObserved.has(chart)) {
+    navigationObserved.add(chart);
+    for (const event of ['objects:change', 'state:restore:end', 'destroy']) chart.on(event, syncNavigationControls);
+  }
+  if (!draw || mobileObserved.has(chart)) return;
   mobileObserved.add(chart);
   for (const event of ['drawing:select', 'draw:select', 'drawing:change', 'draw:add', 'draw:remove', 'draw:update', 'draw:paste', 'draw:cut']) {
     chart.on(event, () => {
@@ -930,7 +951,7 @@ export function initMobile(a) {
   el('mobile-magnet').addEventListener('click', () => { cycleMagnet(); syncMobileControls(activeDraw()?.activeTool()); });
   el('mobile-zoom-out').addEventListener('click', () => zoomVisibleRange(activeChart(), 1.25));
   el('mobile-zoom-in').addEventListener('click', () => zoomVisibleRange(activeChart(), 0.8));
-  el('mobile-fit').addEventListener('click', () => { const chart = activeChart(); if (chart) chart.resetScale(); });
+  el('mobile-fit').addEventListener('click', () => { const chart = activeChart(); if (chart && chart.navigationOptions?.().zoomEnabled !== false) chart.resetScale(); });
 
   el('mobilebar').addEventListener('pointerdown', (event) => event.stopPropagation());
   for (const [id, pane] of [['chart', 1], ['chart2', 2]]) {

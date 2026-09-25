@@ -206,6 +206,10 @@ export interface ExportSvgOptions {
 
 /** Preferences for pointer panning and the view restored by reset. */
 export interface ChartNavigationOptions {
+  /** Allow user plot translation, including touch, wheel and keys. Default: true. */
+  panEnabled?: boolean;
+  /** Allow user zoom and reset/fit actions. Programmatic setters remain available. Default: true. */
+  zoomEnabled?: boolean;
   /** Mouse and pen plot drags. Touch gestures retain two-axis panning. Default: both. */
   mousePan: 'horizontal' | 'both';
   /** Latest bars to show initially and on reset. 0 fits all loaded bars (default). */
@@ -791,7 +795,9 @@ export class Chart {
   private _cursorPane: number | null = null;
   private _cursor: { x: number; y: number } | null = null;
   private _dragging = false;
-  private readonly _navigation: ChartNavigationOptions = { mousePan: 'both', defaultVisibleBars: 0 };
+  private readonly _navigation: ChartNavigationOptions = { mousePan: 'both', defaultVisibleBars: 0, panEnabled: true, zoomEnabled: true };
+  /** A cancelled navigation sequence stays consumed until every held pointer ends. */
+  private _navigationCancelled = false;
   private _dragStartX = 0;
   private _dragStartY = 0;
   private _lastDragY = 0;
@@ -935,6 +941,8 @@ export class Chart {
   private _axisColumnWidth = 0;
   private _emptyPriceAxis = true;
   private _timeNav: TimeNavigator | null = null;
+  private _timeNavButtons: TimeNavigatorOptions['buttons'] = [];
+  private _schedulingTimeNav = false;
   /** Pane the navigator is currently attached to, so it can follow the bottom. */
   private _timeNavPane = -1;
   private _branding: LogoWatermark | null = null;
@@ -1008,6 +1016,8 @@ export class Chart {
         { ...(nav === true ? {} : nav), hints: this._navHints(nav === true ? undefined : nav) },
         this._now,
       );
+      this._timeNavButtons = [...this._timeNav.options().buttons];
+      this._syncNavigatorPolicy();
     }
 
     // Respect a position set via CSS (absolute/relative/fixed); only force
@@ -1116,11 +1126,38 @@ export class Chart {
   public setNavigationOptions(patch: Partial<ChartNavigationOptions>): void {
     const before = this._navigation.defaultVisibleBars;
     const spacing = this._navigation.defaultBarSpacing;
+    const pan = this._navigation.panEnabled, zoom = this._navigation.zoomEnabled;
     this._patchNavigation(patch);
     if (before !== this._navigation.defaultVisibleBars || spacing !== this._navigation.defaultBarSpacing) this.resetScale();
+    if (pan !== this._navigation.panEnabled || zoom !== this._navigation.zoomEnabled) this.emit('objects:change', undefined);
   }
 
   private _patchNavigation(patch: Partial<ChartNavigationOptions>): void {
+    const wasPan = this._navigation.panEnabled, wasZoom = this._navigation.zoomEnabled;
+    for (const key of ['panEnabled', 'zoomEnabled'] as const) {
+      const field = Object.getOwnPropertyDescriptor(patch, key);
+      if (field && 'value' in field && typeof field.value === 'boolean') this._navigation[key] = field.value;
+    }
+    const stopPan = wasPan !== false && this._navigation.panEnabled === false;
+    const stopZoom = wasZoom !== false && this._navigation.zoomEnabled === false;
+    if (stopPan || stopZoom) {
+      if (stopZoom) this._navigationEpoch++;
+      if (stopPan) this._stopKinetic();
+      if (stopZoom) this._stopZoomGlide();
+      this._autoscaleTime = null;
+      if (this._pinch !== null || (stopPan && this._dragging)
+        || (stopZoom && (this._axisDrag === 'price' || this._axisDrag === 'time'))) {
+        this._navigationCancelled = true;
+        this._dragging = false;
+        this._axisDrag = null;
+        this._axisDragScale = null;
+        this._pinch = null;
+        this._pointerMoved = true;
+        this._dragVelocity = 0;
+        this._setHover(null);
+      }
+    }
+    if (wasPan !== this._navigation.panEnabled || wasZoom !== this._navigation.zoomEnabled) this._syncNavigatorPolicy();
     if (patch.mousePan === 'horizontal' || patch.mousePan === 'both') this._navigation.mousePan = patch.mousePan;
     const count = patch.defaultVisibleBars;
     // Saved layouts are untrusted input. Invalid values must not poison spacing.
@@ -1135,6 +1172,35 @@ export class Chart {
       if (spacing === 0) delete this._navigation.defaultBarSpacing;
       else this._navigation.defaultBarSpacing = spacing;
     }
+  }
+
+  private _navigationAllowed(command: string): boolean {
+    switch (command) {
+      case 'panLeftBar': case 'panRightBar': case 'panLeft': case 'panRight':
+      case 'panLeftFast': case 'panRightFast': case 'panUp': case 'panDown':
+        return this._navigation.panEnabled !== false;
+      case 'zoomIn': case 'zoomOut': case 'resetScale': case 'fitContent':
+        return this._navigation.zoomEnabled !== false;
+      default: return true;
+    }
+  }
+
+  private _syncNavigatorPolicy(): void {
+    if (this._timeNav === null) return;
+    if (this._timeNavButtons.every(action => action === null || this._navigationAllowed(action))) {
+      this._timeNav.setOptions({ buttons: [...this._timeNavButtons] });
+      return;
+    }
+    const buttons: (TimeNavigatorOptions['buttons'][number])[] = [];
+    let gap = false;
+    for (const action of this._timeNavButtons) {
+      if (action === null) { gap = true; continue; }
+      if (!this._navigationAllowed(action)) continue;
+      if (gap && buttons.length > 0) buttons.push(null);
+      buttons.push(action);
+      gap = false;
+    }
+    this._timeNav.setOptions({ buttons });
   }
 
   private _fitDefaultView(): boolean {
@@ -4369,6 +4435,7 @@ export class Chart {
   }
 
   private _onFrame(): void {
+    if (this._destroyed || this._destroying) return;
     // Before the mask is taken, not after: recomputing writes plot data, which
     // invalidates, and that invalidation has to land in this frame's mask
     // rather than in the next frame's.
@@ -4417,6 +4484,16 @@ export class Chart {
     }
     if (easing) this.invalidate(m => m.invalidateGlobal(InvalidationLevel.Light));
     else this._autoscaleTime = null;
+    const nav = this._timeNav;
+    if (nav?.animating() && !this._schedulingTimeNav
+      && (!this._overlayFrozen || nav.zOrder() !== 'top')
+      && this._panes[this._timeNavPane]?.primitives().includes(nav)) {
+      // A stationary pointer still needs the rest of the fade. The guard also
+      // bounds reentry from a synchronous injected scheduler with a frozen clock.
+      this._schedulingTimeNav = true;
+      try { this.invalidate(m => m.invalidateGlobal(InvalidationLevel.Light)); }
+      finally { this._schedulingTimeNav = false; }
+    }
     // After the loop, not inside it: swapping a pane's backend while its
     // frame is half painted would hand the rest of that frame to a backend
     // that never began one. The device is shared, so one pane's answer is
@@ -4662,6 +4739,7 @@ export class Chart {
     this._previousPressOnIndicatorToggle = this._lastPressOnIndicatorToggle;
     this._lastPressOnIndicatorToggle = false;
     this._endedPointers.delete(e.pointerId);
+    if (this._pointers.size === 0) this._navigationCancelled = false;
     this._stopKinetic();
     // Taking hold of the chart ends a zoom glide too: the viewport is the
     // user's again the moment they touch it.
@@ -4674,6 +4752,7 @@ export class Chart {
     // aborted the rest of pointerdown — losing the divider grab, the axis-drag
     // arm, and the line-drag arm. Capture is an optimisation; never fatal.
     try { this._container.setPointerCapture?.(e.pointerId); } catch { /* not capturable */ }
+    if (this._navigationCancelled) return;
     if (this._pointers.size >= 2) { this._beginPinch(); return; } // second finger → pinch, skip single-drag
     this._downPane = p.pane;
     this._downX = p.x;
@@ -4709,7 +4788,7 @@ export class Chart {
     if (onPriceAxis) {
       const slot = this._axisAt(p.pane, p.x);
       this._dragging = false;
-      if (!slot) { this._axisDrag = 'empty'; return; }
+      if (!slot || this._navigation.zoomEnabled === false) { this._axisDrag = 'empty'; return; }
       this._axisDrag = 'price';
       this._axisDragScale = this._panes[p.pane].scaleFor(slot.scaleId);
       this._axisStartCoord = p.localY;
@@ -4720,6 +4799,7 @@ export class Chart {
       return;
     }
     if (onTimeAxis) {
+      if (this._navigation.zoomEnabled === false) { this._axisDrag = 'empty'; return; }
       this._axisDrag = 'time';
       this._axisStartCoord = p.x;
       this._axisStartSpacing = this._timeScale.barSpacing;
@@ -4783,7 +4863,7 @@ export class Chart {
       return;
     }
 
-    this._dragging = true;
+    this._dragging = this._navigation.panEnabled !== false;
     // Hover-only controls must survive a repaint between press and release.
     this._setHover(hit ?? null);
     this._pointerMoved = false;
@@ -4803,7 +4883,7 @@ export class Chart {
     // Safety: if the primary button is no longer held (missed pointerup — e.g.
     // released over a context menu or outside the window), end any drag now.
     if ((e.pointerType === 'mouse' || e.pointerType === 'pen') && (e.buttons & 1) === 0
-      && (this._dragging || this._dragId !== null || this._axisDrag !== null || this._brandingPress !== null || this._indicatorTogglePress !== null)) {
+      && (this._pointers.has(e.pointerId) || this._dragging || this._dragId !== null || this._axisDrag !== null || this._brandingPress !== null || this._indicatorTogglePress !== null)) {
       if (this._brandingPress !== null) this._brandingPress.moved = true;
       if (this._indicatorTogglePress !== null) this._indicatorTogglePress.moved = true;
       this._onPointerUp(e);
@@ -4815,6 +4895,7 @@ export class Chart {
     }
     const p = this._localPoint(e);
     if (this._pointers.has(e.pointerId)) this._pointers.set(e.pointerId, { x: p.x, y: p.y, pane: p.pane });
+    if (this._navigationCancelled) return;
     if (this._pinch !== null) { this._updatePinch(); return; }
     if (this._axisDrag === 'empty') return;
     if (this._indicatorTogglePress !== null) {
@@ -4869,7 +4950,7 @@ export class Chart {
     // Placement mode suppresses the pan path, which is where `_pointerMoved`
     // is normally set — track the gesture here so pointerup can still tell a
     // click from a drag-to-draw.
-    if (this._placementMode && this._pointers.size > 0
+    if ((this._placementMode || !this._dragging) && this._pointers.size > 0
       && (Math.abs(p.x - this._downX) > 3 || Math.abs(p.localY - this._downLocalY) > 3)) {
       this._pointerMoved = true;
     }
@@ -4936,6 +5017,8 @@ export class Chart {
     if (this._pointers.size > 0 && !this._pointers.has(e.pointerId)) return;
     const togglePress = this._indicatorTogglePress?.pointerId === e.pointerId ? this._indicatorTogglePress : null;
     if (togglePress) this._indicatorTogglePress = null;
+    // Finish ownership before release: a host can report lost capture synchronously.
+    this._pointers.delete(e.pointerId);
     try { this._container.releasePointerCapture?.(e.pointerId); } catch { /* already released */ }
     // A gesture ends once. `_onPointerMove` calls this directly when it finds the
     // button already released, because a release over a context menu or outside
@@ -4945,7 +5028,11 @@ export class Chart {
     // the stale press coordinates. Every host control addressed by
     // `subscribeClick` doubles: a legend's hide toggles twice and looks dead.
     if (this._endedPointers.has(e.pointerId)) { this._endedPointers.delete(e.pointerId); return; }
-    this._pointers.delete(e.pointerId);
+    if (this._navigationCancelled) {
+      if (this._pointers.size === 0) this._navigationCancelled = false;
+      this._endedPointers.add(e.pointerId);
+      return;
+    }
     if (togglePress) {
       const p = this._localPoint(e);
       this._endedPointers.add(e.pointerId);
@@ -5083,7 +5170,7 @@ export class Chart {
     }
     if (wasPanning) this._setHover(null);
     // A mouse or pen release places the viewport precisely; only a touch flick coasts.
-    if (e.pointerType === 'touch' && e.type !== 'pointercancel'
+    if (wasPanning && this._navigation.panEnabled !== false && e.pointerType === 'touch' && e.type !== 'pointercancel'
       && KineticAnimation.shouldAnimate(this._dragVelocity)) this._startKinetic(this._dragVelocity);
   };
 
@@ -5108,7 +5195,7 @@ export class Chart {
     // Existing hosts still receive their end notification; transactional consumers
     // discard the draft first so cancellation can never become a saved edit.
     this._cancelPrimitiveDrag('pointercancel');
-    if (this._dragging) this._pointerMoved = true;
+    if (this._pointers.has(e.pointerId)) this._pointerMoved = true;
     if (this._brandingPress?.pointerId === e.pointerId) this._brandingPress.moved = true;
     if (this._indicatorTogglePress?.pointerId === e.pointerId) this._indicatorTogglePress.moved = true;
     this._onPointerUp(e);
@@ -5121,10 +5208,18 @@ export class Chart {
       return;
     }
     // Another element can take capture before release. Abandon the pan without a click or fling.
-    if (!this._dragging || !this._pointers.has(e.pointerId)) return;
+    if (!this._pointers.has(e.pointerId) || this._dragId !== null || this._paneResize !== null || this._brandingPress !== null) return;
+    if (this._pinch !== null || this._navigationCancelled) {
+      this._navigationCancelled = true;
+      this._pinch = null;
+    }
     this._dragging = false;
+    this._axisDrag = null;
+    this._axisDragScale = null;
+    this._dragVelocity = 0;
     this._pointerMoved = true;
     this._pointers.delete(e.pointerId);
+    if (this._pointers.size === 0) this._navigationCancelled = false;
     this._endedPointers.add(e.pointerId);
     this._setHover(null);
   };
@@ -5162,12 +5257,16 @@ export class Chart {
   private readonly _onWheel = (e: WheelEvent): void => {
     const delta = wheelPixels(e, this._width, this._height);
     if (delta.x === 0 && delta.y === 0) return;
-    this._unfreezeOverlay();
-    e.preventDefault();
-    this._stopKinetic();
     const p = this._localPoint(e);
     const onLeft = this._leftAxisWidth > 0 && p.x < this._leftAxisWidth;
     const onRight = this._rightAxisWidth > 0 && p.x >= this._width - this._rightAxisWidth;
+    const horizontal = !onLeft && !onRight && !e.ctrlKey && !e.metaKey
+      && (e.shiftKey || Math.abs(delta.x) > Math.abs(delta.y));
+    if (horizontal ? this._navigation.panEnabled === false : this._navigation.zoomEnabled === false) return;
+    if (!horizontal && delta.y === 0) return;
+    this._unfreezeOverlay();
+    e.preventDefault();
+    this._stopKinetic();
     if (onLeft || onRight) {
       if (delta.y === 0) return;
       const slot = this._axisAt(p.pane, p.x);
@@ -5179,7 +5278,7 @@ export class Chart {
       this.invalidate(m => m.invalidateGlobal(InvalidationLevel.Full));
       return;
     }
-    if (!e.ctrlKey && !e.metaKey && (e.shiftKey || Math.abs(delta.x) > Math.abs(delta.y))) {
+    if (horizontal) {
       this._stopZoomGlide();
       this._beginAutoscaleMotion();
       this._mutateTimeScale(() => this._timeScale.scrollByPixels(-(e.shiftKey && delta.x === 0 ? delta.y : delta.x)));
@@ -5212,6 +5311,7 @@ export class Chart {
 
   /** One zoom step, applied now. Shared by the instant path and each glide frame. */
   private _applyZoom(focusX: number, logFactor: number): void {
+    if (this._navigation.zoomEnabled === false) return;
     this._beginAutoscaleMotion();
     this._mutateTimeScale(() => this._timeScale.zoomAtX(focusX, Math.exp(logFactor)));
     this._maybeLoadHistory();
@@ -5220,13 +5320,14 @@ export class Chart {
   }
 
   private _startZoomGlide(focusX: number, logFactor: number): void {
+    if (this._navigation.zoomEnabled === false) return;
     const glide = new ZoomGlide(logFactor);
     this._zoomGlide = glide;
     this._zoomGlideStart = this._now();
     this._zoomGlideApplied = 0;
     let frames = 0;
     const step = (): void => {
-      if (this._zoomGlide !== glide || this._destroyed) return;
+      if (this._zoomGlide !== glide || this._destroyed || this._navigation.zoomEnabled === false) return;
       const elapsed = this._now() - this._zoomGlideStart;
       const applied = glide.appliedAt(elapsed);
       const delta = applied - this._zoomGlideApplied;
@@ -5302,7 +5403,7 @@ export class Chart {
     // the view back to its default mid-placement. A listener that took the
     // press for itself has said so on the event.
     if (this._placementMode || ev.handled) return;
-    if (this._doubleClick === 'reset') this.resetScale();
+    if (this._doubleClick === 'reset' && this._navigation.zoomEnabled !== false) this.resetScale();
     else if (this._doubleClick === 'maximize') this.maximizePane(p.pane);
   };
 
@@ -5325,16 +5426,19 @@ export class Chart {
     if (pts.length < 2 || this._pinch === null) return;
     const cur = pinchState(pts[0], pts[1]);
     const d = pinchDelta(this._pinch, cur);
+    this._pinch = cur;
+    const zoom = this._navigation.zoomEnabled !== false && d.factor !== 1;
+    const pan = this._navigation.panEnabled !== false && (d.dx !== 0 || d.dy !== 0);
+    if (!zoom && !pan) return;
     this._beginAutoscaleMotion();
     this._mutateTimeScale(() => {
-      if (d.factor !== 1) this._timeScale.zoomAtX(cur.cx, d.factor);
-      this._timeScale.setRightOffset(this._timeScale.rightOffset - d.dx / this._timeScale.barSpacing);
+      if (zoom) this._timeScale.zoomAtX(cur.cx, d.factor);
+      if (pan) this._timeScale.setRightOffset(this._timeScale.rightOffset - d.dx / this._timeScale.barSpacing);
     });
-    this._panes[this._pinchPane]?.priceScale.panByPixels(d.dy);                          // two-finger pan Y
-    this._pinch = cur;
+    if (pan && d.dy !== 0) this._panes[this._pinchPane]?.priceScale.panByPixels(d.dy);
     this._maybeLoadHistory();
     this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
-    this._emitViewport(d.factor !== 1 ? 'zoom' : 'pan');
+    this._emitViewport(zoom ? 'zoom' : 'pan');
   }
 
   // ── keyboard navigation (focus the chart, then arrows / +- / Home) ────────
@@ -5364,6 +5468,7 @@ export class Chart {
     if (sc === null || ShortcutManager.shouldIgnore(e.target) || !this._shortcutsActive()) return;
     const cmd = sc.resolve(e);
     if (cmd === null) return;
+    if (!this._navigationAllowed(cmd)) return;
     let handled = this._runShortcut(cmd);
     if (!handled) handled = sc.runCustom(cmd);
     if (!handled) return;
@@ -5384,6 +5489,7 @@ export class Chart {
 
   /** Execute a built-in command; returns false for unknown (custom) commands. */
   private _runShortcut(command: string): boolean {
+    if (!this._navigationAllowed(command)) return false;
     const ts = this._timeScale;
     // Keyboard navigation moves the same viewport a drag or a wheel does, so it
     // announces itself the same way: a chart linked into a grid must follow an
@@ -5572,6 +5678,7 @@ export class Chart {
    * unnoticed until a browser drove it.
    */
   private _startKinetic(velocity: number): void {
+    if (this._navigation.panEnabled === false) return;
     this._stopKinetic();
     const epoch = this._kineticEpoch;
     const anim = new KineticAnimation(velocity);
@@ -5586,7 +5693,7 @@ export class Chart {
     // ten seconds of frames is a ceiling no real animation reaches.
     let frames = 0;
     const step = (): void => {
-      if (epoch !== this._kineticEpoch || this._destroyed) return;
+      if (epoch !== this._kineticEpoch || this._destroyed || this._navigation.panEnabled === false) return;
       const elapsed = this._now() - start;
       const dist = anim.distanceAt(elapsed);
       const delta = dist - lastDist;

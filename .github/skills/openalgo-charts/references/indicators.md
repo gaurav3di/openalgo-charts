@@ -187,6 +187,10 @@ Notes that bite:
   zero-based index `length + round(sqrt(length)) - 2`. Length 1 returns the source.
   Hull Suite's Hma mode uses the same kernel. Odd and non-square lengths differ
   from the fractional-half and floored-root convention used before 2.5.4.
+- `cpr` requires finite highs and lows for every observation in its prior period.
+  A nonfinite extreme invalidates that period until the next existing session or
+  calendar boundary. A complete later period recovers. Only the period's final
+  close is used; the schedule, display controls and pivot formulas are unchanged.
 - `select` inputs carry their own `options`. The recurring ones: `maType` on `cci`/`obv`/`relative-volatility-index` is `None | SMA | SMA + Bollinger Bands | EMA | SMMA (RMA) | WMA | VWMA`; `ma1Type`..`ma4Type` on `ma-ribbon` drop the first two; `oscType`/`sigType` on `ppo`/`pvo` are `EMA | SMA`; `bandsStyle` on `keltner-channel` is `Average True Range | True Range | Range`; `calcMode` on `vwap` is `stdev | percent`. `mode` on `hull-suite` is `Hma | Thma | Ehma`. Its labels (HMA / THMA / EHMA) are not its values, as is also true of `anchor` on `vwap` and `twap`, `calcMode` on `vwap` and `pivotMode` on `cpr`: store `option.value`, render `option.label`, and never round-trip the label back into settings.
 - `vwap` defaults to `source: 'hlc3'`, not `'close'`. **Its `session` anchor is the trading session read back from the bar gaps** (`sessionStartFlags`), not a calendar day: see [Trading sessions](#trading-sessions) below. The coarser anchors (`week`, `month`, `quarter`, `year`) are calendar boundaries tested on the chart's `timezone` (default `Asia/Kolkata`) and compared at session opens, so a Friday session that ends after midnight in that zone is not split. `anchor` accepts `session | week | month | quarter | year | continuous`. It also declares six band plots (`upper1`/`lower1` .. `upper3`/`lower3`) with only band 1 shown by default. `twap` has the shorter `session | continuous`, with the same gap-read session.
 - The other calendar-anchored built-ins follow the same rule: `cpr`'s Daily frame comes from the bar gaps while its Weekly and Monthly frames are calendar boundaries in the chart's zone, and `seasonality` attributes a bar's close to the month it closed in **in that zone**, which is why the last ninety minutes of a 30 April New York session count as April on `America/New_York` and as May on the IST default.
@@ -201,7 +205,7 @@ Notes that bite:
 - **`consolidation-breakout` is a state machine, not a formula, and it has no warmup.** A carried "mother" bar defines the range; every later bar whose *body* (open to close, wicks ignored) sits inside that range extends the consolidation, and the first body to escape it fires a marker and becomes the new mother on the same bar. `rangeHigh` and `rangeLow` are `null` wherever no consolidation is running, so the two rails break between one range and the next instead of joining them, and that gap is the reading. A range is breakable only from the second bar after its mother and only for 250 bars: both are constants of the definition, not inputs, because neither has a setting a user would tune. Bar 0 prints its own high and low and opens the first range.
 - **`hull-suite` and `consolidation-breakout` are the only built-ins that recolour the price candles.** See `barColors` below. `hull-suite` claims them only when `candleCol` is exactly `true`, so an absent key never repaints someone else's candles; `consolidation-breakout` tints every inside bar unless `colorinside` is off, and leaves the mother bar its own colour because the mother is the range, not something inside it. Only one indicator's colours can be on the candles at a time, so these two fight each other.
 - `ma-channel` is a mean of the highs and a mean of the lows, each with its own length and its own plot-time offset, not a mean of the close with a spread. Its two legs therefore warm up independently: at `upperLength` 34 and `lowerLength` 13 the lower plot prints 21 bars before the upper one does.
-- No built-in implements `calcTail`, so every one is a full O(n) pass when it recomputes. **Since 1.8.4 that is paid once per animation frame, not once per tick**: a data update marks the indicators stale and the flush runs before the next paint, so a burst of ticks between two frames costs one pass rather than one per tick. Measured on a 1875-bar chart with 50 ticks between frames, that took a ten-indicator pane from 643 ms of blocked main thread to 21 ms. Cost is now bounded by the display refresh and by how much history is loaded, not by how fast the feed ticks.
+- No built-in implements `calcTail`, so each recomputes over the loaded history; window helpers can add a period-dependent cost. **Since 1.8.4 that is paid once per animation frame, not once per tick**: a data update marks the indicators stale and the flush runs before the next paint, so a burst of ticks between two frames costs one pass rather than one per tick. Measured on a 1875-bar chart with 50 ticks between frames, that took a ten-indicator pane from 643 ms of blocked main thread to 21 ms. Cost is now bounded by the display refresh and by how much history is loaded, not by how fast the feed ticks.
 - Source values: `'open' | 'high' | 'low' | 'close' | 'hl2' | 'hlc3' | 'ohlc4' | 'volume'`. `INDICATOR_SOURCES` is the option list for a UI and deliberately omits `'volume'`.
 - The descriptors implement published mathematical formulas with explicit initialization and missing-value conventions. Check those conventions when comparing outputs. They live in `src/indicators/` split by family: `trend.ts`, `momentum.ts`, `volume.ts`, `overlay.ts`, `oscillators.ts`, `volatility.ts`, `flow.ts`, `adaptive.ts`, `averages.ts`, `strength.ts`, `indices.ts`, `ranges.ts`, `signals.ts`, plus `external.ts` for the Tier-2 contract and `calc.ts` for the shared math. `index.ts` is a manifest that concatenates them into `BUILTIN_INDICATORS`.
 
@@ -536,6 +540,19 @@ A plot cannot express this: a plot is a column of prices drawn as a line or a hi
 `MarkerShape` includes two label shapes for named signals: `labelUp` and `labelDown` are rounded text plates with a tail that points **at** the anchor price, so the body sits clear of the bar. `labelUp`'s tail is on the top edge and its body hangs below the anchor; `labelDown` is the mirror. Both require `text`. The renderer is exported as `drawLabel(ctx, up, cx, anchorY, text, color, fontPx)` alongside `drawShape`, `markerSizePx` and `effectiveMarkerPx`, all in bitmap px with dpr already applied by the caller.
 
 Each label begins its own canvas path, so later plates do not refill earlier tails.
+
+`SeriesMarker` accepts independent `textColor`, `fontSize`, `fontFamily`, `bold`,
+`italic` and `textAlign`. Glyph color and preset size stay independent of the text.
+Omitted text color still contrasts with a label plate and matches the glyph for
+other shapes. Label plates retain their semibold default; other marker text stays
+normal. `bold: false` explicitly removes the plate's semibold weight. Omitted size
+is `max(9, markerSizePx(size))` CSS px; the default family is `system-ui, sans-serif`.
+`textAlign: 'left' | 'center' | 'right'` aligns rows within their measured block,
+which remains centered on the marker; default is center. Opted-in text styling
+uses measured bounds and clips ink/hits to the plot. Marker hit targets otherwise
+remain the existing 8px anchor radius. Invalid new fields reject the entire
+`setMarkers` replacement before mutation; accepted replacement or detach clears
+old hit positions immediately. The public `drawLabel` signature is unchanged.
 
 ```ts
 { time: bar.time, position: 'atPrice', price, shape: 'labelUp', size: 'small', color: '#2962ff', text: 'Buy' }
@@ -905,6 +922,22 @@ draws: ({ bars, values, settings }) => ([
   otherwise squash the study it annotates.
 - A `label`, and a `box` caption, split on `\n`. Marker text does too, since 1.7.1.
 - Shapes entirely off-pane are culled before any path work.
+
+Labels and box captions accept `fontSize` (positive finite CSS px), `fontFamily`
+(nonempty CSS family list), `bold`, `italic`, and `textAlign` (left/center/right).
+Defaults retain the normal 11px `ui-sans-serif, system-ui, sans-serif` font and
+left-aligned rows. Measuring and drawing use the same font. `textAlign` changes
+rows inside the measured plate, independently of plate placement.
+
+For labels, existing `align` chooses the plate's horizontal edge on its anchor;
+`verticalAlign: 'top' | 'middle' | 'bottom'` chooses the vertical edge, default
+middle. Boxes add `align` and `verticalAlign` to position the caption plate within
+their rectangle, default center/middle. A caption may still exceed its box.
+Opted-in typography or placement measures before culling and clips paint and hits
+to the plot, including in SVG. Omitted fields retain the original rendering.
+Invalid new fields reject `setItems` atomically; replacement, hide and detach clear
+old hit rectangles. Tooltip text keeps its separate default font. CSS families and
+colors remain canvas text, with no HTML parsing or DOM font loading.
 
 Polylines accept `curve: 'linear' | 'smooth'`; omitted keeps straight segments.
 Smooth interpolates mapped screen anchors with cubic half-chord tangents, using
@@ -1389,8 +1422,20 @@ transport, page merging or live subscription; the host announces external change
 `sma`, `wma`, `rma`, `smaSeededEma`, `stdev`, `dev`, `highest`, `lowest`,
 `highestBars`, `lowestBars` and `percentRank` accept a final
 `NumericalWindowOptions` argument. With a scalar period, omitting it preserves each
-existing helper's calculation and warmup behavior. Passing `{}` selects
+helper's default calculation and warmup behavior. Passing `{}` selects
 `missing: 'propagate'`.
+
+For positive safe-integer scalar periods, default `sma(values, period)` and
+`rollingSum(values, period)` sum each current window chronologically and require
+finite inputs and a finite sum. SMA divides once after the sum. Old gaps and
+overflow stop affecting output once they leave the window. These paths cost
+O(bars * period) time and O(1) extra space excluding output. Explicit SMA options,
+including `{}`, and varying-length SMA use their separate compensated policy.
+Unsupported scalar periods retain their existing behavior.
+
+Default scalar `wma`, `stdev` and `dev` with valid periods accumulate window terms
+oldest first and omit nonfinite final results. Their explicit-options,
+varying-length and unsupported-period behavior is unchanged.
 
 With options, NaN and infinities are missing. Propagation requires a complete
 chronological finite window. Skip mode collects the last `period` finite
@@ -1516,7 +1561,7 @@ import { ema, emaSeries, rsi, rsiSeries, atr, trueRange, supertrend, supertrendS
 | `supertrend` | `(bars, period = 10, multiplier = 3) => SupertrendPoint[]` | `{ value, direction }`; `value` is `NaN` during ATR warmup. `direction` `-1` = uptrend, `+1` = downtrend. |
 | `supertrendSeries` | `(bars, period, multiplier) => { up: Bar[]; down: Bar[] }` | inactive leg carries `NaN` so the line breaks at flips. |
 
-The tier exports the pure helpers from `src/indicators/calc.ts`, including `sma`, `wma`, `rma`, `stdev`, `highest`, `lowest`, `nulls`, `connorsStreak`, `rollingSum`, `correlation`, `pivotHigh`, `pivotLow`, `barsSince` and `valueWhen`. Read each signature before composing it; these helpers do not all return the same shape. `nulls` converts `NaN` to `null` for a plot column, and `sma` keeps a non-finite input from poisoning its running sum.
+The tier exports the pure helpers from `src/indicators/calc.ts`, including `sma`, `wma`, `rma`, `stdev`, `highest`, `lowest`, `nulls`, `connorsStreak`, `rollingSum`, `correlation`, `pivotHigh`, `pivotLow`, `barsSince` and `valueWhen`. Read each signature before composing it; these helpers do not all return the same shape. `nulls` converts `NaN` to `null` for a plot column. Default scalar `sma` sums each finite current window independently, so expired gaps or overflow cannot poison later windows.
 
 The tier also exports every descriptor by name in SCREAMING_SNAKE form (`RSI`, `MACD`, `HALFTREND`, ...), the per-family arrays (`OVERLAY_INDICATORS`, `OSCILLATOR_INDICATORS`, `VOLATILITY_INDICATORS`, `FLOW_INDICATORS`, `ADAPTIVE_INDICATORS`, `AVERAGE_INDICATORS`, `STRENGTH_INDICATORS`, `INDEX_INDICATORS`, `RANGE_INDICATORS`, `SIGNAL_INDICATORS`), and the flat `BUILTIN_INDICATORS`. Read `BUILTIN_INDICATORS` rather than hard-coding a list of ids.
 

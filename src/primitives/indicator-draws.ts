@@ -14,6 +14,9 @@
 import type { IPrimitive, PrimitiveHost, PrimitiveRenderContext, PrimitiveHit, ZOrder } from './primitive';
 import type { IndicatorDrawing, IndicatorLineStyle, DrawAnchor } from '../model/indicator-registry';
 import { roundRectPath, contrastText } from '../render/pill';
+import { hasTextStyle, textFont, validateTextStyle } from '../render/text-style';
+
+type Caption = Extract<IndicatorDrawing, { kind: 'label' | 'box' }>;
 
 /** A drawn label or box the pointer can rest on, in media px. */
 interface HitRect {
@@ -23,6 +26,7 @@ interface HitRect {
   y: number;
   w: number;
   h: number;
+  clipped?: boolean;
 }
 
 /** What a plate occupies once drawn, in device px, so a hit rect can be kept. */
@@ -83,11 +87,14 @@ function drawPlate(
   bg: string,
   textColor: string | undefined,
   align: 'left' | 'center' | 'right',
-): PlateRect {
-  const size = 11 * d;
-  ctx.font = `${size}px ui-sans-serif, system-ui, sans-serif`;
+  style?: Caption,
+  clip?: { w: number; h: number },
+): PlateRect | null {
+  const size = (style?.fontSize ?? 11) * d;
+  if (!Number.isFinite(size) || size <= 0) return null;
+  ctx.font = textFont(style, size, 'ui-sans-serif, system-ui, sans-serif');
   ctx.textBaseline = 'middle';
-  ctx.textAlign = 'left';
+  ctx.textAlign = style?.textAlign ?? 'left';
   const lines = text.split('\n');
   let textW = 0;
   for (const line of lines) textW = Math.max(textW, ctx.measureText(line).width);
@@ -97,13 +104,19 @@ function drawPlate(
   const w = textW + padX * 2;
   const h = lh * lines.length + padY * 2;
   const bx = align === 'center' ? x - w / 2 : align === 'right' ? x - w : x;
-  const by = y - h / 2;
+  const by = style?.verticalAlign === 'top' ? y : style?.verticalAlign === 'bottom' ? y - h : y - h / 2;
+  if (clip) {
+    if (![bx, by, w, h].every(Number.isFinite) || bx + w < 0 || bx > clip.w || by + h < 0 || by > clip.h) return null;
+    ctx.save(); ctx.beginPath(); ctx.rect(0, 0, clip.w, clip.h); ctx.clip();
+  }
   ctx.beginPath();
   roundRectPath(ctx, bx, by, w, h, 3 * d);
   ctx.fillStyle = bg;
   ctx.fill();
   ctx.fillStyle = textColor ?? contrastText(bg);
-  for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], bx + padX, by + padY + lh * (i + 0.5));
+  const tx = style?.textAlign === 'center' ? bx + w / 2 : style?.textAlign === 'right' ? bx + w - padX : bx + padX;
+  for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], tx, by + padY + lh * (i + 0.5));
+  if (clip) ctx.restore();
   return { x: bx, y: by, w, h };
 }
 
@@ -120,7 +133,7 @@ export class IndicatorDrawings implements IPrimitive {
   private _hits: HitRect[] = [];
 
   public attached(host: PrimitiveHost): void { this._host = host; }
-  public detached(): void { this._host = null; }
+  public detached(): void { this._host = null; this._hits = []; }
   /** Over the series, under the crosshair: these are annotations on the data. */
   public zOrder(): ZOrder { return 'normal'; }
   /**
@@ -131,12 +144,23 @@ export class IndicatorDrawings implements IPrimitive {
   public autoscaleInfo(): null { return null; }
 
   public setItems(items: readonly IndicatorDrawing[]): void {
+    for (const item of items) if (item.kind === 'label' || item.kind === 'box') {
+      validateTextStyle(item);
+      if (item.verticalAlign !== undefined && !['top', 'middle', 'bottom'].includes(item.verticalAlign)) {
+        throw new TypeError('Drawing verticalAlign must be top, middle or bottom');
+      }
+      if (item.kind === 'box' && item.align !== undefined && !['left', 'center', 'right'].includes(item.align)) {
+        throw new TypeError('Box align must be left, center or right');
+      }
+    }
     this._items = items;
+    this._hits = [];
     this._host?.requestUpdate();
   }
 
   public setVisible(on: boolean): void {
     this._visible = on;
+    this._hits = [];
     this._host?.requestUpdate();
   }
 
@@ -163,11 +187,12 @@ export class IndicatorDrawings implements IPrimitive {
 
     for (const item of this._items) {
       if (item.kind === 'label') {
+        const styled = hasTextStyle(item) || item.verticalAlign !== undefined;
         const px = x(item.at);
         const py = y(item.at);
-        if (px < -m || px > w + m || py < -m || py > h + m) continue;
-        const rect = drawPlate(ctx, d, px, py, item.text, item.color ?? ink, item.textColor, item.align ?? 'center');
-        this._recordHit(item, rect, d);
+        if (!styled && (px < -m || px > w + m || py < -m || py > h + m)) continue;
+        const rect = drawPlate(ctx, d, px, py, item.text, item.color ?? ink, item.textColor, item.align ?? 'center', item, styled ? { w, h } : undefined);
+        if (rect) this._recordHit(item, rect, d, styled ? { w, h } : undefined);
         continue;
       }
 
@@ -241,11 +266,15 @@ export class IndicatorDrawings implements IPrimitive {
       let by = y(item.to);
 
       if (item.kind === 'box') {
-        if (offPane(ax, ay, bx, by)) continue;
+        const styled = hasTextStyle(item) || item.align !== undefined || item.verticalAlign !== undefined;
+        if (!styled && offPane(ax, ay, bx, by)) continue;
+        if (styled && ![ax, ay, bx, by].every(Number.isFinite)) continue;
         const rx = Math.min(ax, bx);
         const ry = Math.min(ay, by);
         const rw = Math.abs(bx - ax);
         const rh = Math.abs(by - ay);
+        if (styled && (!Number.isFinite(rw) || !Number.isFinite(rh))) continue;
+        if (styled) { ctx.save(); ctx.beginPath(); ctx.rect(0, 0, w, h); ctx.clip(); }
         if (item.fillColor !== undefined) {
           ctx.globalAlpha = item.opacity ?? 0.12;
           ctx.fillStyle = item.fillColor;
@@ -255,10 +284,13 @@ export class IndicatorDrawings implements IPrimitive {
         ctx.setLineDash([]);
         ctx.strokeStyle = color;
         ctx.strokeRect(rx, ry, rw, rh);
-        this._recordHit(item, { x: rx, y: ry, w: rw, h: rh }, d);
+        this._recordHit(item, { x: rx, y: ry, w: rw, h: rh }, d, styled ? { w, h } : undefined);
         if (item.text !== undefined && item.text !== '') {
-          drawPlate(ctx, d, rx + rw / 2, ry + rh / 2, item.text, color, item.textColor, 'center');
+          const cx = item.align === 'left' ? rx : item.align === 'right' ? rx + rw : rx + rw / 2;
+          const cy = item.verticalAlign === 'top' ? ry : item.verticalAlign === 'bottom' ? ry + rh : ry + rh / 2;
+          drawPlate(ctx, d, cx, cy, item.text, color, item.textColor, item.align ?? 'center', item, styled ? { w, h } : undefined);
         }
+        if (styled) ctx.restore();
         continue;
       }
 
@@ -296,10 +328,14 @@ export class IndicatorDrawings implements IPrimitive {
   }
 
   /** Keep a label's or box's rect when it has something to say on hover or click. */
-  private _recordHit(item: { id?: string; tooltip?: string }, rect: PlateRect, d: number): void {
+  private _recordHit(item: { id?: string; tooltip?: string }, rect: PlateRect, d: number, clip?: { w: number; h: number }): void {
     const id = item.id ?? item.tooltip;
     if (id === undefined) return;
-    this._hits.push({ id, tooltip: item.tooltip, x: rect.x / d, y: rect.y / d, w: rect.w / d, h: rect.h / d });
+    const x = clip ? Math.max(0, rect.x) : rect.x, y = clip ? Math.max(0, rect.y) : rect.y;
+    const right = clip ? Math.min(clip.w, rect.x + rect.w) : rect.x + rect.w;
+    const bottom = clip ? Math.min(clip.h, rect.y + rect.h) : rect.y + rect.h;
+    if (clip && (right <= x || bottom <= y)) return;
+    this._hits.push({ id, tooltip: item.tooltip, x: x / d, y: y / d, w: (right - x) / d, h: (bottom - y) / d, clipped: clip !== undefined });
   }
 
   /**
@@ -326,7 +362,7 @@ export class IndicatorDrawings implements IPrimitive {
     const cy = above ? hit.y * d - gap - plateH / 2 : (hit.y + hit.h) * d + gap + plateH / 2;
     const cx = Math.min(Math.max((hit.x + hit.w / 2) * d, 0), w);
     if (cy < -plateH || cy > h + plateH) return;
-    drawPlate(ctx, d, cx, cy, hit.tooltip, ink, undefined, 'center');
+    drawPlate(ctx, d, cx, cy, hit.tooltip, ink, undefined, 'center', undefined, hit.clipped ? { w, h } : undefined);
   }
 
   public hitTest(x: number, y: number): PrimitiveHit | null {

@@ -1,5 +1,7 @@
 /** English source keys keep fallback messages available without a locale bundle. */
 export type WidgetBuiltinMessage =
+  | "Enable panning"
+  | "Enable zooming"
   | "Search"
   | "Enter a finite number"
   | "Minimum: {value}"

@@ -1,6 +1,6 @@
 import { el, esc, currentTheme, toggleTheme } from './ui.js';
 import { attachTip, hideTip } from './hover.js';
-import { cycleMagnet, magnetMode, focusChart } from './rail.js';
+import { cycleMagnet, magnetMode, focusChart, syncNavigationControls } from './rail.js';
 import { INTERVALS, intervalLabel, intervalName, periodsFor, clampPeriod } from './intervals.js';
 import { popupMenu } from './menus.js';
 import { openCompare, comparisonState } from './compare.js';
@@ -432,7 +432,11 @@ export function renderToolbar() {
   bar.appendChild(divider());
 
   // view + layout icons
-  bar.appendChild(iconBtn('fit', 'Reset view', () => { if (currentTarget(target)) target.chart.resetScale(); }));
+  const fit = iconBtn('fit', 'Reset view', () => {
+    if (currentTarget(target) && target.chart.navigationOptions?.().zoomEnabled !== false) target.chart.resetScale();
+  });
+  fit.id = 'toolbar-fit';
+  bar.appendChild(fit);
   // Anchor on the button that was clicked: by the time the handler runs,
   // bar.lastChild is whatever the toolbar appended last, not this button.
   bar.appendChild(iconBtn('grid', 'Grid', (ev) => {
@@ -500,6 +504,7 @@ export function renderToolbar() {
   // assign to #status directly and every one of them would have to remember.
   status.addEventListener('pointerenter', () => { status.title = statusText.textContent; });
   bar.appendChild(status);
+  syncNavigationControls();
   app.refreshWorkspaceControls?.();
 }
 

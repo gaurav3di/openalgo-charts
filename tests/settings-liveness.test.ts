@@ -213,6 +213,8 @@ function flipsFor(input: ChartSettingsInput, current: ChartSettingsValues): { ke
  */
 const OFF_FRAME: ReadonlyMap<string, string> = new Map([
   ['navigation.mousePan', 'pointer behavior is exercised by navigation-settings.test.ts'],
+  ['navigation.panEnabled', 'user horizontal wheel behavior is asserted below with the navigator disabled'],
+  ['navigation.zoomEnabled', 'user vertical wheel behavior is asserted below with the navigator disabled'],
   // The trade layer draws nothing until a position, order or execution exists,
   // and instantiating it is not what this file is measuring. chart-settings
   // covers the round-trip; trade-ui covers the colours reaching the marks.
@@ -311,13 +313,29 @@ describe('no settings control is dead', () => {
     // Guards the escape hatch: a key may only sit in OFF_FRAME with a reason,
     // and the list may not quietly grow to hide a genuinely dead control.
     for (const [, why] of OFF_FRAME) expect(why.length).toBeGreaterThan(10);
-    expect(OFF_FRAME.size).toBe(12);
+    expect(OFF_FRAME.size).toBe(14);
   });
 });
 
 describe('the off-frame controls, asserted where they do act', () => {
   beforeEach(() => vi.stubGlobal('window', {}));
   afterEach(() => vi.unstubAllGlobals());
+
+  it.each(TYPES)('navigation controls gate gestures independently on a %s chart', type => {
+    const h = mount(type);
+    const wheel = (pan: boolean) => {
+      const prevented = vi.fn(), before = h.chart.getVisibleLogicalRange();
+      h.el.dispatch('wheel', { clientX: 400, clientY: 300, deltaX: pan ? 60 : 0,
+        deltaY: pan ? 0 : -100, deltaMode: 0, preventDefault: prevented });
+      return { changed: JSON.stringify(before) !== JSON.stringify(h.chart.getVisibleLogicalRange()), prevented: prevented.mock.calls.length };
+    };
+    for (const pan of [false, true]) for (const zoom of [false, true]) {
+      applyChartSettings(h.chart, { 'navigation.panEnabled': pan, 'navigation.zoomEnabled': zoom });
+      expect(wheel(true)).toEqual({ changed: pan, prevented: Number(pan) });
+      expect(wheel(false)).toEqual({ changed: zoom, prevented: Number(zoom) });
+    }
+    h.chart.destroy();
+  });
 
   it('keeps watermark styling dormant by default and applies it when enabled', () => {
     const h = mount('candlestick', false);

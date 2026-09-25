@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { installDom } from './fake-dom.js';
 import {
-  initMobile, initRail, magnetMode, setMagnetMode, syncMobileControls, zoomVisibleRange,
+  initMobile, initRail, magnetMode, setMagnetMode, syncMobileControls, observeMobileControls, focusChart, zoomVisibleRange,
 } from '../src/rail.js';
 import { chartMotionOptions } from '../src/ui.js';
 
@@ -59,6 +59,8 @@ function setup() {
   const { document: doc, stage } = page;
   const mobile = add(doc, stage, 'div', 'mobilebar');
   const tool = add(doc, mobile, 'select', 'mobile-draw');
+  add(doc, doc.body, 'button', 'fit');
+  add(doc, doc.body, 'button', 'toolbar-fit');
   for (const id of ['mobile-cursor', 'mobile-undo', 'mobile-redo', 'mobile-magnet', 'mobile-zoom-out', 'mobile-zoom-in', 'mobile-fit']) {
     add(doc, mobile, 'button', id);
   }
@@ -98,6 +100,69 @@ describe('chart motion options', () => {
 });
 
 describe('compact controls', () => {
+  const motionControls = ['mobile-zoom-in', 'mobile-zoom-out', 'mobile-fit', 'toolbar-fit'];
+  const assertControls = (doc, disabled, primaryDisabled = disabled) => {
+    for (const id of [...motionControls, 'fit']) {
+      const expected = id === 'fit' ? primaryDisabled : disabled;
+      expect(doc.getElementById(id).disabled, id).toBe(expected);
+      expect(doc.getElementById(id).getAttribute('aria-disabled'), id).toBe(String(expected));
+    }
+  };
+
+  it('updates disabled and accessible states immediately when the selected policy changes', () => {
+    const { document: doc, app } = setup();
+    let zoomEnabled = true; app.chart.navigationOptions = () => ({ zoomEnabled });
+    syncMobileControls(null); assertControls(doc, false);
+    zoomEnabled = false; app.chart.emit('objects:change'); assertControls(doc, true);
+    for (const id of ['mobile-fit', 'mobile-zoom-in', 'mobile-zoom-out']) doc.getElementById(id).click();
+    expect(app.chart.resetScale).not.toHaveBeenCalled();
+    expect(app.chart.setVisibleLogicalRange).not.toHaveBeenCalled();
+    expect(doc.getElementById('mobile-cursor').disabled).toBe(false);
+    zoomEnabled = true; app.chart.emit('objects:change'); assertControls(doc, false);
+    doc.getElementById('mobile-fit').click(); expect(app.chart.resetScale).toHaveBeenCalledOnce();
+  });
+
+  it('keeps selected controls and primary-only Fit attached to their own policies', () => {
+    const { document: doc, app } = setup();
+    let primaryEnabled = false;
+    app.chart.navigationOptions = () => ({ zoomEnabled: primaryEnabled });
+    app.chart2.navigationOptions = () => ({ zoomEnabled: true });
+    app.chart.emit('objects:change'); assertControls(doc, true);
+    focusChart(2); assertControls(doc, false, true);
+    primaryEnabled = true; app.chart.emit('objects:change'); assertControls(doc, false, false);
+    primaryEnabled = false; app.chart.emit('objects:change'); assertControls(doc, false, true);
+    focusChart(1); assertControls(doc, true);
+  });
+
+  it('follows restore and ignores obsolete policy values from replaced charts', () => {
+    const { document: doc, app } = setup(), old = app.chart;
+    old.navigationOptions = () => ({ zoomEnabled: false });
+    old.emit('state:restore:end'); assertControls(doc, true);
+    app.chart = fakeChart(); app.chart.navigationOptions = () => ({ zoomEnabled: true });
+    observeMobileControls(app.chart, app.draw); syncMobileControls(null); assertControls(doc, false);
+    old.emit('objects:change'); old.emit('state:restore:end'); assertControls(doc, false);
+    app.chart.isDestroyed = true; app.chart.emit('destroy'); assertControls(doc, true);
+  });
+
+  it('observes navigation on a chart without a drawing controller and disables unavailable targets', () => {
+    const { document: doc, app } = setup();
+    app.chart = fakeChart(); app.draw = null;
+    let zoomEnabled = true; app.chart.navigationOptions = () => ({ zoomEnabled });
+    observeMobileControls(app.chart, null); syncMobileControls(null); assertControls(doc, false);
+    zoomEnabled = false; app.chart.emit('objects:change'); assertControls(doc, true);
+    app.chart = null; syncMobileControls(null); assertControls(doc, true);
+    app.chart = fakeChart(); syncMobileControls(null); assertControls(doc, false);
+  });
+
+  it('can attach drawing history after navigation was observed without a controller', () => {
+    const { document: doc, app } = setup();
+    app.chart = fakeChart(); app.draw = null; observeMobileControls(app.chart, null);
+    syncMobileControls(null); expect(doc.getElementById('mobile-undo').disabled).toBe(true);
+    app.draw = fakeDraw(); observeMobileControls(app.chart, app.draw);
+    app.draw.history.undo = true; app.chart.emit('draw:add');
+    expect(doc.getElementById('mobile-undo').disabled).toBe(false);
+  });
+
   it('routes drawing controls to the existing controller and keeps their state current', () => {
     const { tool, document: doc, app } = setup();
     expect(tool.children.length).toBeGreaterThan(20);

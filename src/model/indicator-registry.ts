@@ -394,6 +394,17 @@ export type IndicatorDrawing =
       /** Caption drawn on a plate at the centre of the box; `\n` splits lines. */
       text?: string;
       textColor?: string;
+      /** Positive finite CSS pixels. Defaults to 11. */
+      fontSize?: number;
+      /** CSS font-family list. Defaults to ui-sans-serif, system-ui, sans-serif. */
+      fontFamily?: string;
+      bold?: boolean;
+      italic?: boolean;
+      /** Multiline row alignment inside the plate. Defaults to left. */
+      textAlign?: 'left' | 'center' | 'right';
+      /** Plate placement inside the box. Defaults to center and middle. */
+      align?: 'left' | 'center' | 'right';
+      verticalAlign?: 'top' | 'middle' | 'bottom';
       /**
        * Detail shown on a plate while the pointer rests on the box, and gone
        * when it leaves; `\n` splits lines. A zone that carries its size, its
@@ -414,8 +425,18 @@ export type IndicatorDrawing =
       /** Plate fill. */
       color?: string;
       textColor?: string;
+      /** Positive finite CSS pixels. Defaults to 11. */
+      fontSize?: number;
+      /** CSS font-family list. Defaults to ui-sans-serif, system-ui, sans-serif. */
+      fontFamily?: string;
+      bold?: boolean;
+      italic?: boolean;
+      /** Multiline row alignment inside the plate. Defaults to left. */
+      textAlign?: 'left' | 'center' | 'right';
       /** Which edge of the plate sits on the anchor. Defaults to 'center'. */
       align?: 'left' | 'center' | 'right';
+      /** Which vertical plate edge sits on the anchor. Defaults to middle. */
+      verticalAlign?: 'top' | 'middle' | 'bottom';
       /** Hover detail, as on a box. */
       tooltip?: string;
       /** Hit id, for `subscribeClick`. Defaults to the tooltip text. */

@@ -531,7 +531,7 @@ initMenus(app);
 // Wrapped, not passed: `load` now takes options, and handing it straight to
 // addEventListener would pass a MouseEvent as the options bag.
 el('load').addEventListener('click', () => load());
-el('fit').addEventListener('click', () => { if (app.chart) app.chart.resetScale(); });
+el('fit').addEventListener('click', () => { if (app.chart && app.chart.navigationOptions?.().zoomEnabled !== false) app.chart.resetScale(); });
 el('symbol').addEventListener('keydown', (e) => { if (e.key === 'Enter') load(); });
 // Export the full chart (all layers composited) - native right-click "Save image"
 // only grabs the canvas under the pointer (the transparent crosshair overlay).

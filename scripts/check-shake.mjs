@@ -130,7 +130,9 @@ const BUNDLE = new URL('../dist/openalgo-charts.mjs', import.meta.url).pathname.
 // Smooth study paths add cubic geometry and local clipping, shared by SVG.
 // These remain available to raw-chart hosts without loading optional tiers.
 // The final measurement is 71.78 KiB, up 1.07 KiB from the typed-input batch.
-const LIMIT_BYTES = 71.9 * 1024;
+// Independent user navigation and native annotation text styles remain in base.
+// Their measured chart-only build is 73.26 KiB; optional host tiers still disappear.
+const LIMIT_BYTES = 73.4 * 1024;
 
 // Absent from a chart-only build. Each is a string that appears in the adapter
 // source and nowhere in the rendering core.

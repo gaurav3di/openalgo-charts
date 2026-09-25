@@ -583,6 +583,63 @@ chart.addIndicator('demo-curved-study');
 chart.setVisibleLogicalRange({ from: -2, to: 38 });
 return chart;`} />
 
+### Study annotation typography
+
+Label and box captions can choose a font, emphasis and multiline row alignment.
+Marker text has its own color and font while the glyph keeps its original size.
+The button changes both captions and marker text through the study's settings.
+
+<RunnableExample height={390} code={`const controls = document.createElement('div');
+controls.style.cssText = 'position:absolute;left:10px;top:10px;right:64px;z-index:5';
+controls.addEventListener('pointerdown', event => event.stopPropagation());
+el.style.position = 'relative';
+el.appendChild(controls);
+const surface = document.createElement('div');
+surface.style.cssText = 'position:absolute;inset:48px 0 0';
+el.appendChild(surface);
+const chart = lib.createChart(surface, { branding: false });
+const bars = lib.generateBars(1700000000, 80, 60);
+chart.addSeries('line').setData(bars);
+lib.registerIndicator({
+  id: 'demo-annotation-typography', name: 'Annotation type', placement: 'onchart',
+  inputs: [{ key: 'large', type: 'boolean', label: 'Large type', default: false }],
+  plots: [{ key: 'value', title: 'Value', type: 'line', style: { color: 'transparent' } }],
+  calc: source => ({ value: source.map(bar => bar.close) }),
+  draws: ({ settings }) => {
+    const type = { fontSize: settings.large ? 19 : 13, fontFamily: 'ui-monospace, monospace',
+      bold: true, italic: true, textAlign: 'right' };
+    return [
+      { kind: 'label', at: { time: bars[14].time, price: 114 }, text: 'Session\\nreading',
+        color: '#27425e', textColor: '#e0f2fe', align: 'left', verticalAlign: 'top', ...type },
+      { kind: 'box', from: { time: bars[37].time, price: 107 }, to: { time: bars[66].time, price: 97 },
+        color: '#27425e', fillColor: '#27425e', opacity: 0.18, text: 'Price\\nzone',
+        textColor: '#e0f2fe', align: 'right', verticalAlign: 'bottom', ...type },
+    ];
+  },
+  markers: ({ settings }) => [{ time: bars[28].time, position: 'atPrice', price: 91,
+    shape: 'circle', size: 'small', color: '#ef5350', text: 'Signal\\ntext', textColor: '#a3e635',
+    fontSize: settings.large ? 19 : 13, fontFamily: 'ui-monospace, monospace', italic: true }],
+});
+const study = chart.addIndicator('demo-annotation-typography');
+chart.panes()[0].priceScale.setPriceRange({ min: 85, max: 120 });
+chart.panes()[0].priceScale.setAutoScale(false);
+chart.fitContent();
+const button = document.createElement('button');
+button.type = 'button'; button.textContent = 'Larger text';
+button.onpointerdown = () => button.focus({ preventScroll: true });
+button.onmousedown = event => {
+  event.preventDefault();
+  button.focus({ preventScroll: true });
+};
+button.style.cssText = 'padding:5px 9px;border:1px solid #64748b;border-radius:4px;background:#172033;color:#e2e8f0;font:12px sans-serif;cursor:pointer';
+button.onclick = () => {
+  const large = !study.settings().large;
+  study.setSettings({ large });
+  button.textContent = large ? 'Smaller text' : 'Larger text';
+};
+controls.appendChild(button);
+return chart;`} />
+
 ### A higher timeframe from the chart's own bars
 
 `securitySeries` folds the bars in view up to a coarser interval, one value per bar, so a

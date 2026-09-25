@@ -116,6 +116,7 @@ describe('event-sensitive finite window means', () => {
     const result = windowMean(observed, 500);
     expect(result.slice(0, 499).every(Number.isNaN)).toBe(true);
     expect(result.slice(499)).toEqual(Array(4501).fill(1));
-    expect(reads).toBe(4501 * 500);
+    // At most two validity reads per input accompany the current-window sums.
+    expect(reads).toBeLessThanOrEqual(4501 * 500 + 2 * data.length);
   });
 });

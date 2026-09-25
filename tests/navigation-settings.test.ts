@@ -267,7 +267,7 @@ describe('preferred visible bar count', () => {
     expect(chart.getVisibleLogicalRange()).toEqual({ from: -1, to: 203 });
     chart.setNavigationOptions({ defaultVisibleBars: 50 });
     chart.restoreState({ version: 1, navigation: { defaultVisibleBars: 'wrong', mousePan: 'wrong' } });
-    expect(chart.navigationOptions()).toEqual({ defaultVisibleBars: 50, mousePan: 'both' });
+    expect(chart.navigationOptions()).toEqual({ defaultVisibleBars: 50, mousePan: 'both', panEnabled: true, zoomEnabled: true });
     chart.setNavigationOptions({ defaultVisibleBars: Number.NaN });
     expect(chart.getVisibleLogicalRange()).toEqual({ from: 149, to: 203 });
     applyChartSettings(chart, { 'navigation.defaultVisibleBars': 0 });

@@ -4,6 +4,29 @@ All notable changes to OpenAlgo Charts.
 
 ## Unreleased
 
+- User panning and zooming can be enabled independently at runtime. The policy
+  covers plot and axis gestures, wheel, touch, keys, navigation buttons and user
+  reset/fit actions, and cancels active motion. Both hosts expose and persist the
+  settings. Programmatic view changes, drawing edits and chart picks remain usable.
+- Hover navigation buttons finish fading when the pointer stops moving, so an
+  idle chart does not leave them too faint to click. Native image capture pauses
+  the fade, and detachment or destruction stops its frame requests.
+- Navigation and annotation examples keep button focus from scrolling the page
+  during a click after chart interaction, while retaining keyboard activation.
+- Study labels, box captions and marker text support independent size, font,
+  emphasis and multiline alignment. Marker text can use its own color. Omitted
+  styles preserve existing rendering; styled annotations stay inside the plot.
+- Default scalar SMA and rolling sums use fresh chronological windows. Expired
+  gaps and overflow no longer poison later sums, and rounded contributions from
+  old bars cannot create false crossover signals. This requires work proportional
+  to bars times period; explicit missing-value and varying-length SMA policies
+  retain their separate compensated arithmetic.
+- Default scalar weighted averages, population deviations and absolute deviations
+  also accumulate oldest first and omit nonfinite results. This aligns their
+  rounding and composed band calculations with the companion engines.
+- CPR keeps a period unavailable if any high or low is nonfinite. It recovers
+  after the next complete period, preserving the existing session and calendar
+  boundaries and final-close convention.
 - Study polylines support smooth interpolation through their time and price
   anchors. Curves follow the selected scale, preserve open or closed paths and
   stay clipped to the plot in canvas and SVG output.

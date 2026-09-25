@@ -262,12 +262,14 @@ function pivotColumns(
         prevHigh = curHigh;
         prevLow = curLow;
         prevClose = curClose;
-        curHigh = NaN;
-        curLow = NaN;
       }
       const bar = bars[i];
-      curHigh = Number.isFinite(curHigh) ? Math.max(curHigh, bar.high) : bar.high;
-      curLow = Number.isFinite(curLow) ? Math.min(curLow, bar.low) : bar.low;
+      const high = Number.isFinite(bar.high) ? bar.high : NaN;
+      const low = Number.isFinite(bar.low) ? bar.low : NaN;
+      // An unknown extreme invalidates this period; only a boundary can seed again.
+      const starts = i === 0 || opensFrame[i];
+      curHigh = starts ? high : Math.max(curHigh, high);
+      curLow = starts ? low : Math.min(curLow, low);
       curClose = bar.close;
       if (!Number.isFinite(prevHigh) || !Number.isFinite(prevLow) || !Number.isFinite(prevClose)) continue;
 

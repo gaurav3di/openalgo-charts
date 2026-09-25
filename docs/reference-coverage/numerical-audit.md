@@ -90,7 +90,48 @@ Differences include arithmetic order, gaps and documented algorithm choices;
 the count does not mean every difference is a calculation defect. Neither a
 relative tolerance nor two identically absent outputs establishes agreement.
 
+A later source refresh after the chronological-window and CPR corrections runs
+all 1,148 existing cases against their recorded compiled outputs. It compares
+1,286,742 aligned cells: the recorded companion outputs still agree exactly,
+while 135 native output columns differ in at least one case. Another 99 columns
+agree across varied finite values, 28 have only one distinct finite value and
+four have no finite observations in this corpus. These last two categories are
+not evidence of numerical equivalence. This refresh does not rerun compilation,
+calendar-table oracles or causal marker timing. Remaining differences include
+ordinary last-bit arithmetic, missing observations and distinct algorithms.
+
 ## Confirmed boundary corrections
+
+Default positive safe-integer scalar SMA and rolling sums now add each current
+window oldest first. Only missing-observation counts are carried between windows.
+Nonfinite sums remain unavailable; SMA divides the finite sum once. A singleton
+window retains its finite input and normalizes signed zero. This fixes both
+expired-overflow poisoning and an ordinary finite cancellation example that
+previously created a false MA Cross signal. Explicit SMA options, including an
+empty options object, and varying-length windows retain their separate compensated
+arithmetic. Unsupported scalar-period behavior is unchanged.
+
+The correction passes 535 focused tests. Nine compiled cases compare 64 cells
+exactly against both companion engines. Work is proportional to bars times period,
+with constant extra working storage excluding the returned array. At 20,000 bars,
+recorded medians are 0.33 ms for SMA length 9 and 17.71 ms for length 1,000; MA Cross
+takes 1.68 ms at defaults and 38.49 ms with both lengths at 1,000. These measured
+costs do not change performance budgets or constitute timing guarantees.
+
+Default scalar weighted averages, population deviations and absolute deviations
+also accumulate terms oldest first and normalize nonfinite final readings. Their
+separate compensated option and varying-length paths remain unchanged. The
+correction passes 231 focused tests and 147 exact native/npm/Python cells through
+nine newly executed compiled programs, including ordinary last-bit differences,
+weighted cancellation, overflow, missing observations and recovery.
+
+CPR seeds high and low only at the existing session or calendar boundaries. A
+nonfinite extreme invalidates the whole period; later finite observations cannot
+erase it. The next complete period recovers normally. The final close remains
+the period's close, and existing display flags and formulas are unchanged. The
+correction passes 165 focused tests and matches 270 recorded compiled cells in
+the independently specified incomplete-period fixture. The compiled composition
+uses explicitly matched boundaries, not a general exchange-calendar guarantee.
 
 Balance of Power now omits nonfinite numerators, ranges and ratios while
 preserving finite ordinary results and recovery on the following bar.

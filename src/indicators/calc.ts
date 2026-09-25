@@ -8,8 +8,8 @@
  * `ema`, `rsi`, `atr`, `trueRange`, and `supertrend` are NOT re-implemented
  * here — they ship in the base bundle and the tier imports them from it.
  *
- * For helpers accepting missing-value options, omitted options keep the
- * established calculation. Supplied options treat NaN and infinities as
+ * For helpers accepting missing-value options, omitted options use each
+ * helper's documented default. Supplied options treat NaN and infinities as
  * missing. An empty options object selects chronological propagation.
  *
  * Varying window lengths must align with the source. Each bar uses its own
@@ -22,6 +22,7 @@
  */
 
 import type { NumericalWindowOptions } from './statistics';
+import { windowMean, windowSum } from './window-mean';
 
 interface Observation { value: number; index: number }
 
@@ -238,7 +239,10 @@ function observedSmoothing(
 }
 
 /**
- * Simple moving average. Without options the legacy calculation is unchanged.
+ * Simple moving average. Valid scalar windows without options sum oldest first
+ * afresh, then divide once. Missing or overflowing sums produce NaN and recover
+ * when they expire. This uses O(n * period) time and O(1) extra working storage.
+ * Unsupported scalar periods retain their historical behavior.
  * Supplied `skip` collects period finite observations and holds across gaps;
  * `propagate` (also the default for {}) requires a complete chronological
  * window. Warmup is NaN. Option-path periods must be positive safe integers;
@@ -250,6 +254,9 @@ export function sma(values: readonly number[], period: number | readonly number[
 export function sma(values: readonly number[], period: number | readonly number[], options?: NumericalWindowOptions): number[] {
   if (typeof period !== 'number') return varyingWindows(values, period, options, observationMean);
   if (options !== undefined) return observationWindows(values, period, options, observationMean);
+  if (Number.isSafeInteger(period) && period > 0) return windowMean(values, period);
+  // Unsupported scalar periods retain their historical behavior. Valid windows
+  // above sum afresh, so an expired prefix cannot invent a numerical signal.
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0 || n < period) return out;
@@ -276,7 +283,8 @@ export function sma(values: readonly number[], period: number | readonly number[
 
 /**
  * Linearly weighted average, newest observation carrying weight period.
- * Omitted options preserve the legacy result. Supplied `skip` weights period
+ * Valid scalar defaults sum weighted terms oldest first and omit nonfinite
+ * results. Supplied `skip` weights period
  * finite observations and holds across gaps; `propagate` requires a full
  * chronological window. Warmup is NaN. The option path validates a positive
  * safe-integer period and a missing policy, throwing RangeError or TypeError.
@@ -294,10 +302,15 @@ export function wma(values: readonly number[], period: number | readonly number[
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0 || n < period) return out;
   const denom = (period * (period + 1)) / 2;
+  const chronological = Number.isSafeInteger(period);
   for (let i = period - 1; i < n; i++) {
     let acc = 0;
-    for (let k = 0; k < period; k++) acc += values[i - k] * (period - k);
-    out[i] = acc / denom;
+    for (let k = 0; k < period; k++) {
+      const back = chronological ? period - 1 - k : k;
+      acc += values[i - back] * (period - back);
+    }
+    const value = acc / denom;
+    if (!chronological || Number.isFinite(value)) out[i] = value;
   }
   return out;
 }
@@ -328,7 +341,8 @@ export function rma(values: readonly number[], period: number, options?: Numeric
 }
 
 /**
- * Population standard deviation. Omitted options preserve legacy behavior.
+ * Population standard deviation. Valid scalar defaults accumulate squared
+ * deviations oldest first and omit nonfinite results.
  * Supplied `skip` uses period finite observations and holds across gaps;
  * `propagate` requires a full chronological window. Ties retain multiplicity;
  * warmup is NaN. Invalid option-path periods throw RangeError, malformed
@@ -346,14 +360,16 @@ export function stdev(values: readonly number[], period: number | readonly numbe
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0 || n < period) return out;
   const means = sma(values, period);
+  const chronological = Number.isSafeInteger(period);
   for (let i = period - 1; i < n; i++) {
     let acc = 0;
     const m = means[i];
     for (let k = 0; k < period; k++) {
-      const d = values[i - k] - m;
+      const d = values[i - (chronological ? period - 1 - k : k)] - m;
       acc += d * d;
     }
-    out[i] = Math.sqrt(acc / period);
+    const value = Math.sqrt(acc / period);
+    if (!chronological || Number.isFinite(value)) out[i] = value;
   }
   return out;
 }
@@ -473,8 +489,9 @@ export function roc(values: readonly number[], n: number): number[] {
 }
 
 /**
- * Mean absolute deviation from the average. Omitted options preserve legacy
- * behavior. Supplied `skip` uses period finite observations and holds across
+ * Mean absolute deviation from the average. Valid scalar defaults accumulate
+ * deviations oldest first and omit nonfinite results.
+ * Supplied `skip` uses period finite observations and holds across
  * gaps; `propagate` requires a full chronological window. Ties retain their
  * multiplicity and warmup is NaN. Invalid option-path periods throw RangeError,
  * malformed options TypeError. Periods must be positive safe integers.
@@ -491,10 +508,12 @@ export function dev(values: readonly number[], period: number | readonly number[
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0 || n < period) return out;
   const means = sma(values, period);
+  const chronological = Number.isSafeInteger(period);
   for (let i = period - 1; i < n; i++) {
     let acc = 0;
-    for (let k = 0; k < period; k++) acc += Math.abs(values[i - k] - means[i]);
-    out[i] = acc / period;
+    for (let k = 0; k < period; k++) acc += Math.abs(values[i - (chronological ? period - 1 - k : k)] - means[i]);
+    const value = acc / period;
+    if (!chronological || Number.isFinite(value)) out[i] = value;
   }
   return out;
 }
@@ -639,8 +658,14 @@ function extremeBars(values: readonly number[], period: number, wantHigh: boolea
   return out;
 }
 
-/** the reference `sum`: rolling sum over `period` bars. NaN during warmup. */
+/**
+ * Fresh oldest-first sum over each complete finite window; NaN on warmup or
+ * overflow. Missing values expire with the window. Valid integer periods use
+ * O(n * period) time and O(1) extra working storage, excluding the result.
+ * Unsupported scalar periods retain their historical behavior.
+ */
 export function rollingSum(values: readonly number[], period: number): number[] {
+  if (Number.isSafeInteger(period) && period > 0) return windowSum(values, period);
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0 || n < period) return out;

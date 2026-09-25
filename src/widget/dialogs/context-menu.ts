@@ -348,7 +348,9 @@ export function contextMenuEntries(ctx: WidgetContext, e: ContextMenuEvent, hook
   }
 
   sep();
-  out.push({ id: 'chart-fit', label: widgetText(ctx, 'Fit all bars'), icon: glyphSvg(FIT_GLYPH), run: () => { chart.fitContent(); } });
+  out.push({ id: 'chart-fit', label: widgetText(ctx, 'Fit all bars'), icon: glyphSvg(FIT_GLYPH),
+    disabled: chart.navigationOptions().zoomEnabled === false,
+    run: () => { if (chart.navigationOptions().zoomEnabled !== false) chart.fitContent(); } });
   if (target.kind !== 'time-scale') {
     out.push({ id: 'chart-indicators', label: widgetText(ctx, 'Indicators...'), run: () => { mountIndicatorPicker(ctx); } });
   }

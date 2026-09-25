@@ -219,6 +219,11 @@ legend alike. Only colour keys you leave unset are filled, so
 `chart.addIndicator('ema', { color: '#123456' })` always wins, and the first
 instance keeps whatever the descriptor chose.
 
+For `cpr`, every high and low in the prior period must be finite. One nonfinite
+extreme invalidates that period until the next existing session or calendar
+boundary; a complete subsequent period recovers. Only the final close is used.
+This does not change the existing schedule, display controls or pivot formulas.
+
 ## VWAP
 
 `vwap` is a volume-weighted average with a resettable anchor and three optional
@@ -326,6 +331,26 @@ clears its markers too.
 the widest one, staying centred on its anchor so the tail still points at the bar; a free
 `text` marker writes its rows outward from the anchor, so a block above a bar grows upward
 instead of back over the candle.
+
+Marker text can have its own `textColor`, `fontSize`, `fontFamily`, `bold`, `italic`
+and `textAlign`. Size is positive finite CSS pixels; family is a nonempty CSS
+font-family list. These fields do not change the glyph color, preset size or
+anchor. With no overrides, label plates keep contrasting semibold text and other
+shapes keep normal text in the glyph color. `bold: false` removes a label plate's
+semibold weight. Default text size is `max(9, markerSizePx(size))`, and the default
+family is `system-ui, sans-serif`.
+
+`textAlign: 'left' | 'center' | 'right'` aligns multiline rows inside a block that
+stays centered on the marker; omitted means center. Opted-in text styles use their
+measured bounds and clip paint and hits to the plot. Hit targets retain the 8px
+anchor radius. Invalid new fields reject an entire `setMarkers` replacement
+before mutation. Replacing or detaching the marker layer clears old hit positions.
+
+```ts
+{ time: bar.time, position: 'belowBar', shape: 'circle', size: 'small',
+  color: '#ef5350', text: 'Signal\nConfirmed', textColor: '#dce7ff',
+  fontSize: 14, fontFamily: 'ui-monospace, monospace', italic: true }
+```
 
 Six built-ins use the hook:
 
@@ -544,6 +569,8 @@ Four kinds. Every colour defaults to the theme's axis ink, and every anchor is a
 | `lineWidth` | `number?` | Media px, default 1. |
 | `text` | `string?` | Caption on a plate at the centre of the box; `\n` splits lines. |
 | `textColor` | `string?` | Derived from the plate colour for contrast when omitted. |
+| `align` | `'left' \| 'center' \| 'right'?` | Caption plate placement within the box; default center. |
+| `verticalAlign` | `'top' \| 'middle' \| 'bottom'?` | Caption plate placement within the box; default middle. |
 
 **`kind: 'label'`**
 
@@ -554,6 +581,25 @@ Four kinds. Every colour defaults to the theme's axis ink, and every anchor is a
 | `color` | `string?` | Plate fill. |
 | `textColor` | `string?` | Contrast-derived when omitted. |
 | `align` | `'left' \| 'center' \| 'right'?` | Which edge of the plate sits on the anchor. Default `center`. |
+| `verticalAlign` | `'top' \| 'middle' \| 'bottom'?` | Which vertical plate edge sits on the anchor. Default `middle`. |
+
+Both labels and box captions accept these typography fields:
+
+| Field | Default | Description |
+|---|---|---|
+| `fontSize` | `11` | Positive finite CSS pixels. |
+| `fontFamily` | `ui-sans-serif, system-ui, sans-serif` | Nonempty CSS font-family list. |
+| `bold` / `italic` | `false` | Font weight and slant. |
+| `textAlign` | `left` | Left, center or right alignment of rows inside the measured plate. |
+
+`textAlign` changes the rows, while `align` and `verticalAlign` position the whole
+plate. Measurement and drawing use the same font. A caption may still be larger
+than its box. Opted-in typography or placement uses measured culling and clips
+paint and hit targets to the plot in canvas and SVG. Omitted fields retain the
+original rendering. New malformed fields reject `setItems` atomically; accepted
+replacement, hiding or detaching clears old hit rectangles. Hover detail keeps
+its separate default font. These are canvas text strings, without HTML parsing
+or DOM font loading.
 
 **`kind: 'polyline'`**
 
@@ -1467,19 +1513,21 @@ removing the indicator disposes them. Invalid or duplicate IDs reject the table
 update and publish an error status without replacing existing grids. The single
 `table` hook remains supported. See the [live example](/examples#computed-fills-and-multiple-summary-grids).
 
-Input types are `number`, `boolean`, `color`, `text`, `select`, `source`, and since 2.4.0
-`interval` and `time`. A `source` input picks a price series; `INDICATOR_SOURCES` is the
+The [typed study input inventory](#typed-study-inputs) covers scalar, source,
+symbol, session and interactive inputs. A `source` input picks a price series;
+`INDICATOR_SOURCES` is the
 canonical option list for a UI. An `interval` holds a timeframe code the engine can bucket
 by (the widget renders a select over the built-in tokens and the registered codes, with an
 empty first entry for the chart's own interval); a `time` holds a wall-clock string in the
 chart's zone, `YYYY-MM-DD HH:MM`, which `zonedStringToUtcSeconds` turns into a bar time.
 
 <Callout type="warning">
-**`calcTail` matters for live charts.** Without it every incoming tick costs a full
-recompute, a few hundred microseconds for one indicator over 50k bars, but O(n) per tick
-*per indicator*. Implement it for anything meant to run in a busy live pane: return values
-for `[fromIndex, bars.length)` and the runtime splices them onto the previous result, or
-return `null` to fall back to a full `calc`.
+**Use `calcTail` when a full calculation is expensive.** Calculations are scheduled
+with rendering, so several ticks can share one calculation. Work depends on the
+formula and loaded history; fresh window calculations can cost O(n * period).
+A tail implementation returns values for `[fromIndex, bars.length)` and the runtime
+splices them onto the previous result. Return `null` to fall back to a full `calc`.
+Always recalculate the forming bar rather than reusing its previous value.
 
 The runtime only offers you the tail path when the previous result still describes every
 bar before it: the first bar's time must be unchanged, and the last bar must be either
@@ -1791,9 +1839,21 @@ bundle and the tier imports them from it, so they come from `openalgo-charts`.
 The existing `sma`, `wma`, `rma`, `smaSeededEma`, `stdev`, `dev`, `highest`,
 `lowest`, `highestBars`, `lowestBars` and `percentRank` helpers accept an optional
 final `NumericalWindowOptions` argument. With a scalar period, omitting it
-preserves existing behavior.
+selects each helper's default calculation and warmup behavior.
 Passing `{}` selects `missing: 'propagate'`; passing `{ missing: 'skip' }` selects
 finite-observation windows.
+
+Default `sma(values, period)` and `rollingSum(values, period)` with positive
+safe-integer scalar periods sum each current window chronologically, requiring
+finite inputs and a finite sum. SMA divides once after summation. Gaps and
+overflow expire with their window, so later valid windows recover. These paths
+use O(bars * period) time and O(1) extra space excluding output. Explicit SMA
+options, including `{}`, and varying-length SMA keep their separate compensated
+policy. Unsupported scalar periods retain their existing behavior.
+
+Default scalar `wma`, `stdev` and `dev` with valid periods accumulate their window
+terms oldest first and omit nonfinite final results. Explicit options, varying
+lengths and unsupported periods keep their existing behavior.
 
 With options, NaN and infinities are missing. Propagation requires a complete
 chronological finite window. Skip collects `period` finite observations and holds
