@@ -14,11 +14,18 @@ All notable changes to OpenAlgo Charts.
   exchange, charts shown again after the compact view take the linked window,
   discrete changes are saved before the task ends, and a stored desk that fails
   to restore is kept and reported through `restored()` and a toast instead of
-  being overwritten. `WidgetOptions.keyboardRoute` lets any multi-widget host
+  being overwritten. After a linked pan or zoom a resize keeps each chart on
+  the window it showed, so charts following new bars keep following them and
+  stay in step; the linked window moves with the navigated chart's new bars and
+  is dropped when viewport linking is switched on again. `feed` may be a
+  function that builds each chart's feed from its pane id and saved
+  `historyPeriod`, which the grid keeps, copies to charts a preset adds and
+  writes back. `WidgetOptions.keyboardRoute` lets any multi-widget host
   decide which widget answers a key, including through a shared
   `ShortcutManager`, and keeps a `global` shortcut scope. The yfinance reference
-  host gains a grid view, and its main page hands over layouts it cannot draw
-  after checking the grid view can open them.
+  host gains a grid view that loads each layout's saved history period; its
+  main page hands over layouts it cannot draw after checking the grid view can
+  open them, and opens the one or two chart layouts the grid view exports.
 - CSV export supports explicit study instances, inclusive UTC ranges and
   display-aligned plot values with effective runtime offsets. Candle plots expand
   into OHLC fields; projected times are identified without exposing future replay

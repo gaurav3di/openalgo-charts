@@ -36,6 +36,22 @@ Every other `WidgetOptions` field applies to each chart. `symbol`, `exchange`,
 copies the active chart's instrument. Cells use desktop controls unless you pass
 `mobile`, because a chart in a split is often narrower than the phone threshold.
 
+`feed` can also be a function, called once for each chart as it is built with its
+pane id and the `historyPeriod` its workspace pane saved. Use it when your source
+answers by a named period rather than a time window, and return one feed object for
+every chart that loads the same period, so those charts still share requests.
+
+```ts
+const feeds = new Map();
+const grid = createChartGrid('#desk', {
+  feed: ({ historyPeriod = '1y' }) => {
+    if (!feeds.has(historyPeriod)) feeds.set(historyPeriod, periodFeed(historyPeriod));
+    return feeds.get(historyPeriod);
+  },
+  symbol: 'RELIANCE', exchange: 'NSE', interval: '1d',
+});
+```
+
 ## Presets and splitters
 
 | Preset | Rows by columns |
@@ -80,9 +96,14 @@ symbol is the symbol and the exchange together, so moving a chart from one excha
 listing to another's, with the same ticker, moves the linked charts too. A view that
 moves only because a chart received new bars stays local, so a follower on a
 different interval is not squeezed into a sliver; linked views converge on the next
-pan or zoom. The linked window is kept as a span of time, and a chart that is measured
-again, because it comes back from behind the compact tabs or is resized, takes that
-window. See
+pan or zoom. The linked window is kept as a span of time, read from the chart you last
+navigated, and it moves along with that chart's new bars. Once charts share a window,
+a resize keeps each of them on it: the right edge stays where it was, so a chart
+following new bars keeps following them, and the number of bars across is kept rather
+than the bar width, so charts of different widths still agree. A chart that comes back
+from behind the compact tabs takes the linked window. The window is forgotten when its
+chart changes instrument or is removed, and when viewport linking is switched on,
+which starts without one until the next pan or zoom. See
 [Chart linking](/docs/chart-linking) for how time, not bar index, crosses charts.
 
 ## Workspaces
@@ -97,14 +118,16 @@ if (!report.applied) console.warn(report.reason);        // nothing on screen ch
 
 `getWorkspace()` returns a plain JSON `WorkspacePayload`: rows, columns, slots,
 weights, preset, the active pane, sync switches and each chart's instrument, chart
-type, chart state, theme (`settings['widget.theme']`) and drawing magnet and stay. A
+type, chart state, theme (`settings['widget.theme']`), drawing magnet and stay, and
+`historyPeriod` when the chart has one. The grid keeps a pane's `historyPeriod` and
+copies it to the charts a larger preset adds; a `feed` function is what loads it. A
 widget draws no separate volume series and no comparisons, so `volume` is written
 false and `comparisons` empty.
 
 `applyWorkspace(payload)` is all or nothing. It first checks the whole payload: grid
 size, slots and overlap, weights, intervals and chart types this build knows,
-registered studies, no comparison symbols, and linked symbols or intervals that
-agree. It then builds and restores every new chart off screen. On the first failure
+registered studies, history periods that are text, no comparison symbols, and linked
+symbols or intervals that agree. It then builds and restores every new chart off screen. On the first failure
 it destroys the new charts, which cancels their history requests, and returns
 `{ applied: false, reason }` with the old charts exactly as they were. Validate
 untrusted files with `parseWorkspacePayload` first.
@@ -147,8 +170,10 @@ interval. Splitters hide. Widening the grid restores every chart with its weight
 ## Reference host
 
 The yfinance example has a grid view, `examples/yfinance/grid.html`, with preset and
-link controls, import and export of layout files, and persistence. The main page
-hands a layout it cannot draw (more than two charts, or rows) to the grid view from
-its Layouts dialog, after checking that the grid view can open it: a layout with
-comparison symbols or an interval the grid view does not load is refused on the main
-page, before it navigates.
+link controls, import and export of layout files, and persistence. Each chart loads
+the history period its layout saved, through a `feed` function. The main page hands a
+layout it cannot draw (more than two charts, or rows) to the grid view from its
+Layouts dialog, after checking that the grid view can open it: a layout with
+comparison symbols, an interval the grid view does not load or a history period its
+server does not know is refused on the main page, before it navigates. A one or two
+chart layout exported from the grid view opens on the main page in turn.

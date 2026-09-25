@@ -537,15 +537,22 @@ const report = grid.applyWorkspace(parseWorkspacePayload(fileText)); // { applie
 ```
 
 - `ChartGridOptions` is `WidgetOptions` (every cell's options) minus `keyboardRoute`,
-  plus `preset` (`ChartGridPreset`, default `1x1`), `links` (`LinkOptions`), `compactWidth`
+  with its own `feed` (below), plus `preset` (`ChartGridPreset`, default `1x1`), `links` (`LinkOptions`), `compactWidth`
   (default 640 CSS px, 0 off), and grid-level `persist`/`storage`. `symbol`, `exchange`,
   `interval` and `chartType` seed the first cell. Cells default to `mobile: 'never'`,
   because a cell in a split is often narrower than the phone threshold.
+- `feed` is one `DataFeed` for every chart, or a function
+  `(chart: { id, historyPeriod? }) => DataFeed` called once per chart as it is built, for a
+  source that answers by period: the grid keeps each pane's `historyPeriod` (from an
+  applied payload, or copied from the active chart when a preset adds charts) and writes
+  it back in `getWorkspace()`, but only such a function honours it. Return the same feed
+  object for charts that should share one request pool.
 - `CHART_GRID_PRESETS`: `1x1`, `1x2`, `1x3`, `2x1`, `3x1`, `2x2` as `[rows, columns]`.
   `setPreset` keeps surviving cells in reading order (same widget instances), builds new
   ones on the active chart's instrument, destroys the rest and resets weights. No span
   editing; spans from a saved payload are drawn and splitters stop where a span crosses.
-- `ChartGridCell` (`id`, `widget`, `element`, `row`, `column`, `rowSpan`, `columnSpan`);
+- `ChartGridCell` (`id`, `widget`, `element`, `row`, `column`, `rowSpan`, `columnSpan`,
+  `historyPeriod`);
   `cells()`, `active()`, `setActive(id, { focus })`, `layout()` (`ChartGridLayout`),
   `linkOptions()`, `setLinks(patch)` (switching symbol or interval on adopts the active
   chart's), `theme()`, `setTheme()`, `compact()`, `restored()`, `destroy()`.
@@ -572,16 +579,23 @@ const report = grid.applyWorkspace(parseWorkspacePayload(fileText)); // { applie
   can use it.
 - `getWorkspace()` returns a JSON `WorkspacePayload` that `parseWorkspacePayload` accepts:
   slots, weights, preset, active pane, sync, per-pane chart state, `settings['widget.theme']`,
-  rail magnet/stay. `volume` is written false and `comparisons` empty: a widget draws
-  neither. `applyWorkspace` checks the whole payload first (size, slots, overlap, weights,
-  intervals, chart types, studies, no comparisons, linked symbols or intervals that agree),
+  rail magnet/stay and `historyPeriod` when the chart has one. `volume` is written false
+  and `comparisons` empty: a widget draws neither. `applyWorkspace` checks the whole
+  payload first (size, slots, overlap, weights, intervals, chart types, studies, text
+  history periods, no comparisons, linked symbols or intervals that agree),
   builds and restores every new cell off screen, and on the first failure destroys them,
   aborting their history requests, and returns `{ applied: false, reason }` with the old
   cells untouched. Pass untrusted input through `parseWorkspacePayload` first.
 - Linked viewports ignore moves caused by freshly loaded bars, so a follower on another
   interval is not squeezed; views converge on the next pan or zoom. The linked window is
-  kept as times, and a chart measured again (shown from behind the compact tabs, or
-  resized) takes it. A linked symbol is the symbol and exchange together, so a change of
-  exchange alone (one ticker on NSE and BSE) reaches the followers.
+  kept as times, read from the chart last navigated, and moves with that chart's new
+  bars. After a linked navigation a resize keeps each chart on the window it showed: the
+  engine keeps the right edge, so a chart following new bars keeps following, and the
+  grid puts the span back rather than the bar width, so charts of different widths still
+  agree. A chart shown from behind the compact tabs takes the linked window. The window is
+  forgotten when its chart changes instrument or is removed, and when viewport linking
+  is switched on, which starts without one until the next pan or zoom. A linked symbol
+  is the symbol and exchange together, so a change of exchange alone (one ticker on NSE
+  and BSE) reaches the followers.
 - Below `compactWidth` only the active cell shows, with a tab strip to switch; splitters
   hide. `CHART_GRID_CSS` is part of `WIDGET_COMPONENT_CSS`.
