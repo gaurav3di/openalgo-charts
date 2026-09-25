@@ -11,7 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import { Chart } from '../src/core/chart';
 import { registerIndicator, IndicatorInputError } from '../src/model/indicator-registry';
-import type { IndicatorDescriptor, IndicatorDataStatus } from '../src/model/indicator-registry';
+import type { IndicatorDescriptor, IndicatorDataStatus, IndicatorAttachContext } from '../src/model/indicator-registry';
 import type { Bar } from '../src/model/bar';
 import { fakeDocument } from './helpers/fake-dom';
 
@@ -69,6 +69,62 @@ registerIndicator(LATER);
 registerIndicator(BROKEN);
 
 describe('recompute guard', () => {
+  it.each(['loading', 'unsupported', 'empty', 'error'] as const)('preserves newer lifecycle %s status when cached calculation recovers', state => {
+    let attachment!: IndicatorAttachContext;
+    let broken = false;
+    const descriptor: IndicatorDescriptor = {
+      ...FAILING, id: `guard-lifecycle-${state}`,
+      calc: b => {
+        if (broken) throw new Error('Rejected calculation');
+        return { v: b.map(item => item.close) };
+      },
+      attach: context => { attachment = context; },
+    };
+    registerIndicator(descriptor);
+    const { chart } = manualChart();
+    try {
+      const source = chart.addSeries('candlestick');
+      const data = bars(3);
+      source.setData(data);
+      const indicator = chart.addIndicator(descriptor.id);
+      source.update({ ...data[2], close: 110 });
+      broken = true;
+      attachment.requestRecompute();
+      expect(indicator.dataStatus()?.state).toBe('error');
+      const status: IndicatorDataStatus = state === 'error'
+        ? { state, error: new Error('Provider unavailable') } : { state };
+      attachment.setDataStatus!(status);
+      broken = false;
+      expect(indicator.values().v[2]).toBe(110);
+      expect(indicator.dataStatus()).toEqual(status);
+    } finally { chart.destroy(); }
+  });
+
+  it('restores the pending lifecycle status after a temporary calculation failure', () => {
+    let attachment!: IndicatorAttachContext;
+    let broken = false;
+    registerIndicator({
+      ...FAILING, id: 'guard-pending-lifecycle',
+      calc: b => {
+        if (broken) throw new Error('Temporary failure');
+        return { v: b.map(item => item.close) };
+      },
+      attach: context => { attachment = context; context.setDataStatus!({ state: 'loading' }); },
+    });
+    const { chart } = manualChart();
+    try {
+      const source = chart.addSeries('candlestick');
+      source.setData(bars(3));
+      const indicator = chart.addIndicator('guard-pending-lifecycle');
+      broken = true;
+      attachment.requestRecompute();
+      expect(indicator.dataStatus()?.state).toBe('error');
+      broken = false;
+      attachment.requestRecompute();
+      expect(indicator.dataStatus()?.state).toBe('loading');
+    } finally { chart.destroy(); }
+  });
+
   it('publishes a thrown calc as an error status and keeps the other studies computing', () => {
     fail = false;
     laterCalcs = 0;

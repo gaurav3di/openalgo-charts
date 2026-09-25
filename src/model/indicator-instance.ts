@@ -342,6 +342,8 @@ export class IndicatorInstance implements IndicatorApi {
   private _constructed = false;
   /** Whether the status currently published is a recompute failure of ours. */
   private _calcFailed = false;
+  /** A successful cached calculation cannot settle an unfinished provider lifecycle. */
+  private _lifecycleStatus: Readonly<IndicatorDataStatus> | null = null;
 
   public constructor(
     host: IndicatorHost,
@@ -950,7 +952,10 @@ export class IndicatorInstance implements IndicatorApi {
       dataContext: () => this._host.dataContext?.(),
       subscribeDataChanges: (listener) => this._host.subscribeDataChanges?.(listener) ?? (() => {}),
       signal: this._lifetime.signal,
-      setDataStatus: (status) => this._publishStatus(status),
+      setDataStatus: (status) => {
+        this._lifecycleStatus = Object.freeze({ ...status });
+        this._publishStatus(this._lifecycleStatus);
+      },
       setDataRetry: (retry) => { if (!this._removed) this._dataRetry = retry; },
       requestBars: (request) => {
         const provider = this._host.requestBars;
@@ -1121,7 +1126,7 @@ export class IndicatorInstance implements IndicatorApi {
     }
     if (this._calcFailed) {
       this._calcFailed = false;
-      this._publishStatus({ state: 'ready' });
+      this._publishStatus(this._lifecycleStatus ?? { state: 'ready' });
     }
   }
 

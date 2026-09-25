@@ -100,6 +100,23 @@ for the provider and lifecycle contract, and the
 [deferred-provider example](/examples#requested-snapshots-from-a-deferred-provider)
 for explicit update and confirmation controls.
 
+### External point studies during replay
+
+Raw-point studies created with `createTier2Indicator` are unsupported during
+native replay unless their descriptor sets `supportsReplay: true`. An opt-in
+loader receives `Tier2Context.asOf` and must return values as known at that finite
+cutoff, using point timestamps that represent availability. Raw `requestBars`
+remains unchanged; the loader must obtain historical versions from its own source.
+
+The wrapper stops live subscriptions during replay, filters points beyond the
+cutoff and replaces the full response on forward movement. Entering, leaving or
+seeking backward clears the old dataset and cancels obsolete work. Legacy replay
+without a finite availability clock remains unsupported, including for opted-in
+studies. Hosts without native request-state metadata keep their existing behavior.
+
+See [External point revisions and replay](/docs/indicators#native-revisions-and-replay-for-external-points)
+and the [runnable example](/examples#external-points-with-live-revisions).
+
 ## One clock across charts
 
 The yfinance reference host demonstrates this with a scope button in both the

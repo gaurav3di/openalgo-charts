@@ -16,7 +16,7 @@ The scope and ownership boundaries are in [design.md](design.md).
 - Chart baseline: `a1828e9ac948d2f9aebe0657f421987a85d6f2a7`.
 - Pinned script-engine revision: `833ce15f7ec1bb0ab8ae203b800c8858ce3b4339`.
 - Twelve confirmation regression cases, nine demonstrated failing before implementation.
-- Twelve compiled-program integration cases plus public descriptor typechecking.
+- Thirteen compiled-program integration cases plus public descriptor typechecking.
 - Measured chart-only build: baseline 55.58 KiB, confirmation fix 56.09 KiB, budget 56.25 KiB.
 
 The drop-in facade and additional feed adapter are excluded. No percentage of full capability coverage has been certified.
@@ -25,4 +25,4 @@ The implemented whole-study transaction follows [scale ownership](scale-ownershi
 
 ## Authorized release sequence
 
-After completing the native capability work, reproduce and fix the reported right-axis autoscale issue on the example host. Validate the final candidate, bump the package to 2.5.4, update the example host, website, API documentation and changelog, commit and push, publish the package and website, and create the matching release. Verify the published artifacts against the tested build. Publication is authorized by the user; incomplete capability work is not a release candidate.
+The reported right-axis autoscale issue is fixed and verified on the example host in three browser engines. Retain that regression check for the final candidate. After completing the native capability work, validate the package, bump it to 2.5.4, update the example host, website, API documentation and changelog, commit and push, publish the package and website, and create the matching release. Verify the published artifacts against the tested build. Publication is authorized by the user; incomplete capability work is not a release candidate.

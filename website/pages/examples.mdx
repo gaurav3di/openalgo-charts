@@ -594,6 +594,96 @@ chart.destroy = () => { disposed = true; unsubscribe(); destroy(); };
 render();
 return chart;`} />
 
+## External points with live revisions
+
+Release history to load the blue external series. Update same candle changes its
+forming value without adding a source timestamp. Revise history announces an
+external correction independently of price ticks. Replace provider clears the
+old dataset while the new response is pending. Each action uses a deferred
+simulated loader, so loading and cancellation can be observed directly.
+
+The loader also honors a finite replay cutoff using a declared historical version
+boundary. Its raw bar method stays separate from that point-in-time promise.
+
+<RunnableExample height={460} tiers={['indicators']} caption="A same-time price update can refresh external history without recreating the study." code={`const start = 1700000000;
+const controls = document.createElement('div');
+controls.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;padding:8px';
+const status = document.createElement('div');
+status.style.cssText = 'padding:0 8px 8px;color:#94a3b8;font:12px sans-serif';
+status.setAttribute('role', 'status');
+const host = document.createElement('div');
+host.style.height = '380px';
+el.append(controls, status, host);
+const chart = lib.createChart(host, { timezone: 'Etc/UTC', branding: false });
+chart.setDataContext({ symbol: 'SOURCE', interval: '1m' });
+const source = chart.addSeries('line', { style: { color: '#64748b' } });
+source.setData(Array.from({ length: 12 }, (_, i) => ({ time: start + i * 60, value: 100 + Math.sin(i) * 2 })));
+let tailRevision = 0, historyRevision = 0, providerNumber = 1, study, disposed = false;
+const pending = new Set();
+const render = () => {
+  if (!disposed) status.textContent = 'Provider ' + providerNumber + '; ' + (study?.dataStatus()?.state ?? 'loading')
+    + '; responses waiting: ' + pending.size;
+};
+const makeProvider = offset => ({
+  requestBars: async ({ from, to }) => source.getData().filter(bar => bar.time >= from && bar.time <= to),
+  loadPoints: context => new Promise((resolve, reject) => {
+    const historical = context.asOf !== undefined && context.asOf < start + 600;
+    const points = Array.from({ length: 12 }, (_, i) => ({ time: start + i * 60,
+      values: { value: 20 + i * 2 + offset + (historical ? 0 : historyRevision)
+        + (i === 11 && !historical ? tailRevision : 0) } }))
+      .filter(point => point.time >= context.from && point.time <= context.to
+        && (context.asOf === undefined || point.time <= context.asOf));
+    const finish = error => {
+      pending.delete(release);
+      context.signal?.removeEventListener('abort', abort);
+      if (error) reject(error); else resolve(points);
+      render();
+    };
+    const release = () => finish();
+    const abort = () => finish(new DOMException('Request cancelled', 'AbortError'));
+    if (context.signal?.aborted) { abort(); return; }
+    context.signal?.addEventListener('abort', abort, { once: true });
+    pending.add(release);
+    render();
+  }),
+});
+let provider = makeProvider(0);
+chart.setBarsProvider(provider);
+lib.registerIndicator(lib.createTier2Indicator({
+  id: 'demo-external-revisions', name: 'External value', placement: 'pane', inputs: [],
+  plots: [{ key: 'value', type: 'line', style: { color: '#4f8cff', lineWidth: 3, markers: true, markerRadius: 4 } }],
+  supportsReplay: true,
+  fetch: context => provider.loadPoints(context),
+}));
+study = chart.addIndicator('demo-external-revisions');
+chart.setPaneWeight(study.paneIndex, 0.8);
+chart.fitContent();
+const unsubscribe = study.subscribeDataStatus(() => queueMicrotask(render));
+for (const [label, action] of [
+  ['Release history', () => { for (const release of [...pending]) release(); }],
+  ['Update same candle', () => {
+    tailRevision += 5;
+    const bar = source.getData().slice(-1)[0];
+    source.update({ time: bar.time, value: bar.close + 0.25 });
+  }],
+  ['Revise history', () => { historyRevision += 10; chart.invalidateRequestedData(); }],
+  ['Replace provider', () => {
+    providerNumber++; tailRevision = 0; historyRevision = 0;
+    provider = makeProvider((providerNumber - 1) * 100);
+    chart.setBarsProvider(provider);
+  }],
+]) {
+  const button = document.createElement('button');
+  button.textContent = label;
+  button.style.cssText = 'padding:5px 10px;border:1px solid #334155;border-radius:4px;background:#172033;color:#e2e8f0;cursor:pointer';
+  button.onclick = () => { action(); render(); };
+  controls.appendChild(button);
+}
+const destroy = chart.destroy.bind(chart);
+chart.destroy = () => { disposed = true; unsubscribe(); destroy(); };
+render();
+return chart;`} />
+
 ## Move a whole study between scales
 
 The buttons move both plots, their gradient fill and reference level together.

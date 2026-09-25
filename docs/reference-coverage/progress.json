@@ -28,10 +28,13 @@
         "Provider confirmation restoration after replay",
         "Compiled persistent-history recalculation and forming-bar rollback",
         "Provider and instance cancellation that rejects even when the provider ignores its signal",
-        "Native request revisions and timed replay availability clock"
+        "Native request revisions and timed replay availability clock",
+        "Raw external point refresh across same-time updates, provider and source changes",
+        "Cache reconciliation for safe prepends, corrections and revised external history",
+        "External lifecycle status retained across cached calculation recovery"
       ],
       "remaining": [
-        "Existing raw-point helper refresh and replay cache policy"
+        "Dependent-study availability propagation"
       ],
       "evidence": [
         "tests/indicator-confirmation.test.ts",
@@ -39,7 +42,10 @@
         "tests/e2e/native-indicator-lifecycle.spec.ts",
         "integration/script-engine.test.ts",
         "tests/abortable-request.test.ts",
-        "tests/indicator-request-lifecycle.test.ts"
+        "tests/indicator-request-lifecycle.test.ts",
+        "tests/indicators-external-native.test.ts",
+        "tests/indicators-external-review.test.ts",
+        "tests/indicator-calc-guard.test.ts"
       ]
     },
     {
@@ -80,7 +86,8 @@
         "Intrabar arrays with opening-window membership and availability cutoffs",
         "Optional native snapshots with explicit confirmation, availability and historical value cutoffs",
         "Managed expression requests with cancellation, provider replacement and one latest catch-up",
-        "Style reattachment without duplicate requests and observable calculation failures"
+        "Style reattachment without duplicate requests and observable calculation failures",
+        "Raw-point replay opt-in with finite historical cutoff, complete version replacement and paused live subscriptions"
       ],
       "evidence": [
         "tests/security-expression.test.ts",
@@ -88,10 +95,10 @@
         "tests/e2e/native-timeframe-navigation.spec.ts",
         "tests/requested-context.test.ts",
         "tests/requested-indicator.test.ts",
-        "tests/e2e/native-requested-provider.spec.ts"
+        "tests/e2e/native-requested-provider.spec.ts",
+        "tests/e2e/native-external-lifecycle.spec.ts"
       ],
       "remaining": [
-        "Existing raw-point helper same-time refresh and provider/replay cache invalidation",
         "External datasets and provider capabilities"
       ]
     },
@@ -194,7 +201,8 @@
         "Persistent-history replacement and forming-tail rollback",
         "Provider confirmation, replay and primary-source replacement",
         "Compiled expression alignment against explicit requested-observation availability",
-        "Compiled managed expression confirmation and provider replacement through the unchanged adapter"
+        "Compiled managed expression confirmation and provider replacement through the unchanged adapter",
+        "Compiled external rolling mean refresh on fixed-time source changes and provider replacement"
       ],
       "remaining": [
         "Wider output and request fixtures",
@@ -216,7 +224,7 @@
     "authorized": true,
     "status": "pending-native-capability-work",
     "steps": [
-      "Complete native capabilities and reported autoscale regression",
+      "Complete remaining native capabilities and retain the verified autoscale regression",
       "Validate package and consumer behavior",
       "Update version, example host, website, docs and changelog",
       "Commit and push",
@@ -225,21 +233,21 @@
     ]
   },
   "validation": {
-    "chartTests": 6811,
-    "chartTestFiles": 292,
-    "compiledProgramTests": 12,
+    "chartTests": 6843,
+    "chartTestFiles": 294,
+    "compiledProgramTests": 13,
     "demoTests": 424,
     "demoTestFiles": 35,
-    "browserEvidence": "This batch passed six managed-request cases and six existing replay-time cases across all three engines. The built website example exercised initial data, revision, provider replacement and confirmation controls in each engine. Screenshots were inspected. The preceding committed batch also passed the reported example autofit regression in all three engines: the scale expands when an extreme enters view and contracts when it leaves. Traffic uses fixtures rather than live brokers.",
-    "website": "63 static pages built successfully",
-    "chartOnlyBrotliKiB": 62.38,
+    "browserEvidence": "This batch passed 15 browser cases across all three engines: nine external-lifecycle cases and six requested-provider regressions. The built website example also passed all four controls in each engine, with no page or example errors. Thirty regression screenshots and six representative built-site screenshots were inspected. The reported example autofit regression passed in the preceding committed scale batch across all three engines: the scale expands when an extreme enters view and contracts when it leaves. Traffic uses fixtures rather than live brokers.",
+    "website": "63 static pages built successfully; external-lifecycle example verified on the built site in all three engines",
+    "chartOnlyBrotliKiB": 62.47,
     "chartOnlyBudgetKiB": 62.5,
-    "baseBrotliKB": 102.99,
-    "indicatorBrotliKB": 35.05,
-    "allTiersBrotliKB": 278.37,
-    "budgetChange": "Native request cancellation and lifecycle hooks increase base from 102.20 to 102.99 kB and chart-only from 61.71 to 62.38 KiB. Managed expressions increase the optional indicator tier from 33.59 to 35.05 kB. Limits are 103.25 kB base, 111.25 kB base plus trade, 35.25 kB indicators, 239 kB terminal, 278.5 kB all tiers and 62.5 KiB chart-only. Other optional-tier budgets are unchanged and removal checks pass.",
-    "review": "Independent review closed five findings covering custom-host receivers, replay interruption, initial source-state immutability, native calculation errors and style reattachment during request registration or provider invocation. Deferred-provider regressions also cover abort callback reentry, provider replacement, history correction and stale completion. The managed helper passes 38 cases, native request integration 29 cases and cancellation composition 19 cases.",
-    "packageVerification": "Verify passed lint, typecheck, 6811 unit tests, seven endurance-harness checks, build, 424 example tests and declaration identity. Measured feature growth required the documented budget adjustments; size and tree-shake checks then passed. Twelve compiled-program checks and public adapter typechecking passed.",
+    "baseBrotliKB": 102.94,
+    "indicatorBrotliKB": 35.89,
+    "allTiersBrotliKB": 279.15,
+    "budgetChange": "Raw external lifecycle support increases the optional indicator tier from 35.05 to 35.89 kB. Base measures 102.94 kB, chart-only 62.47 KiB and all tiers 279.15 kB. Optional limits are now 36 kB indicators, 240 kB terminal and 279.5 kB all tiers. Base remains 103.25 kB, base plus trade 111.25 kB and chart-only 62.5 KiB. Other budgets are unchanged and removal checks pass.",
+    "review": "Review closed stale live-callback status, failed authoritative replacement, missing error catch-up, missing tail after prefix catch-up and cached calculation recovery overriding lifecycle status. The external helper passes 25 new native cases and 32 unchanged cases; two independent review cases and nine calculation-guard cases pass. The new compiled integration reproduced a stale mean of 25 instead of 40 before the fix.",
+    "packageVerification": "Verify passed lint, typecheck, 6843 unit tests, seven endurance-harness checks, build, 424 example tests and declaration identity. Measured optional-tier growth required the documented budget adjustments; size and tree-shake checks then passed. Thirteen compiled-program checks and public adapter typechecking passed.",
     "latestEngineSourceReview": "d95bd70daf598892d40a9265607537b86ce712dd has no source changes relative to the pinned tested engine revision.",
     "apiDocumentation": "Generated with warnings treated as errors",
     "skillsCoverage": "975 of 975 named exports and registry entries; not functional coverage"

@@ -1836,6 +1836,55 @@ callbacks from an earlier attachment are ignored after a settings change or remo
 An empty successful history result is still loaded data and does not trigger another
 fetch on a style change. Omitting `refetchOn` uses no settings-derived key; chart context still identifies the dataset.
 
+### Native revisions and replay for external points
+
+`Tier2Context` includes optional `requestState: Readonly<IndicatorRequestState>`
+and `asOf`. Native request state identifies source and provider revisions, explicit
+external-data invalidation and the replay clock. `asOf` is the finite historical
+knowledge cutoff; `from` and `to` still describe the source-bar time window.
+
+A history-only study refreshes its forming overlap when a source update keeps
+the same timestamp. Repeated updates retain one active request and coalesce the
+latest desired window. New history at both ends can require separate prefix and
+tail requests. A prepend preserves loaded history only when the previous bars
+remain a proven unchanged suffix. Provider replacement, source identity changes, history reset or
+correction, and changed dataset settings clear old values and cancel obsolete
+work. Style changes preserve the dataset and its pending request. A live study
+uses subscription updates for ordinary source ticks.
+
+Call `chart.invalidateRequestedData()` when the external dataset changes
+independently of the price bars. This refetches the complete window, including for
+a subscribed study. Live arrivals after that request begins can override its
+response at matching timestamps; earlier cached live values cannot override a
+corrected history response.
+
+Native replay is unsupported by default for raw-point studies. The wrapper clears
+their values and stops live subscriptions. Set `supportsReplay: true` only when
+your loader can honor the replay cutoff:
+
+```ts
+supportsReplay: true,
+fetch: ({ from, to, asOf, signal }) => analytics.loadPoints({ from, to, asOf, signal }),
+```
+
+This opt-in promises that `fetch` returns the historical value versions known at
+`asOf`, with `Tier2Point.time` representing availability. The wrapper excludes
+points after the cutoff, but timestamps alone cannot recover older values from
+today's final dataset. Raw `requestBars` calls keep their existing behavior;
+they do not provide this guarantee. Your fetch must forward the cutoff to a
+source that supports it.
+
+Replay entry, exit and backward seeks clear the old dataset and cancel its work.
+Forward replay fetches the complete window and replaces the previous response.
+Live subscriptions remain stopped during replay. Alignment still reads the most
+recent available point at or before each source opening. Legacy replay without a
+finite availability clock remains unsupported even after opting in. Hand-built
+contexts without native request state retain their previous behavior.
+
+Try the [deferred external-point example](/examples#external-points-with-live-revisions).
+Use [managed requested snapshots](#managed-requested-snapshots) for calculations
+on another instrument's OHLC with explicit confirmation metadata.
+
 ### The attach context
 
 `createTier2Indicator` is a wrapper over the descriptor's own `attach` hook, which any
@@ -1994,9 +2043,10 @@ primary series before changing context, then install the new source bars.
 
 `supports(ctx)` may return false when classified trades, open interest or another
 required dataset is unavailable. Do not synthesize those values from OHLCV.
-Context changes cancel obsolete work and refetch. Prepended source history extends
-the requested range; history-only studies refresh a growing tail, while live
-studies keep their subscription. Replay alignment never selects a future point.
+Context changes cancel obsolete work and refetch. History-only studies refresh
+same-time forming updates as well as a growing tail; live studies use their
+subscription unless explicitly invalidated. Native replay requires the explicit
+[raw-point capability](#native-revisions-and-replay-for-external-points) above.
 
 `indicator.dataStatus()` returns `IndicatorDataStatus | null`. The states are
 `loading`, `ready`, `empty`, `unsupported` and `error`, with optional `error` detail.

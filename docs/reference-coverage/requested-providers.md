@@ -69,7 +69,8 @@ replacement, requested confirmation and replay clock changes. Preserve legacy
 raw-bar behavior and existing managed style retention. Exercise a compiled
 expression, runnable website controls and actual pixels in all three browsers.
 
-The older raw-point `createTier2Indicator` helper is unchanged by this work. Its
-history-only same-time refresh and provider/replay cache invalidation remain a
-separate follow-up. Snapshot capability does not manufacture metadata for that
-existing path.
+The raw-point `createTier2Indicator` helper has its own
+[external lifecycle](external-lifecycle.md). Native revisions now refresh its
+forming overlap and invalidate provider, source and history generations. Replay
+requires an explicit historical-value promise from that descriptor. Snapshot
+capability does not manufacture metadata for raw points or raw bar requests.

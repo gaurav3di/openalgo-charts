@@ -923,7 +923,54 @@ registerIndicator(createTier2Indicator({
 }));
 ```
 
-`Tier2Point` is `{ time: UTCSeconds, values: Record<plotKey, number | null> }`. `Tier2Context` carries `{ settings, bars, from, to }`; `from`/`to` are `0` when there are no bars.
+`Tier2Point` is `{ time: UTCSeconds, values: Record<plotKey, number | null> }`.
+`Tier2Context` carries `{ settings, bars, from, to }`; `from`/`to` are `0` when
+there are no bars. It also has optional `dataContext`, `signal`, `requestBars`,
+native `requestState: Readonly<IndicatorRequestState>` and `asOf`. The last is a
+finite replay knowledge cutoff, separate from the source-bar time window.
+
+### Native revisions and replay
+
+On native charts, provider replacement, source identity changes, historical
+corrections/reset and changed dataset settings clear obsolete values and cancel
+pending requests. History-only descriptors refetch the forming overlap on a
+same-time source update, including when the first/last timestamps are unchanged.
+One request stays active and repeated updates coalesce into the latest desired
+window. Covering newly prepended and appended history can require separate prefix
+and tail requests. A proven unchanged suffix preserves loaded history on prepend;
+overlap or unproven historical changes reset the complete window.
+Style-only settings changes retain an unchanged dataset's request and values.
+Live descriptors use their subscription for ordinary price ticks;
+`chart.invalidateRequestedData()` explicitly refetches the full visible window
+even with a live subscription. Live arrivals after that refresh starts can
+override its response at matching timestamps; old cached live values cannot.
+
+`Tier2Descriptor.supportsReplay` defaults to false when native `requestState`
+identifies replay. Such a study becomes unsupported, clears values and stops live
+callbacks. Opt in only when `fetch(context)` honors finite `context.asOf`, returns
+the value versions known then, and stamps each point with its availability time.
+The wrapper filters points beyond the cutoff but cannot recover value versions
+from a current-data cache. Native legacy replay without a finite availability
+clock remains unsupported even after opting in.
+
+```ts
+supportsReplay: true,
+fetch: async ({ from, to, asOf, signal }) =>
+  analytics.loadPoints({ from, to, asOf, signal }),
+```
+
+Replay entry, exit and backward seeks cancel obsolete work and clear the old
+dataset. Forward movement fetches the complete window and replaces its response;
+it does not merge a previous replay frame's points. No live subscription runs
+during replay. A response can be empty when no observations were available.
+The ordinary alignment rule still selects at or before each source opening.
+
+The replay guard applies only when request state explicitly identifies native
+replay. Hand-built contexts without that state retain their legacy behavior.
+The raw `requestBars` API is unchanged and does not enforce point-in-time versions
+for your `fetch`; forward `asOf` to an analytics/snapshot source that can honor it.
+For requested OHLC expressions with confirmation metadata, use
+`createRequestedIndicator` instead.
 
 **Alignment rule, stated exactly.** Each bar takes the most recent external point whose time is **at or before** that bar's time. Values are last-known-value: never interpolated between points, never forward-looking. Bars before the first point are `null`, and so is any value that is not a finite number. Both arrays are time-sorted, so alignment is one linear merge.
 
@@ -1421,10 +1468,11 @@ Base exports `ChartDataContext`, `IndicatorDataChange` and `IndicatorDataStatus`
 is context/range. `Tier2Context.dataContext` and `signal` are optional. A descriptor
 may implement `supports(ctx)` to decline unavailable data before fetching.
 
-Chart context and source-range changes cancel/refetch or extend Tier-2 history.
-Live studies use subscription updates, history-only studies refresh the tail,
-and replay alignment selects only points at or before a visible candle.
-Style-only updates retain fetched data. Removal aborts pending work.
+Native request state also observes provider/source revisions, explicit external
+invalidation and replay cutoff changes. History-only studies refresh same-time
+tail revisions; live studies use subscription updates unless explicitly
+invalidated. Native replay requires the capability and availability contract
+above. Style-only updates retain fetched data. Removal aborts pending work.
 `IndicatorApi.dataStatus()` returns null for ordinary indicators or a status with
 loading/ready/empty/unsupported/error. Subscribe with `subscribeDataStatus`, release
 the returned cleanup, and use `retryData()` for explicit retry. The chart bus emits

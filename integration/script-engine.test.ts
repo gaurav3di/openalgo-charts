@@ -9,6 +9,7 @@ import { ChartTable } from '../src/primitives/table';
 import { securityExpression } from '../src/indicators/security';
 import { alignRequestedExpression, type RequestedExpression } from '../src/indicators/requested-context';
 import { createRequestedIndicator } from '../src/indicators/requested-indicator';
+import { createTier2Indicator } from '../src/indicators/external';
 import { ReplayController } from '../src/replay/controller';
 import { fakeDocument } from '../tests/helpers/fake-dom';
 
@@ -51,6 +52,39 @@ function makeChart(data: Bar[], now: number, updatesOnly = false) {
 const bar = (time: number, close: number): Bar => ({ time, open: 1, high: close + 1, low: 0, close });
 
 describe('compiled script engine on an actual Chart', () => {
+  it('refreshes a compiled external mean on same-time ticks and provider replacement', async () => {
+    const compiled = compile(`version 1
+study("External rolling mean")
+plot(sma(close, 2), "Mean")
+`);
+    const key = compiled.plots[0].key;
+    let requested = [bar(0, 10), bar(60, 20), bar(120, 30)];
+    const descriptor = createTier2Indicator({
+      id: compiled.id, name: compiled.name, placement: compiled.placement,
+      inputs: compiled.inputs, plots: compiled.plots,
+      fetch: async context => {
+        // Fetch the calculation's warmup before converting its output to points.
+        const bars = await context.requestBars!({
+          symbol: 'EXTERNAL', interval: '1m', from: 0, to: context.to, signal: context.signal,
+        });
+        const values = compiled.calc(bars, context.settings, {});
+        return bars.map((item, index) => ({ time: item.time, values: { [key]: values[key][index] } }));
+      },
+    });
+    registerIndicator(descriptor);
+    const { chart, series } = makeChart([bar(0, 100), bar(60, 200), bar(120, 300)], 140);
+    chart.setBarsProvider(async () => requested);
+    const indicator = chart.addIndicator(descriptor.id);
+    await vi.waitFor(() => expect(indicator.values()[key]).toEqual([null, 15, 25]));
+    requested = [bar(0, 10), bar(60, 20), bar(120, 60)];
+    series.update(bar(120, 301));
+    await vi.waitFor(() => expect(indicator.values()[key]).toEqual([null, 15, 40]));
+    chart.setBarsProvider(async () => [bar(0, 100), bar(60, 200), bar(120, 300)]);
+    expect(indicator.values()[key]).toEqual([null, null, null]);
+    await vi.waitFor(() => expect(indicator.values()[key]).toEqual([null, 150, 250]));
+    expect(indicator.series(key)?.getData()[2].close).toBe(250);
+  });
+
   it('runs a compiled requested expression through confirmation and provider replacement', async () => {
     const compiled = compile(`version 1
 study("Managed external mean")

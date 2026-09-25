@@ -18,6 +18,7 @@ The [design](design.md) sets the boundaries and the [plan](plan.md) lists the re
 - Requested-observation helpers calculate before alignment or intrabar grouping, using explicit confirmation and availability. Carry and missing-result policies retain original indices and block unavailable prefixes.
 - Native providers can optionally return availability snapshots. Requests combine caller, instance, provider and market-context cancellation, and obsolete replies reject even when a provider ignores its signal.
 - Managed requested expressions refresh same-time changes, preserve pending work across style edits, isolate replay cutoffs and report calculation failures without replacing accepted data. Hosts can announce external changes without inventing price ticks.
+- Raw external studies refresh same-time forming values and invalidate obsolete provider, source and history caches. Live subscriptions avoid redundant price-tick fetches. Opted-in replay loads complete historical versions with live subscriptions paused.
 - Timed replay publishes availability-clock movement within an unchanged primary observation. Interrupted replay writes cannot overwrite a later stop or seek.
 - Direct time-scale navigation repaints and publishes settled range events to linked charts. Explicit same-range requests cancel pending motion, and reentrant restore callbacks receive a final repaint.
 - Native series renderer changes and widget chart-type changes retain series handles, data, styles, price scales and marker bindings. Live type lookup keeps host controls and saved state synchronized.
@@ -36,7 +37,7 @@ The [design](design.md) sets the boundaries and the [plan](plan.md) lists the re
 
 ## Verification
 
-The confirmation regression suite has 12 cases; nine reproduced failures before the fix. A further 23 provenance cases cover native source lifecycle. Twelve compiled-program integration cases passed against the pinned engine revision `833ce15f7ec1bb0ab8ae203b800c8858ce3b4339`, including native timeframe composition, persistent calculations, forming-bar rollback, provider confirmation and managed requested observations. These checks cover specific behaviors, not every capability.
+The confirmation regression suite has 12 cases; nine reproduced failures before the fix. A further 23 provenance cases cover native source lifecycle. Thirteen compiled-program integration cases passed against the pinned engine revision `833ce15f7ec1bb0ab8ae203b800c8858ce3b4339`, including native timeframe composition, persistent calculations, forming-bar rollback, provider confirmation, managed requested observations and same-time external refresh. These checks cover specific behaviors, not every capability.
 
 Run against a built script-engine checkout:
 
@@ -50,4 +51,4 @@ The unchanged chart baseline `a1828e9ac948d2f9aebe0657f421987a85d6f2a7` measured
 
 ## Remaining work
 
-The existing raw external helper's refresh lifecycle, dependent study inputs, numerical helpers, typed and interactive inputs, remaining visual variants, alert policies, chart APIs, persistence and provider capabilities still need implementation and behavioral checks. [Scale ownership](scale-ownership.md) records the completed transaction and remaining axis work. [Requested providers](requested-providers.md) documents the new native snapshot path; [study dependencies](study-dependencies.md) defines the next input graph. Comparative research belongs outside the repository. Implement features from documented behavior using independently written code and tests.
+Dependent study inputs, numerical helpers, typed and interactive inputs, remaining visual variants, alert policies, chart APIs, persistence and provider capabilities still need implementation and behavioral checks. [Scale ownership](scale-ownership.md) records the completed transaction and remaining axis work. [Requested providers](requested-providers.md) documents native snapshots and [external lifecycle](external-lifecycle.md) covers raw-point requests. [Study dependencies](study-dependencies.md) and [alert policies](alert-policies.md) define upcoming work. Comparative research belongs outside the repository. Implement features from documented behavior using independently written code and tests.
