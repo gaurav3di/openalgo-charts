@@ -39,6 +39,8 @@ import {
 /** PaneLegend's own defaults, restated so a pane can be reset to them. */
 const DEFAULT_LEGEND_TOP = 6;
 const DEFAULT_LEGEND_LEFT = 8;
+/** The controls the first legend row of a lower pane carries for the pane itself. */
+const PANE_ACTIONS: readonly PaneLegendAction[] = ['up', 'down', 'collapse', 'maximize'];
 
 interface PreparedIndicatorRestore {
   specs: IndicatorState[];
@@ -869,6 +871,12 @@ export class Chart {
   private _alertState: AlertsDocument | undefined;
   /** Pane currently maximized, and the weights to restore when it un-maximizes. */
   private _maximizedPane: number | null = null;
+  /**
+   * Panes folded to a header strip. Held by pane identity, like `_pricePanes`,
+   * so the fold follows its pane through a move or a removal above it without
+   * any index to patch.
+   */
+  private readonly _collapsed = new WeakSet<Pane>();
   /** Legend rows per pane, so new ones stack below existing ones. */
   private readonly _legends: { legend: PaneLegend; paneIndex: number }[] = [];
   private readonly _studyLegends = new Set<PaneLegend>();
@@ -915,7 +923,7 @@ export class Chart {
   /** Where the drag was grabbed, in data space, so deltas start at the press. */
   private _dragFrom: { time: number; price: number } = { time: 0, price: 0 };
   private _paneResize: {
-    index: number; startY: number;
+    a: number; b: number; startY: number;
     aWeight: number; bWeight: number; aHeight: number; bHeight: number;
   } | null = null;
   private _axisStartCoord = 0;
@@ -1764,10 +1772,10 @@ export class Chart {
     for (const entry of this._legends) {
       if (!owned.has(entry.legend)) continue;
       const options = entry.legend.options();
-      const actions: PaneLegendAction[] = (options.actions ?? []).filter(action => action !== 'up' && action !== 'down' && action !== 'maximize');
+      const actions: PaneLegendAction[] = (options.actions ?? []).filter(action => !PANE_ACTIONS.includes(action));
       if (entry.paneIndex > 0 && !seen.has(entry.paneIndex)) {
         const close = actions.indexOf('close');
-        actions.splice(close < 0 ? actions.length : close, 0, 'up', 'down', 'maximize');
+        actions.splice(close < 0 ? actions.length : close, 0, ...PANE_ACTIONS);
       }
       entry.legend.setOptions({ actions });
       seen.add(entry.paneIndex);
@@ -1985,7 +1993,7 @@ export class Chart {
         // extra rows keep only their own show / settings / delete.
         const paneActions: PaneLegendAction[] =
           o.row === 0 && o.paneIndex > 0
-            ? ['hide', 'settings', 'up', 'down', 'maximize', 'close']
+            ? ['hide', 'settings', ...PANE_ACTIONS, 'close']
             : ['hide', 'settings', 'close'];
         // The source button sits next to the gear, because the two are the
         // same errand at different depths: what this study is set to, and what
@@ -2392,7 +2400,7 @@ export class Chart {
   private _ensureScaled(paneIndex: number): void {
     const pane = this._panes[paneIndex];
     if (pane === undefined || pane.readoutScale().scaled) return;
-    pane.autoscale(this._renderContext(paneIndex === this._bottomPaneIndex()));
+    pane.autoscale(this._renderContext(paneIndex));
   }
 
   /** Container-relative x (media px) → UTC seconds on the (gapless) time axis. */
@@ -2414,7 +2422,7 @@ export class Chart {
   // One `on(name, cb)` surface for every chart event, complementing the typed
   // `subscribe*` helpers. Names emitted by the core: 'ready', 'crosshair:move',
   // 'click', 'dblclick', 'hover', 'drag:start', 'drag', 'drag:end', 'drag:cancel', 'pan', 'zoom', 'resize',
-  // 'lazy-load', 'paneAdded', 'paneRemoved', 'paneMoved', 'paneMaximized', 'paneResized',
+  // 'lazy-load', 'paneAdded', 'paneRemoved', 'paneMoved', 'paneMaximized', 'paneCollapsed', 'paneResized',
   // 'priceAxisMoved', 'indicatorRemoved', 'indicatorSettings', 'indicatorSource',
   // 'renderer:fallback',
   // 'branding:changed', 'destroy'. The
@@ -2522,7 +2530,7 @@ export class Chart {
 
   /** The pane a chart anchor currently resolves to. */
   private _anchorTarget(anchor: PrimitiveAnchor): number {
-    return anchor === 'chart-bottom' ? this._bottomPaneIndex() : this._topPaneIndex();
+    return anchor === 'chart-bottom' ? this._bottomPaneIndex(true) : this._topPaneIndex();
   }
 
   /**
@@ -2780,7 +2788,7 @@ export class Chart {
 
   /** Active price columns in pane CSS coordinates, ordered nearest the plot on each side. */
   public priceAxisLayout(paneIndex = 0): readonly PriceAxisSlot[] {
-    return this._priceAxisPane(paneIndex)?.axisSlots(this._renderContext(paneIndex === this._bottomPaneIndex()))
+    return this._priceAxisPane(paneIndex)?.axisSlots(this._renderContext(paneIndex))
       .map(slot => ({ ...slot, x: slot.x + this._leftAxisWidth })) ?? [];
   }
 
@@ -2884,7 +2892,7 @@ export class Chart {
   private _ensureScaledFor(paneIndex: number, scaleId: PriceScaleId): void {
     const pane = this._panes[paneIndex];
     if (pane === undefined || pane.scaleFor(scaleId).scaled) return;
-    pane.autoscale(this._renderContext(paneIndex === this._bottomPaneIndex()));
+    pane.autoscale(this._renderContext(paneIndex));
   }
 
   /**
@@ -2928,7 +2936,8 @@ export class Chart {
     if (!Number.isFinite(size)) return;
     this._legendIconSize = size;
     for (const entry of this._legends) entry.legend.setOptions({ iconSize: size });
-    this._restackLegends();
+    // A relayout rather than a restack alone: a collapsed strip is one row tall.
+    this._relayout();
     this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
   }
 
@@ -3051,12 +3060,11 @@ export class Chart {
       }
       const layout = this._paneLayout();
       const topPane = this._topPaneIndex();
-      const bottomPane = this._bottomPaneIndex();
       for (let i = 0; i < this._panes.length; i++) {
         if (this._layoutWeight(i) <= 0) continue; // hidden behind a maximized pane
         const pane = this._panes[i];
         const ctx: PaneRenderContext = {
-          ...this._renderContext(i === bottomPane),
+          ...this._renderContext(i),
           dpr: 1, hoverId: null, hoverKey: null, dragId: null, paintBackground: background,
         };
         // The DOM draws the separator as a 1px border on the pane box and lets
@@ -3172,7 +3180,7 @@ export class Chart {
         this._indicatorLegendRow = row++;
         reserved = true;
       }
-      entry.legend.setOptions({ row });
+      entry.legend.setOptions(owned ? { row, collapsed: this._collapsed.has(this._panes[entry.paneIndex]) } : { row });
       const displayed = !(owned && this._indicatorLegendCollapsed) && entry.legend.options().visible !== false;
       rowByPane.set(entry.paneIndex, row + (displayed ? 1 : 0));
     }
@@ -3213,7 +3221,7 @@ export class Chart {
     }
     for (const entry of this._legends) {
       if (!this._studyLegends.has(entry.legend)) continue;
-      // A collapsed pane above still occupies a fraction of a pixel, so "at the
+      // Rounding can leave the top pane a fraction of a pixel down, so "at the
       // top" is a tolerance rather than an equality.
       const atTop = (layout[entry.paneIndex]?.top ?? Number.POSITIVE_INFINITY) <= LEGEND_TOP_EPS;
       entry.legend.setOptions(
@@ -3558,6 +3566,7 @@ export class Chart {
         priceScale: right!,
       };
       if (Object.keys(scales).length) state.scales = scales;
+      if (this._collapsed.has(pane)) state.collapsed = true;
       return state;
     });
 
@@ -3796,9 +3805,14 @@ export class Chart {
     if (panes) {
       panes.forEach((ps, i) => {
         this._ensurePane(i);
-        this._panes[i].weight = ps.weight;
+        const pane = this._panes[i];
+        pane.weight = ps.weight;
+        // A layout that does not fold a pane opens it, and pane 0 never folds.
+        if (i > 0 && ps.collapsed === true) this._collapsed.add(pane);
+        else this._collapsed.delete(pane);
       });
       this._relayout();
+      this._rehomeAnchored();
     }
 
     // Indicators are fully derivable from the source data, so they *can* be
@@ -4004,48 +4018,41 @@ export class Chart {
    */
   private _relayout(geometryOnly = false): void {
     this._measureAxisColumns();
-    if (geometryOnly) {
-      const total = this._weightTotal();
-      const bottomPane = this._bottomPaneIndex();
-      this._panes.forEach((pane, paneIndex) => {
-        const h = (this._height * this._layoutWeight(paneIndex)) / total;
-        pane.setLayoutSize(this._width, h);
-        pane.setScaleHeights(Math.max(0, h - (paneIndex === bottomPane ? this._timeAxisHeight : 0)));
-      });
-      this._timeScale.setWidth(Math.max(0, this._width - this._rightAxisWidth - this._leftAxisWidth));
-      return;
+    if (!geometryOnly) {
+      this._syncTimeNavPane();
+      // Weights just changed, so the pane at the chart's top may have too.
+      this._restackLegends();
     }
-    this._syncTimeNavPane();
-    // Weights just changed, so the pane at the chart's top may have too.
-    this._restackLegends();
     const dpr = this._pixelRatio();
-    const total = this._weightTotal();
+    const layout = this._paneLayout();
     const topPane = this._topPaneIndex();
     const bottomPane = this._bottomPaneIndex();
     this._panes.forEach((pane, paneIndex) => {
-      const share = this._layoutWeight(paneIndex);
-      const h = (this._height * share) / total;
-      // No share means gone, not merely short: a zero-height box still paints
-      // its separator hairline, and its canvases still answer hit tests.
-      pane.element.style.display = share > 0 ? '' : 'none';
-      // The DOM box is given the SAME pixel height the canvas is sized to,
-      // rather than a flex ratio. With `flex: w 1 0` the browser distributed the
-      // container's *real* height while the canvas used `this._height` — so any
-      // drift between the two (a container that resized before the observer
-      // fired) silently offset every hit-test from what was drawn: pane
-      // boundaries, legend buttons, and crosshair mapping all landed elsewhere.
-      // Deriving both from one number makes layout == hit-test by construction.
-      pane.element.style.flex = `0 0 ${h}px`;
-      // A hairline between stacked panes — every pane but the first. Drawn on
-      // the DOM box, so it sits exactly on the boundary the user drags.
-      const first = paneIndex === topPane;
-      pane.element.style.borderTopWidth = first ? '0px' : '1px';
-      pane.element.style.borderTopColor = first ? 'transparent' : this._theme.paneSeparator;
-      pane.resize(this._width, h, dpr);
-      // Scale height is a layout property — see Pane.setScaleHeights.
-      const isLast = paneIndex === bottomPane;
-      pane.setScaleHeights(Math.max(0, h - (isLast ? this._timeAxisHeight : 0)));
-    })
+      const h = layout[paneIndex].height;
+      if (geometryOnly) pane.setLayoutSize(this._width, h);
+      else {
+        // No share means gone, not merely short: a zero-height box still paints
+        // its separator hairline, and its canvases still answer hit tests.
+        pane.element.style.display = this._layoutWeight(paneIndex) > 0 ? '' : 'none';
+        // The DOM box is given the SAME pixel height the canvas is sized to,
+        // rather than a flex ratio. With `flex: w 1 0` the browser distributed the
+        // container's *real* height while the canvas used `this._height`, so any
+        // drift between the two (a container that resized before the observer
+        // fired) silently offset every hit-test from what was drawn: pane
+        // boundaries, legend buttons, and crosshair mapping all landed elsewhere.
+        // Deriving both from one number makes layout == hit-test by construction.
+        pane.element.style.flex = `0 0 ${h}px`;
+        // A hairline between stacked panes: every pane but the first. Drawn on
+        // the DOM box, so it sits exactly on the boundary the user drags.
+        const first = paneIndex === topPane;
+        pane.element.style.borderTopWidth = first ? '0px' : '1px';
+        pane.element.style.borderTopColor = first ? 'transparent' : this._theme.paneSeparator;
+        pane.resize(this._width, h, dpr);
+      }
+      // Scale height is a layout property (see Pane.setScaleHeights). A strip's
+      // scales span the strip, so nothing measured against them reaches below it.
+      pane.setScaleHeights(Math.max(0, h - (paneIndex === bottomPane ? this._timeAxisHeight : 0)));
+    });
     this._timeScale.setWidth(Math.max(0, this._width - this._rightAxisWidth - this._leftAxisWidth));
   }
 
@@ -4102,31 +4109,41 @@ export class Chart {
     return 0;
   }
 
-  /** Last pane with a share of the chart: the one that owns the time axis. */
-  private _bottomPaneIndex(): number {
-    for (let i = this._panes.length - 1; i >= 0; i--) if (this._layoutWeight(i) > 0) return i;
+  /**
+   * Last pane with a share of the chart: the one that owns the time axis, even
+   * as a strip, so the axis stays at the foot of the chart. `open` asks for the
+   * last one with a plot instead, which is where chart furniture belongs.
+   */
+  private _bottomPaneIndex(open = false): number {
+    for (let i = this._panes.length - 1; i >= 0; i--) if (this._layoutWeight(i) > 0 && !(open && this._collapsedShown(i))) return i;
     return this._panes.length - 1;
   }
 
-  private _weightTotal(): number {
-    let total = 0;
-    for (let i = 0; i < this._panes.length; i++) total += this._layoutWeight(i);
-    return total <= 0 ? 1 : total;
+  /** Drawn as a strip right now: a maximized pane shows whole whatever it is set to. */
+  private _collapsedShown(index: number): boolean {
+    return this._maximizedPane === null && this._collapsed.has(this._panes[index]);
   }
 
   /** Grab tolerance around a pane boundary, in media px. */
   private static readonly DIVIDER_GRAB = 4;
 
   /**
-   * Index of the pane whose *bottom* boundary is within grab range of `y`, or
-   * null. Boundary `i` separates pane `i` from pane `i + 1`; the last pane's
-   * bottom is the chart edge and is not draggable.
+   * The two panes a press at `y` resizes, or null. Boundary `i` separates pane
+   * `i` from pane `i + 1`; the last pane's bottom is the chart edge and is not
+   * draggable. A strip keeps its height, so a boundary beside one moves height
+   * between the nearest open panes either side of it. A pane hidden behind a
+   * maximized one is never a side: dragging it would rewrite a weight nobody
+   * can see.
    */
-  private _dividerAt(y: number): number | null {
+  private _dividerAt(y: number): [number, number] | null {
     const layout = this._paneLayout();
+    const sizable = (i: number): boolean => this._layoutWeight(i) > 0 && !this._collapsedShown(i);
     for (let i = 0; i < layout.length - 1; i++) {
-      const boundary = layout[i].top + layout[i].height;
-      if (Math.abs(y - boundary) <= Chart.DIVIDER_GRAB) return i;
+      if (Math.abs(y - layout[i].top - layout[i].height) > Chart.DIVIDER_GRAB) continue;
+      let a = i, b = i + 1;
+      while (a >= 0 && !sizable(a)) a--;
+      while (b < layout.length && !sizable(b)) b++;
+      if (a >= 0 && b < layout.length) return [a, b];
     }
     return null;
   }
@@ -4255,6 +4272,40 @@ export class Chart {
   }
 
   /**
+   * Fold a pane to a header strip, or open it again. A collapsed pane keeps
+   * everything it holds: its series still take data, its studies still
+   * recompute, and its drawings, scales and stored weight are untouched, so
+   * opening it brings back exactly the height it had. The strip shows the
+   * pane's first legend row, with the control that opens it, and on the bottom
+   * pane the time axis; nothing else in it paints or answers the pointer.
+   *
+   * Pane 0 stays open, the way it stays in place. Collapsing the maximized pane
+   * ends the maximize, since a strip cannot fill the chart; maximizing a
+   * collapsed pane shows it whole until the maximize ends. Returns false for
+   * pane 0, an unknown index, a value that is not a boolean, or no change.
+   */
+  public setPaneCollapsed(index: number, collapsed: boolean): boolean {
+    const pane = this._panes[index];
+    if (!(index > 0) || pane === undefined || typeof collapsed !== 'boolean' || this._collapsed.has(pane) === collapsed) return false;
+    if (collapsed) this._collapsed.add(pane);
+    else this._collapsed.delete(pane);
+    const ended = collapsed && this._maximizedPane === index;
+    if (ended) this._maximizedPane = null;
+    this._relayout();
+    this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
+    // The lowest open pane may have changed, and the brand mark lives there.
+    this._rehomeAnchored();
+    if (ended) this.emit('paneMaximized', { paneIndex: null });
+    this.emit('paneCollapsed', { paneIndex: index, collapsed });
+    return true;
+  }
+
+  /** Whether a pane is collapsed to its header strip. Pane 0 never is. */
+  public paneCollapsed(index: number): boolean {
+    return this._collapsed.has(this._panes[index]);
+  }
+
+  /**
    * Route a pane-legend button press. Ids look like `indicator:<instanceId>::close`.
    * Returns true when the id was ours and was handled.
    */
@@ -4291,6 +4342,7 @@ export class Chart {
       case 'hide': indicator.setVisible(!indicator.visible()); return true;
       case 'up': this.movePane(paneIndex, -1); return true;
       case 'down': this.movePane(paneIndex, 1); return true;
+      case 'collapse': this.setPaneCollapsed(paneIndex, !this.paneCollapsed(paneIndex)); return true;
       case 'maximize': this.maximizePane(paneIndex); return true;
       // The engine is canvas-only and ships no DOM, so the settings form is the
       // host's. Everything it needs to *generate* one is on the descriptor
@@ -4314,17 +4366,28 @@ export class Chart {
       && this._indicatorLegendToggle.hitTest(x - this._leftAxisWidth, y) !== null;
   }
 
-  /** Cumulative top + height of each pane, by weight (the source of truth for hit-testing). */
+  /**
+   * Cumulative top + height of each pane: the source of truth for the DOM
+   * boxes, the canvases and hit-testing alike. A collapsed pane is a fixed
+   * strip one legend row tall, with the time axis under it when it is the
+   * bottom pane, and the open panes share what is left by weight, so folding
+   * one never rewrites a stored weight.
+   */
   private _paneLayout(): { top: number; height: number }[] {
-    const total = this._weightTotal();
-    const out: { top: number; height: number }[] = [];
+    const bottom = this._bottomPaneIndex();
+    const strip = paneLegendRowHeight({ iconSize: this._legendIconSize }) + 2 * DEFAULT_LEGEND_TOP;
+    const strips = this._panes.map((_, i) => this._collapsedShown(i) ? strip + (i === bottom ? this._timeAxisHeight : 0) : 0);
+    let fixed = 0, total = 0;
+    strips.forEach((h, i) => { fixed += h; if (!h) total += this._layoutWeight(i); });
+    // Strips taller than the chart shrink together rather than overflow it.
+    const shrink = fixed > this._height ? this._height / fixed : 1;
+    const free = Math.max(0, this._height - fixed);
     let top = 0;
-    for (let i = 0; i < this._panes.length; i++) {
-      const h = (this._height * this._layoutWeight(i)) / total;
-      out.push({ top, height: h });
-      top += h;
-    }
-    return out;
+    return strips.map((h, i) => {
+      const out = { top, height: h ? h * shrink : total > 0 ? (free * this._layoutWeight(i)) / total : 0 };
+      top += out.height;
+      return out;
+    });
   }
 
   /**
@@ -4345,16 +4408,21 @@ export class Chart {
   }
 
   /**
-   * Keep the navigator on the bottom pane — it belongs just above the time
-   * axis, and adding or removing a pane moves which one that is.
+   * Keep the navigator on the lowest open pane: it belongs just above the time
+   * axis, and adding, removing or collapsing a pane moves which one that is.
+   * Its current pane is found by identity: a pane removed above it shifts the
+   * slot it was added at, and removing it from that stale slot missed it and
+   * attached it a second time.
    */
   private _syncTimeNavPane(): void {
-    if (this._timeNav === null) return;
-    const target = this._bottomPaneIndex();
-    if (target === this._timeNavPane || target < 0) return;
-    if (this._timeNavPane >= 0) this._panes[this._timeNavPane]?.removePrimitive(this._timeNav);
-    this._addPrimitive(target, this._timeNav);
+    const nav = this._timeNav;
+    if (nav === null) return;
+    const target = this._bottomPaneIndex(true);
+    const current = this._panes.findIndex(pane => pane.hasPrimitive(nav));
     this._timeNavPane = target;
+    if (target === current || target < 0) return;
+    this._panes[current]?.removePrimitive(nav);
+    this._addPrimitive(target, nav);
   }
 
   /**
@@ -4368,7 +4436,8 @@ export class Chart {
     if (nav.animating()) this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Light));
   }
 
-  private _renderContext(showTimeAxis: boolean): PaneRenderContext {
+  /** How one pane paints and hit-tests right now: the bottom one carries the time axis. */
+  private _renderContext(paneIndex: number): PaneRenderContext {
     return {
       timeScale: this._timeScale,
       dataLayer: this._dataLayer,
@@ -4379,7 +4448,8 @@ export class Chart {
       axisColumnWidth: this._axisColumnWidth,
       emptyPriceAxis: this._emptyPriceAxis,
       timeAxisHeight: this._timeAxisHeight,
-      showTimeAxis,
+      showTimeAxis: paneIndex === this._bottomPaneIndex(),
+      collapsed: this._collapsedShown(paneIndex),
       conflate: this._conflate,
       conflationFactor: this._conflationFactor,
       theme: this._theme,
@@ -4471,8 +4541,7 @@ export class Chart {
       const pane = this._panes[i];
       const perPane = mask.paneInvalidation(i);
       const level = Math.max(global, perPane?.level ?? InvalidationLevel.None);
-      const isBottom = i === this._bottomPaneIndex();
-      const ctx = this._renderContext(isBottom);
+      const ctx = this._renderContext(i);
       if (level >= InvalidationLevel.Full || perPane?.autoScale || this._autoscaleTime !== null) {
         easing = pane.autoscale(ctx, fraction) || easing;
       }
@@ -4483,7 +4552,7 @@ export class Chart {
         // pane draws the date tag.
         const cross = this._cursor === null
           ? null
-          : { x: crosshairX, yLocal: i === this._cursorPane ? this._cursor.y : null, showTimeTag: isBottom };
+          : { x: crosshairX, yLocal: i === this._cursorPane ? this._cursor.y : null, showTimeTag: ctx.showTimeAxis };
         pane.paintTop(cross, ctx);
       }
     }
@@ -4592,7 +4661,7 @@ export class Chart {
     return {
       paneIndex: p.pane,
       point: { x: p.x, y: p.y },
-      price: onPlot ? this._panes[p.pane].yToPrice(p.localY) : null,
+      price: onPlot ? this._priceAt(p.pane, p.localY) : null,
       time: index === null ? null : (this._dataLayer.indexToTime(index) ?? null),
       index,
       target: this._contextTarget(p, plotX, onPlot, index),
@@ -4624,7 +4693,7 @@ export class Chart {
       return slot ? { kind: 'price-scale', id: null, side: slot.side, scaleId: slot.scaleId } : { kind: 'empty', id: null };
     }
 
-    const hit = this._panes[p.pane]?.hitTestPrimitives(plotX, p.localY, this._renderContext(isBottom));
+    const hit = this._panes[p.pane]?.hitTestPrimitives(plotX, p.localY, this._renderContext(p.pane));
     if (hit != null) {
       const id = hit.externalId;
       if (id.startsWith('draw:')) return { kind: 'drawing', id };
@@ -4637,7 +4706,8 @@ export class Chart {
       if (id.endsWith('::row')) return { kind: 'legend', id };
       return { kind: 'primitive', id };
     }
-    const record = index === null ? null : this._seriesAt(p.pane, index, p.localY);
+    // A strip plots nothing, so nothing on it can be under the pointer.
+    const record = index === null || this._collapsedShown(p.pane) ? null : this._seriesAt(p.pane, index, p.localY);
     if (record === null) return { kind: 'empty', id: null };
     for (const instance of this._indicators) {
       for (const plot of getIndicator(instance.indicatorId).plots) {
@@ -4680,6 +4750,15 @@ export class Chart {
       if (localY >= Math.min(a, b) - tol && localY <= Math.max(a, b) + tol) return record;
     }
     return null;
+  }
+
+  /**
+   * The price under a pane-local y, for an event payload. Null on a strip: it
+   * plots nothing, so a price read off it would place a drawing, an alert or a
+   * pick somewhere nobody can see.
+   */
+  private _priceAt(paneIndex: number, y: number): number | null {
+    return this._collapsedShown(paneIndex) ? null : this._panes[paneIndex]?.yToPrice(y) ?? null;
   }
 
   /** Resume overlay repaints after the native context menu closes. */
@@ -4769,13 +4848,14 @@ export class Chart {
     const divider = this._dividerAt(p.y);
     if (divider !== null) {
       const layout = this._paneLayout();
+      const [a, b] = divider;
       this._paneResize = {
-        index: divider,
+        a, b,
         startY: p.y,
-        aWeight: this._panes[divider].weight,
-        bWeight: this._panes[divider + 1].weight,
-        aHeight: layout[divider].height,
-        bHeight: layout[divider + 1].height,
+        aWeight: this._panes[a].weight,
+        bWeight: this._panes[b].weight,
+        aHeight: layout[a].height,
+        bHeight: layout[b].height,
       };
       this._dragging = false;
       return;
@@ -4837,7 +4917,7 @@ export class Chart {
     }
 
     // If the press lands on a draggable line (order/SL/TP), drag it — don't pan.
-    const hit = this._panes[p.pane]?.hitTestPrimitives(p.x - this._leftAxisWidth, p.localY, this._renderContext(p.pane === this._bottomPaneIndex()));
+    const hit = this._panes[p.pane]?.hitTestPrimitives(p.x - this._leftAxisWidth, p.localY, this._renderContext(p.pane));
     // `draggable` primitives (drawing anchors/shapes) arm regardless of a host
     // callback — they publish through the `drag` event bus. The `ns-resize`
     // form is the original price-line path and still needs `subscribeDrag`.
@@ -4937,8 +5017,8 @@ export class Chart {
       const sum = r.aWeight + r.bWeight;
       const min = Math.min(24, total / 4);
       const aH = Math.max(min, Math.min(total - min, r.aHeight + (p.y - r.startY)));
-      this._panes[r.index].weight = (aH / total) * sum;
-      this._panes[r.index + 1].weight = sum - this._panes[r.index].weight;
+      this._panes[r.a].weight = (aH / total) * sum;
+      this._panes[r.b].weight = sum - this._panes[r.a].weight;
       this._relayout();
       this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
       return;
@@ -4986,7 +5066,8 @@ export class Chart {
       this._mutateTimeScale(() => this._timeScale.setRightOffset(this._dragStartOffset - dx / this._timeScale.barSpacing));
       // Horizontal-only mode preserves autoscale when the pointer moves vertically.
       if (e.pointerType === 'touch' || this._navigation.mousePan === 'both') {
-        const scale = this._panes[this._downPane]?.priceScale;
+        // A strip's scale is not on screen, so a drag across it pans time only.
+        const scale = this._collapsedShown(this._downPane) ? undefined : this._panes[this._downPane]?.priceScale;
         const fromStart = p.y - this._dragStartY;
         // Minor mouse/pen drift must not turn an automatic axis into a frozen
         // manual range. Once vertical movement is intentional, include its full
@@ -5108,7 +5189,7 @@ export class Chart {
       // touch has no pointer any more) and drop the dragging visual state.
       const hit = e.pointerType === 'touch'
         ? null
-        : this._panes[p.pane]?.hitTestPrimitives(p.x - this._leftAxisWidth, p.localY, this._renderContext(p.pane === this._bottomPaneIndex())) ?? null;
+        : this._panes[p.pane]?.hitTestPrimitives(p.x - this._leftAxisWidth, p.localY, this._renderContext(p.pane)) ?? null;
       this._setHover(hit);
       this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Light));
       return;
@@ -5127,7 +5208,7 @@ export class Chart {
       const info = this._clickInfo(e);
       const press: ChartClickEvent = {
         id: null,
-        price: this._panes[this._downPane]?.yToPrice(this._downLocalY) ?? null,
+        price: this._priceAt(this._downPane, this._downLocalY),
         time: this._xToTime(this._downX),
         paneIndex: this._downPane,
         point: { x: this._downX, y: this._downLocalY },
@@ -5136,7 +5217,7 @@ export class Chart {
       this.emit('click', press);
       const release: ChartClickEvent = {
         id: null,
-        price: this._panes[this._downPane]?.yToPrice(p.localY) ?? null,
+        price: this._priceAt(this._downPane, p.localY),
         time: this._xToTime(p.x),
         paneIndex: this._downPane,
         point: { x: p.x, y: p.localY },
@@ -5149,8 +5230,7 @@ export class Chart {
     // Always hit-test a clean click: the chart's own chrome (pane-legend
     // buttons) must work whether or not the host subscribed to clicks.
     if (!this._pointerMoved) {
-      const isBottom = this._downPane === this._bottomPaneIndex();
-      const hit = this._panes[this._downPane]?.hitTestPrimitives(this._downX - this._leftAxisWidth, this._downLocalY, this._renderContext(isBottom));
+      const hit = this._panes[this._downPane]?.hitTestPrimitives(this._downX - this._leftAxisWidth, this._downLocalY, this._renderContext(this._downPane));
       if (wasPanning) this._setHover(e.pointerType === 'touch' ? null : hit ?? null);
       // Pane-legend buttons are the chart's own chrome — handle them here so
       // the host doesn't have to re-implement remove/hide/move/maximize.
@@ -5162,7 +5242,7 @@ export class Chart {
       this._ensureScaled(this._downPane);
       const click: ChartClickEvent = {
         id: hit?.externalId ?? null,
-        price: this._panes[this._downPane]?.yToPrice(this._downLocalY) ?? null,
+        price: this._priceAt(this._downPane, this._downLocalY),
         time: this._xToTime(this._downX),
         paneIndex: this._downPane,
         point: { x: this._downX, y: this._downLocalY },
@@ -5440,7 +5520,7 @@ export class Chart {
       if (zoom) this._timeScale.zoomAtX(cur.cx, d.factor);
       if (pan) this._timeScale.setRightOffset(this._timeScale.rightOffset - d.dx / this._timeScale.barSpacing);
     });
-    if (pan && d.dy !== 0) this._panes[this._pinchPane]?.priceScale.panByPixels(d.dy);
+    if (pan && d.dy !== 0 && !this._collapsedShown(this._pinchPane)) this._panes[this._pinchPane]?.priceScale.panByPixels(d.dy);
     this._maybeLoadHistory();
     this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
     this._emitViewport(zoom ? 'zoom' : 'pan');
@@ -5601,7 +5681,7 @@ export class Chart {
       return;
     }
     const pane = this._panes[paneIndex];
-    const hit = pane.hitTestPrimitives(plotX, localY, this._renderContext(paneIndex === this._bottomPaneIndex())) ?? null;
+    const hit = pane.hitTestPrimitives(plotX, localY, this._renderContext(paneIndex)) ?? null;
     // A pane boundary beats a primitive hit: the divider is a thin target and
     // the legend rows sit right below one.
     if (hit === null && this._dividerAt(containerY) !== null) {
@@ -5611,9 +5691,9 @@ export class Chart {
     }
     this._setHover(hit);
     // The navigator reveals on pointer position, not on hover id — see the note
-    // in time-navigator.ts. Only the bottom pane carries it.
+    // in time-navigator.ts. Only the lowest open pane carries it.
     // The hover label occupies the same bottom strip as the navigation row.
-    this._feedTimeNav(paneIndex === this._bottomPaneIndex() && !this._brandingHit(paneIndex, x, localY)
+    this._feedTimeNav(paneIndex === this._timeNavPane && !this._brandingHit(paneIndex, x, localY)
       ? { x: plotX, y: localY } : null);
     let y = localY;
     const index = Math.round(this._timeScale.xToIndex(plotX));
@@ -5642,7 +5722,7 @@ export class Chart {
       const move: CrosshairMoveEvent = {
         time: time ?? null,
         index,
-        price: pane.yToPrice(localY),
+        price: this._priceAt(paneIndex, localY),
         bar: hoveredBar,
         point: { x, y: containerY },
         paneIndex,

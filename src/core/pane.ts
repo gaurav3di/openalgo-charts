@@ -42,6 +42,7 @@ import {
 import { drawCrosshair, drawCrosshairTag, resolveCrosshairStyle } from '../render/crosshair';
 import { isInvisible } from '../render/pill';
 import { bestHit, type IPrimitive, type PrimitiveHit, type PrimitiveHost, type PrimitiveRenderContext } from '../primitives/primitive';
+import { PaneLegend } from '../primitives/pane-legend';
 import { backendDegradation, type IRenderBackend, type RendererFallbackReason } from '../render/backend';
 import { Canvas2dBackend } from '../render/canvas2d-backend';
 import type { ChartTheme } from '../theme';
@@ -64,6 +65,13 @@ export interface PaneRenderContext {
   timeAxisHeight: number;
   /** Only the bottom pane draws the time axis. */
   showTimeAxis: boolean;
+  /**
+   * The pane is folded to its header strip: its legend rows draw and answer
+   * the pointer, and the time axis when it is the bottom pane. Series, grid,
+   * price axes and every other primitive keep their data and state but
+   * neither paint nor hit-test until it opens again.
+   */
+  collapsed?: boolean;
   /** Enable OHLC-preserving conflation when bars fall below ~0.5px (§4.4). */
   conflate: boolean;
   /** Conflation aggressiveness (1 = perf only; higher = more smoothing). */
@@ -294,8 +302,12 @@ export class Pane {
       .sort((a, b) => a.side.localeCompare(b.side) || a.order - b.order);
   }
 
-  /** Column x positions relative to the plot, shared by rendering and chart input. */
+  /**
+   * Column x positions relative to the plot, shared by rendering and chart input.
+   * A collapsed pane has none: it draws no ladder, so no axis gesture may land on it.
+   */
   public axisSlots(ctx: PaneRenderContext): readonly PriceAxisSlot[] {
+    if (ctx.collapsed === true) return [];
     const layout = this._layout(ctx), counts = { left: 0, right: 0 };
     return this.visibleAxes(ctx.emptyPriceAxis).map(entry => {
       const width = ctx.axisColumnWidth ?? (entry.side === 'left' ? layout.plotLeft : layout.priceAxisWidth);
@@ -583,10 +595,15 @@ export class Pane {
       priceAxisOffset: slot ? slot.x + (slot.side === 'left' ? slot.width : 0) : undefined };
   }
 
+  /** What a frame draws and the pointer can reach: only the legend rows of a collapsed pane. */
+  private _live(ctx: PaneRenderContext): readonly IPrimitive[] {
+    return ctx.collapsed === true ? this._primitives.filter(p => p instanceof PaneLegend) : this._primitives;
+  }
+
   /** Topmost primitive hit at media-px (x,y) relative to this pane's plot. */
   public hitTestPrimitives(x: number, y: number, ctx: PaneRenderContext): PrimitiveHit | null {
     const prc = this._primitiveContext(ctx);
-    return bestHit(this._primitives.map((p) => {
+    return bestHit(this._live(ctx).map((p) => {
       if (!p.hitTest) return null;
       const context = this._boundPrimitiveContext(p, prc, ctx);
       const hit = p.hitTest(x, y, context);
@@ -775,6 +792,8 @@ export class Pane {
     // backend has no pixels to put in one.
     const g = target ?? this._backend.overlay2d() ?? this.base.ctx;
     if (target === undefined) this._backend.beginFrame(true);
+    const open = ctx.collapsed !== true;
+    const live = this._live(ctx);
 
     const axisStyle = resolveScaleStyle(ctx.theme, ctx.canvasOptions?.scales);
 
@@ -795,8 +814,8 @@ export class Pane {
     const lines = computeGridLines(layout.plotWidth, layout.plotHeight, {
       ...gridOpts,
       spacing: gridOpts?.spacing ?? 60,
-      vertLines: ctx.showVertGrid,
-      horzLines: ctx.showHorzGrid,
+      vertLines: ctx.showVertGrid && open,
+      horzLines: ctx.showHorzGrid && open,
     });
     if (lines.verticals.length > 0 || lines.horizontals.length > 0) {
       drawGrid(g, lines, layout.plotWidth, layout.plotHeight, dpr, resolveGridStyle(ctx.theme, gridOpts, dpr));
@@ -817,7 +836,7 @@ export class Pane {
 
     // bottom-layer primitives (background zones) draw behind series
     const prc = this._primitiveContext(ctx);
-    for (const p of this._primitives) if (p.zOrder() === 'bottom') p.draw(g, this._boundPrimitiveContext(p, prc, ctx));
+    for (const p of live) if (p.zOrder() === 'bottom') p.draw(g, this._boundPrimitiveContext(p, prc, ctx));
 
     // series (registry-driven — the core never switches on type)
     const range = ctx.timeScale.visibleRange();
@@ -832,7 +851,7 @@ export class Pane {
       ? conflationGroupSize(ctx.timeScale.barSpacing, dpr, 0.5, ctx.conflationFactor)
       : 1;
     for (const s of this._series) {
-      if (s.style.visible === false) continue;
+      if (s.style.visible === false || !open) continue;
       const scale = this._scaleFor(s.scaleId);
       const priceToY = (p: number): number => scale.priceToY(p);
       const entry = getChartType(s.type);
@@ -939,7 +958,7 @@ export class Pane {
     for (const slot of slots) paintAxis(slot);
 
     // normal-layer primitives (price lines, markers, events) draw over series
-    for (const p of this._primitives) if (p.zOrder() === 'normal') p.draw(g, this._boundPrimitiveContext(p, prc, ctx));
+    for (const p of live) if (p.zOrder() === 'normal') p.draw(g, this._boundPrimitiveContext(p, prc, ctx));
 
     if (ctx.showTimeAxis) {
       // The zone goes to the axis rather than being pre-baked into a formatter
@@ -976,10 +995,11 @@ export class Pane {
     g.save();
     if (layout.plotLeft > 0) g.translate(Math.round(layout.plotLeft * dpr), 0);
     const prc = this._primitiveContext(ctx);
-    for (const p of this._primitives) if (p.zOrder() === 'top') p.draw(g, this._boundPrimitiveContext(p, prc, ctx));
+    for (const p of this._live(ctx)) if (p.zOrder() === 'top') p.draw(g, this._boundPrimitiveContext(p, prc, ctx));
     if (cross !== null) {
       const style = resolveCrosshairStyle(ctx.theme, ctx.canvasOptions?.crosshair, dpr);
-      drawCrosshair(g, cross.x, cross.yLocal, layout.plotWidth, layout.plotHeight, dpr,
+      // A strip has no plot to cross; its time tag below still follows the pointer.
+      if (ctx.collapsed !== true) drawCrosshair(g, cross.x, cross.yLocal, layout.plotWidth, layout.plotHeight, dpr,
         style.color, style.width, style.dash);
 
       // An overridden crosshair colour tints its value tags too, the way the

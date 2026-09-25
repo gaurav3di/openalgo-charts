@@ -23,7 +23,7 @@
 import type { IPrimitive, PrimitiveHost, PrimitiveRenderContext, PrimitiveHit, ZOrder } from './primitive';
 import { withAlpha } from '../render/pill';
 
-export type PaneLegendAction = 'hide' | 'settings' | 'source' | 'up' | 'down' | 'maximize' | 'close';
+export type PaneLegendAction = 'hide' | 'settings' | 'source' | 'up' | 'down' | 'collapse' | 'maximize' | 'close';
 
 /**
  * One reading on a legend row. Multi-plot sources show one per plot, each in
@@ -148,6 +148,7 @@ export interface PaneLegendOptions {
    *  - `up` / `down` — move this pane one slot (`::up` / `::down`)
    *  - `hide`        — toggle visibility (`::hide`)
    *  - `source`: show the code this source was written from (`::source`)
+   *  - `collapse`: fold this pane to a header strip, or open it again (`::collapse`)
    *  - `maximize`    — expand this pane to fill the chart (`::maximize`)
    *  - `close`       — remove the source, and its pane if it empties (`::close`)
    *
@@ -162,6 +163,8 @@ export interface PaneLegendOptions {
   visible?: boolean;
   /** Rendered as maximized (the maximize glyph becomes restore). */
   maximized?: boolean;
+  /** Rendered as collapsed (the collapse glyph points the other way). */
+  collapsed?: boolean;
   /** Text size in media px. Default 11. */
   font?: number;
   /**
@@ -355,6 +358,14 @@ function drawGlyph(
         ctx.moveTo(cx - r * 0.4, cy + r); ctx.lineTo(cx - r, cy + r); ctx.lineTo(cx - r, cy + r * 0.4);
       }
       break;
+    case 'collapse': {
+      // A header bar with a chevron under it: pointing up folds the pane into
+      // its header, pointing down opens it again.
+      const tip = o.collapsed === true ? r * 0.6 : 0;
+      ctx.moveTo(cx - r, cy - r * 0.7); ctx.lineTo(cx + r, cy - r * 0.7);
+      ctx.moveTo(cx - r * 0.6, cy + r * 0.6 - tip); ctx.lineTo(cx, cy + tip); ctx.lineTo(cx + r * 0.6, cy + r * 0.6 - tip);
+      break;
+    }
     case 'settings': {
       // Gear: a ring plus eight short teeth.
       ctx.arc(cx, cy, r * 0.46, 0, Math.PI * 2);

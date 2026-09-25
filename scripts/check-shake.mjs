@@ -132,7 +132,11 @@ const BUNDLE = new URL('../dist/openalgo-charts.mjs', import.meta.url).pathname.
 // The final measurement is 71.78 KiB, up 1.07 KiB from the typed-input batch.
 // Independent user navigation and native annotation text styles remain in base.
 // Their measured chart-only build is 73.26 KiB; optional host tiers still disappear.
-const LIMIT_BYTES = 73.4 * 1024;
+// Pane collapse is core layout: the strip geometry, divider pairing across a
+// strip, axis and pointer routing that report no price on it, navigator
+// re-homing and the saved flag. Measured 73.35 to 73.74 KiB (0.39 KiB), with the
+// base bundle 116.15 to 116.72 kB. Allow 73.75 KiB; the menu rows stay in the widget.
+const LIMIT_BYTES = 73.75 * 1024;
 
 // Absent from a chart-only build. Each is a string that appears in the adapter
 // source and nowhere in the rendering core.

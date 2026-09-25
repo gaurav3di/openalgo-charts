@@ -47,6 +47,8 @@ export interface PaneState {
   priceScale: PriceScaleState;
   /** Secondary scales only; the right scale remains in priceScale for older readers. */
   scales?: Partial<Record<PriceScaleId, PriceScaleState>>;
+  /** Folded to its header strip. Omission restores the pane open; pane 0 is always open. */
+  collapsed?: boolean;
 }
 
 function stateRecord(input: unknown): Record<string, unknown> {
@@ -125,6 +127,10 @@ export function parsePaneState(input: unknown, allowLegacyPartial = false): Pane
       if (id !== 'left' && id !== '' && !id.startsWith('overlay:')) throw new Error('Invalid secondary price scale id');
       result.scales[id as PriceScaleId] = scaleState(state, false);
     }
+  }
+  if (value.collapsed !== undefined) {
+    if (typeof value.collapsed !== 'boolean') throw new Error('Invalid pane collapse flag');
+    result.collapsed = value.collapsed;
   }
   return result;
 }
