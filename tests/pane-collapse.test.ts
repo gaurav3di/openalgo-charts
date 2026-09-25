@@ -602,6 +602,10 @@ describe('the row a strip shows', () => {
     return { ...made, cci };
   };
   const rowOf = (legend: PaneLegend): number | undefined => legend.options().row;
+  const actionsOf = (study: { legend(): PaneLegend | null }): readonly string[] | undefined => study.legend()!.options().actions;
+  /** A study row's own buttons, and the same row when it leads a lower pane. */
+  const OWN_ROW = ['hide', 'settings', 'close'];
+  const LEAD_ROW = ['hide', 'settings', 'up', 'down', 'collapse', 'maximize', 'close'];
 
   it.each([false, true])('keeps the way back when the first study is closed from the strip (compact legends %s)', (compact) => {
     const { chart, el, rsi, cci } = shared();
@@ -617,14 +621,55 @@ describe('the row a strip shows', () => {
     expect(chart.paneCollapsed(1)).toBe(false);
   });
 
-  it('leaves the rows of an open pane as they were, and gives a strip its control when it folds', () => {
+  it('gives the new first row of an open pane the pane controls, and a fold leaves them as they are', () => {
     const { chart, el, rsi, cci } = shared();
-    chart.removeIndicator(rsi.id);
-    // No fold, no change: the surviving row keeps the actions it was made with.
-    expect(cci.legend()!.options().actions).toEqual(['hide', 'settings', 'close']);
-    chart.setPaneCollapsed(1, true);
+    expect(actionsOf(cci)).toEqual(OWN_ROW);
+    pressControl(chart, el, rsi.legend()!, 1, 'close');
+    expect(chart.indicators().map((study) => study.id)).not.toContain(rsi.id);
+    expect(chart.paneCollapsed(1)).toBe(false);
+    // The pane is open and the surviving row now leads it, so it carries all
+    // four pane controls, not only its own hide, settings and close.
+    expect(actionsOf(cci)).toEqual(LEAD_ROW);
+    pressControl(chart, el, cci.legend()!, 1);
+    expect(chart.paneCollapsed(1)).toBe(true);
+    expect(actionsOf(cci)).toEqual(LEAD_ROW);
     pressControl(chart, el, cci.legend()!, 1);
     expect(chart.paneCollapsed(1)).toBe(false);
+    expect(actionsOf(cci)).toEqual(LEAD_ROW);
+    pressControl(chart, el, cci.legend()!, 1, 'maximize');
+    expect(chart.maximizedPane()).toBe(1);
+  });
+
+  it.each([false, true])('gives a study added below a host row the pane controls (folded %s)', (folded) => {
+    const { chart } = makeChart();
+    chart.addSeries('candlestick').setData(bars(120));
+    chart.addSeries('line', { paneIndex: 1 }).setData(bars(120).map((bar) => ({ time: bar.time, value: bar.close })));
+    const host = new PaneLegend({ id: 'host', title: 'Host', actions: [] });
+    chart.addPrimitive(host, 1);
+    if (folded) chart.setPaneCollapsed(1, true);
+    const cci = chart.addIndicator('cci', {}, { paneIndex: 1 });
+    const rsi = chart.addIndicator('rsi', {}, { paneIndex: 1 });
+    expect([actionsOf(cci), actionsOf(rsi)]).toEqual([LEAD_ROW, OWN_ROW]);
+    // The host keeps its row as it made it.
+    expect(host.options().actions).toEqual([]);
+    chart.removeIndicator(cci.id);
+    expect(actionsOf(rsi)).toEqual(LEAD_ROW);
+  });
+
+  it.each([false, true])('moves the pane controls with the first study row of each pane (folded %s)', (folded) => {
+    const { chart, rsi, cci, macd } = shared();
+    if (folded) { chart.setPaneCollapsed(1, true); chart.setPaneCollapsed(2, true); }
+    // RSI keeps its place ahead of MACD in the stacking order, so it leads the
+    // pane it moves to, and CCI is left leading the pane it moved from.
+    expect(chart.moveIndicator(rsi.id, macd.paneIndex)).toBe(true);
+    expect([actionsOf(cci), actionsOf(rsi), actionsOf(macd)]).toEqual([LEAD_ROW, LEAD_ROW, OWN_ROW]);
+    expect(chart.reorderIndicator(macd.id, -1)).toBe(true);
+    expect([actionsOf(macd), actionsOf(rsi)]).toEqual([LEAD_ROW, OWN_ROW]);
+    expect(chart.moveIndicator(macd.id, chart.panes().length)).toBe(true);
+    expect([actionsOf(rsi), actionsOf(macd)]).toEqual([LEAD_ROW, LEAD_ROW]);
+    expect(chart.moveIndicator(cci.id, rsi.paneIndex)).toBe(true);
+    expect([actionsOf(rsi), actionsOf(cci), actionsOf(macd)]).toEqual([LEAD_ROW, OWN_ROW, LEAD_ROW]);
+    expect(chart.panes()).toHaveLength(3);
   });
 
   it('gives the strip its control when a restored layout folds the pane', () => {

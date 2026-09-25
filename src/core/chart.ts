@@ -39,7 +39,7 @@ import {
 /** PaneLegend's own defaults, restated so a pane can be reset to them. */
 const DEFAULT_LEGEND_TOP = 6;
 const DEFAULT_LEGEND_LEFT = 8;
-/** The controls the first legend row of a lower pane carries for the pane itself. */
+/** The controls the first study row of a lower pane carries for the pane itself. */
 const PANE_ACTIONS: readonly PaneLegendAction[] = ['up', 'down', 'collapse', 'maximize'];
 
 /** A study row's own actions, with the pane's controls before close when the row leads its pane. */
@@ -1774,13 +1774,6 @@ export class Chart {
   private _syncLegendPanes(): void {
     for (const entry of this._legends) entry.paneIndex = this._panes.findIndex(pane => pane.hasPrimitive(entry.legend));
     this._restackLegends();
-    const owned = new Set(this._indicators.map(instance => instance.legend()));
-    const seen = new Set<number>();
-    for (const entry of this._legends) {
-      if (!owned.has(entry.legend)) continue;
-      entry.legend.setOptions({ actions: leadActions(entry.legend.options().actions, entry.paneIndex > 0 && !seen.has(entry.paneIndex)) });
-      seen.add(entry.paneIndex);
-    }
   }
 
   /** Remove one indicator instance by its handle id. Returns true if it existed. */
@@ -1989,13 +1982,11 @@ export class Chart {
       formatPrice: (paneIndex: number, value: number, series?: SeriesApi): string | undefined =>
         (series?.priceScale() ?? this._panes[paneIndex]?.priceScale)?.format(value),
       addIndicatorLegend: (o): PaneLegend => {
-        // The first legend on a non-price pane also carries the pane-level
-        // controls (move / maximize), the way a charting pane toolbar does;
-        // extra rows keep only their own show / settings / delete.
-        const paneActions: PaneLegendAction[] =
-          o.row === 0 && o.paneIndex > 0
-            ? ['hide', 'settings', ...PANE_ACTIONS, 'close']
-            : ['hide', 'settings', 'close'];
+        // A row starts with its own show / settings / delete. Stacking it gives
+        // it the pane-level controls when it is the first study row of a lower
+        // pane, so they follow whichever row leads rather than the row count
+        // at creation, which a host row above it would throw off.
+        const paneActions: PaneLegendAction[] = ['hide', 'settings', 'close'];
         // The source button sits next to the gear, because the two are the
         // same errand at different depths: what this study is set to, and what
         // it is. Only a descriptor that says it has source gets one.
@@ -3182,12 +3173,13 @@ export class Chart {
     const top = this._topPaneIndex(), count = this._indicators.length;
     const leads = new Map<number, PaneLegend>();
     for (const { legend, paneIndex } of this._legends) if (this._studyLegends.has(legend) && !leads.has(paneIndex)) leads.set(paneIndex, legend);
-    // A pane's first study row carries its collapse control, and on a strip
-    // that control is the only way back: the row goes first, above any row the
-    // host placed there, compact rows leave it showing, and it gets the pane
-    // controls even when a removal made it first. An open pane keeps the rows
-    // it had. A strip is one row tall, so a row below it neither draws nor
-    // answers the pointer: it would start inside the strip's lower inset.
+    // A lower pane's first study row carries the pane controls, open or folded,
+    // whether a removal, a move or a host row above it made it first, and no
+    // other study row does. On a strip its collapse control is the only way
+    // back: the row goes first, above any row the host placed there, and
+    // compact rows leave it showing. A strip is one row tall, so a row below
+    // it neither draws nor answers the pointer: it would start inside the
+    // strip's lower inset.
     const strip = (entry: { legend: PaneLegend; paneIndex: number }): boolean => leads.get(entry.paneIndex) === entry.legend && this._collapsedShown(entry.paneIndex);
     let reserved = false;
     for (const entry of [...this._legends.filter(strip), ...this._legends.filter(entry => !strip(entry))]) {
@@ -3200,7 +3192,7 @@ export class Chart {
         reserved = true;
       }
       const collapsed = this._collapsed.has(this._panes[entry.paneIndex]);
-      entry.legend.setOptions(owned ? { row, collapsed, ...collapsed && leads.get(entry.paneIndex) === entry.legend ? { actions: leadActions(entry.legend.options().actions, true) } : {} } : { row });
+      entry.legend.setOptions(owned ? { row, collapsed, actions: leadActions(entry.legend.options().actions, entry.paneIndex > 0 && leads.get(entry.paneIndex) === entry.legend) } : { row });
       rowByPane.set(entry.paneIndex, row + (!folded && entry.legend.options().visible !== false ? 1 : 0));
     }
     if (!reserved) this._indicatorLegendRow = rowByPane.get(top) ?? 0;
