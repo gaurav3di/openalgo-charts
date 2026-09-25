@@ -70,7 +70,9 @@
         "Money Flow Index finite-flow and chronological-window correction with exact companion-engine fixtures",
         "Fresh chronological default scalar SMA and rolling sums with recovery after expired missing or overflowing windows",
         "CPR complete-period extrema with recovery at existing session and calendar boundaries",
-        "Chronological scalar weighted averages and deviations with finite-result guards"
+        "Chronological scalar weighted averages and deviations with finite-result guards",
+        "Default scalar seeded smoothing with finite-window seed recovery, absent-output state retention and committed running overflow",
+        "Directional movement with independent finite-observation seeds and absent ratios across missing or zero ranges"
       ],
       "evidence": [
         "tests/indicator-statistics.test.ts",
@@ -85,7 +87,10 @@
         "tests/ma-cross-numeric-events.test.ts",
         "tests/finite-window-study-recovery.test.ts",
         "tests/cpr-incomplete-period.test.ts",
-        "tests/chronological-deviations.test.ts"
+        "tests/chronological-deviations.test.ts",
+        "tests/seeded-recurrence-recovery.test.ts",
+        "tests/indicator-directional-seeding.test.ts",
+        "tests/e2e/indicator-window-arithmetic.spec.ts"
       ],
       "remaining": [
         "Missing-value and warmup contracts",
@@ -329,6 +334,7 @@
         "Wider output and request fixtures",
         "Adapter extensions for new chart capabilities",
         "Recheck the final chart candidate against the published companion packages",
+        "Correct and release the confirmed Python directional-difference overflow defect found after 0.7.0 publication",
         "Resolve remaining comparable native calculation differences using the completed cross-language numerical inventory"
       ],
       "evidence": [
@@ -360,16 +366,21 @@
       "status": "published-and-public-artifacts-verified",
       "requirement": "Compare all shipped numerical indicators with equivalent calculations in both language engines, fix confirmed deviations and publish both companion packages from one versioned source.",
       "sourceCommit": "f9ab00e4e9238b442ae0ad3639f52bc5dc45394b",
-      "releaseUrl": "https://github.com/marketcalls/openscript/releases/tag/v0.7.0"
+      "releaseUrl": "https://github.com/marketcalls/openscript/releases/tag/v0.7.0",
+      "correctivePatch": {
+        "version": "0.7.1",
+        "status": "preparing-unpublished-correction",
+        "reason": "A new finite-extreme ADX fixture exposes four Python-only differences after a selected directional change overflows. The published 0.7.0 version is immutable; the correction requires a new patch release and renewed package validation."
+      }
     }
   },
   "validation": {
-    "chartTests": 7787,
-    "chartTestFiles": 342,
+    "chartTests": 7826,
+    "chartTestFiles": 343,
     "compiledProgramTests": 18,
     "demoTests": 478,
     "demoTestFiles": 42,
-    "browserEvidence": "The current affected suite covers 183 cases across all three browser engines: numerical recovery, annotation text, user navigation, reference controls, typed inputs, chart preferences, curved paths, table details and wheel behavior. It passed 182 cases initially; the remaining CPR case passed alone after a browser context-close protocol error. No product assertion was relaxed for that retry. Actual screenshots were inspected; mobile input uses browser emulation and traffic uses fixtures.",
+    "browserEvidence": "The latest numerical batch passes 45 cases across all three browser engines, including seeded and directional gap recovery, exact readings, rendered pixels and forming-bar rewrites. The preceding capability batch passed 183 affected cases covering annotation text, navigation, reference controls, typed inputs, chart preferences, curves, tables, wheels and numerical recovery; one browser context-close protocol error passed on a targeted retry without changing assertions. Actual screenshots were inspected. Mobile input uses browser emulation and traffic uses fixtures.",
     "website": "63 static pages built successfully. All 1405 generated API files in the static output match the warning-free source API build byte-for-byte.",
     "chartOnlyBrotliKiB": 73.26,
     "chartOnlyBudgetKiB": 73.4,
@@ -379,7 +390,7 @@
     "allTiersBrotliKB": 296.75,
     "budgetChange": "Native navigation controls, idle fade scheduling and annotation typography add 1695 bytes to base (112547 to 114242) and 1.48 KiB to chart-only (71.78 to 73.26). Numerical corrections add 128 bytes to indicators (36065 to 36193); widget navigation controls add 32 bytes (62190 to 62222). All tiers total 296753 bytes. Limits: base 114.5 kB, base plus trade 122.5 kB, indicators 36.3 kB, terminal 254.5 kB, all 297 kB and chart-only 73.4 KiB; other tier limits unchanged.",
     "review": "Independent typed-input review found reentrant destruction, pane-slot replacement and context changes during pick:end. Eight actual-chart regressions failed before capture lifetime fences and now pass. No additional blocker found in scalar validation, exchange defaults, restore preflight or public exports. A final host review reproduced four failures involving constructor and __proto__ exchange keys; safe own-property defaults, patches and staged collection now preserve them through selection, Defaults, Cancel and Apply.",
-    "packageVerification": "Full verify passes lint, typecheck, 7787 unit tests, seven endurance checks, build, all 478 example-host tests, declaration identity, measured size budgets and optional-tier removal checks. The installed public companion 0.7.0 passes 18 compiled-program integration checks and public adapter typechecking. API documentation generates without warnings.",
+    "packageVerification": "Full verify passes lint, typecheck, 7826 unit tests, seven endurance checks, build, all 478 example-host tests, declaration identity, measured size budgets and optional-tier removal checks. The installed public companion 0.7.0 passes 18 compiled-program integration checks and public adapter typechecking. API documentation generates without warnings. The separately discovered Python extreme-directional defect is outside those integration fixtures and remains tracked for correction.",
     "latestEngineSourceReview": "Companion source f9ab00e4e9238b442ae0ad3639f52bc5dc45394b passes 2161 JavaScript tests, 956 Python tests and 102 conformance cases, with 19 compiler-only skips. Strict gates pass 6836 cases and 1504908 accepted calls with zero exact-bit, absence, oracle or execution differences. Both public 0.7.0 packages are published. Downloaded public artifacts pass 363 programs across all 116 keys, 124977 exact cells and 6756 independent expected cells. Archived source/build bytes and registry integrity match; attestation digest/source/workflow claims checked without cryptographic signature verification.",
     "directionalSeedAudit": "129 focused tests pass after aligning directional-movement seeds with true range. Built-package exact-value and rendered-line checks pass in all three browser engines; screenshots inspected. First-available indices and existing chart missing-value behavior are preserved. See numerical-audit.md for the independent fixture and remaining limits.",
     "hullLengthAudit": "173 focused tests and six browser cases across three engines pass. Standalone HMA now shares Hull Suite's integer half and rounded square-root windows, with length one as identity. Six compiled Hull fixtures match chart formulas and availability within 1e-12, while all fifteen audited compiled programs agree bit-for-bit between the companion engines. Chart summation order and missing-value contracts remain under audit.",
@@ -396,7 +407,10 @@
     "svgFiniteCoordinateAudit": "Five failing large-finite coordinate regressions now pass, including a smooth primitive path. Existing ordinary rounding, nonfinite fallback, signed-zero and subnormal formatting remain unchanged; 56 SVG/curve tests pass.",
     "visualWebsiteEvidence": "The built curved annotation example passes initial and panned pixel checks in six browser/width combinations. The merged-table example passes 18 plain/heading/range states across three engines at 1280 and 390 CSS pixels, with exact pixel restoration after leaving, unchanged source data and no hover detail in SVG. Representative native and site screenshots inspected; no page errors or horizontal overflow. Touch checks use browser emulation, not physical hardware.",
     "visualReview": "Independent review verified curve geometry and found finite-coordinate overflow in shared SVG decimal rounding; five RED regressions now pass after its correction. Table review and deferred-frame tests cover stale row identities, duplicate external IDs, fractional measured cell bounds and resized export geometry. No further blocker found.",
-    "currentSourceNumericalRefresh": "Fresh native source on all 1,148 recorded compiled cases compares 1,286,742 aligned output cells. Recorded npm/Python outputs have zero differences; 135 native columns still differ, 99 match varied finite observations, 28 have one distinct finite value and four have no finite observations. No new compilation, calendar or causal-marker certification is implied by this refresh.",
+    "currentSourceNumericalRefresh": "Fresh native source after seeded recurrence and directional recovery on all 1,148 recorded compiled cases compares 1,286,742 aligned output cells. The recorded npm/Python arrays agree; 106 native columns still differ, 128 match varied finite observations, 28 have one distinct finite value and four have no finite observations. All three directional columns become exact in this corpus, removing 5001 differences from the post-recurrence result and leaving 100030 differing cells. No new compilation, calendar or causal-marker certification is implied. The separately discovered fresh Python overflow defect is outside this recorded corpus and prevents any global engine-equality claim.",
+    "seededRecurrenceAudit": "420 focused tests include 27 new cases. Seventeen freshly compiled fixtures compare 340 cells exactly across native, npm and Python. Independent review checks 20000 generated cases and 161328 cells against a separate recurrence oracle, plus 90000 comparisons preserving explicit options and unsupported periods. Public first-value EMA and resolved study-source propagation are unchanged. Ordinary recurrence is linear; repeated overflowing seed windows can require bars-times-period work.",
+    "seededRecurrenceBrowserEvidence": "The seeded and directional regressions failed against their previous bundles. Forty-five numerical browser cases then passed in all three engines, including seeded recovery, plot gaps, genuine later WaveTrend crossings, directional zero/missing-range recovery and same-time forming-bar removal/restoration. Representative chart screenshots were inspected; no page errors occurred.",
+    "directionalObservationAudit": "267 focused tests pass after independent directional seeding and missing/zero-range correction. Fifteen fresh compiled cases compare 396 cells exactly between native and npm; fourteen cases and 381 cells also agree with Python. One finite-difference overflow fixture exposes four Python-only differences, tracked for a corrective patch. An independent seven-case zero-range corpus matches 114 cells across all three implementations.",
     "windowBrowserEvidence": "Fifteen cases pass across all three engines: false MA Cross suppression and forming-bar revision, rolling-sum recovery and absent segments, Vortex and Ultimate recovery, exact public weighted/deviation values, and CPR incomplete/corrected/restored periods. Representative actual chart screenshots inspected.",
     "navigationBrowserEvidence": "Twenty-four cases pass across all three engines: twelve native policy and persistence cases at 900/390 CSS pixels, six idle reveal/hide cases and six reference-host control cases at 1100/390 CSS pixels. Disabled and accessible states, actual buttons, selected-chart changes, restoration, replacement, teardown and programmatic viewport exemptions are checked. Original idle fades failed in WebKit at both widths before the correction. Representative chart/settings/host screenshots inspected.",
     "typographyBrowserEvidence": "Eighteen cases pass across all three engines at 1100 and 390 CSS pixels and DPR 1, 1.5 and 2. Actual text and glyph pixels, separate colors, SVG fonts and alignment, settings changes, hide/show, restoration, forming-bar updates, legacy defaults and removal are verified. The mobile marker retains its existing four-pixel CSS diameter.",

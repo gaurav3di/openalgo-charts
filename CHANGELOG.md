@@ -24,6 +24,14 @@ All notable changes to OpenAlgo Charts.
 - Default scalar weighted averages, population deviations and absolute deviations
   also accumulate oldest first and omit nonfinite results. This aligns their
   rounding and composed band calculations with the companion engines.
+- Default scalar SMA-seeded exponential and Wilder averages recover from missing
+  or overflowing seed windows. After seeding, an absent input leaves a plot gap
+  while preserving the running state; a nonfinite running update stays unavailable.
+  Public first-value EMA and explicit missing-value policies keep their behavior.
+- Directional movement omits unavailable changes instead of counting them as
+  zero. Its averages retain their state across gaps, and strength calculation
+  waits for current directional readings rather than advancing from stale values.
+  Zero smoothed range produces a gap instead of repeating an undefined ratio.
 - CPR keeps a period unavailable if any high or low is nonfinite. It recovers
   after the next complete period, preserving the existing session and calendar
   boundaries and final-close convention.

@@ -5,6 +5,14 @@ equivalent calculations with both companion language engines. Inventory and
 successful execution are not numerical conformance. The complete audit remains
 open, including documented differences in seeds and missing-value behavior.
 
+The expanded ADX audit found a Python-only defect after 0.7.0 publication:
+selected movement can overflow from finite prices and enter recursive state
+without normalization. A five-bar fixture has four differing cells; native and
+npm recover while Python remains unavailable. A corrective patch is being
+prepared in an isolated checkout. The earlier recorded corpus remains useful
+evidence for its tested inputs, but it does not establish agreement on this new
+boundary.
+
 ## Directional movement seed
 
 Positive and negative movement now seed from the same first real change window
@@ -18,9 +26,29 @@ For high/low/close rows `(10,8,9)`, `(12,9,11)`, `(11,7,8)`, `(13,9,12)` and
 `[null,null,null,25,37.5]`. The final positive and negative readings are 24 and 8.
 Both companion engines already produce these ordinary-case results.
 
-The change preserves first-available indices and the established chart behavior
-on zero range and absent observations. Those missing-value contracts still need
-separate comparison; ordinary-case equality does not certify them.
+That seed correction preserved first-available indices and the then-existing
+chart behavior on zero range and absent observations. The later seeded recurrence
+audit exposed a separate gap: unavailable high/low changes were counted as zero,
+while an unavailable true-range seed or update could leave ratios frozen forever.
+Correcting the recurrence alone let true range resume and exposed those decayed
+movement numerators. The observation-policy correction treats unavailable
+movements as absent, retains each smoother's state and requires current
+directional readings before advancing strength.
+
+Zero smoothed true range also leaves both directional ratios and strength absent,
+matching the companion contract. The previous native display carry could repeat
+a stale ratio and feed its DX into the strength smoother despite an undefined
+current division. A flat bar's zero movement remains a real finite observation;
+an unavailable high/low change does not become a zero movement.
+
+The observation correction passes 267 focused tests. Fifteen freshly compiled
+cases compare 396 cells exactly between native and npm. Fourteen cases and
+381 cells also agree with Python; the remaining finite-difference overflow
+fixture exposes the four-cell Python defect described above. A separate
+independent seven-case corpus matches 114 cells across all three implementations,
+covering flat ranges and resumed strength. All 45 affected numerical browser
+cases pass across three engines, including gaps, zero ranges and forming-bar
+rewrites; actual screenshots were inspected.
 
 Verification includes 129 focused unit tests, same-time chart updates and prefix
 execution. A built-package browser regression first reproduced the old wrong
@@ -100,7 +128,51 @@ not evidence of numerical equivalence. This refresh does not rerun compilation,
 calendar-table oracles or causal marker timing. Remaining differences include
 ordinary last-bit arithmetic, missing observations and distinct algorithms.
 
+After seeded recurrence recovery, the same recorded corpus has 109 differing
+columns and 125 with exact varied finite observations. Single-value and absent
+categories are unchanged. Total differing cells decrease from 126,450 to 105,031;
+38 columns improve and none increase in total differences. Availability
+differences fall from 75,899 to 51,271, while finite-bit differences rise from
+50,551 to 53,760 as recovered output exposes remaining arithmetic differences.
+This is another source refresh against recorded engine results, not new
+compilation or a universal equivalence claim.
+
+The directional observation correction makes its three columns exact on this
+same corpus, leaving 106 differing columns and 128 with exact varied finite
+observations. It removes another 5,001 differences, leaving 100,030 differing
+cells. Constant/absent classifications are unchanged. The new Python overflow
+counterexample is outside these recorded inputs, so agreement of the recorded
+engine arrays cannot support a global claim about the published engines.
+
 ## Confirmed boundary corrections
+
+Default positive safe-integer scalar `smaSeededEma` and `rma` now seed from the
+first complete finite chronological window. Missing or overflowing seed windows
+can expire and recover. After seeding, an absent input emits a gap while keeping
+the running state. A nonfinite update from a finite input stays committed rather
+than freezing or reseeding. Public first-value EMA, explicit compensated options,
+resolved study-source propagation and unsupported scalar paths retain their
+existing behavior.
+
+The correction passes 420 focused tests, including 27 new cases. Seventeen fresh
+compiled fixtures compare 340 cells exactly across native, npm and Python
+calculations, covering twelve helper cases, four composed studies and signed
+zero. Independent review checks 20,000 generated cases and 161,328 cells against
+a separate seed-search oracle, plus 90,000 exact comparisons of preserved routes
+against the previous commit. This is finite-corpus evidence, not a universal
+equivalence claim for every composed study.
+
+Both new browser regressions failed against the previous bundle. All 45 affected
+numerical browser cases then passed across three engines. New checks cover actual
+line and marker pixels, gap recovery and forming-bar replacement/removal. Six
+representative recurrence screenshots and six directional screenshots were inspected.
+
+Ordinary recurrence costs O(bars + period), with constant working space excluding
+output. Repeated overflowing seed windows can cost O(bars * period). At 20,000
+bars and period 1,000, measured median times are 0.16 ms for seeded EMA and
+0.11 ms for RMA on ordinary finite data, and 10.58 ms and 10.47 ms respectively
+with repeated overflowing seed windows. These are observations on the validation
+machine, not timing guarantees.
 
 Default positive safe-integer scalar SMA and rolling sums now add each current
 window oldest first. Only missing-observation counts are carried between windows.

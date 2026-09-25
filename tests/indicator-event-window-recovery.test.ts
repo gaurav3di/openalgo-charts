@@ -86,14 +86,17 @@ describe('event-sensitive finite window means', () => {
     expect(alpha(data).alphatrend).toEqual([null, null, null, 100]);
   });
 
-  it('does not change the existing WaveTrend recursive missing-source policy', () => {
+  it('resumes WaveTrend after a missing source without a cross-gap event', () => {
     const data = bars(24).map((bar, i) => ({ ...bar, close: i === 15 ? NaN : bar.close }));
     const result = wave(data);
     expect(result.wt1.slice(0, 7)).toEqual(Array(7).fill(null));
     expect(result.wt2.slice(0, 8)).toEqual(Array(8).fill(null));
     expect(result.wt1[14]).not.toBeNull();
-    expect(result.wt1.slice(15)).toEqual(Array(9).fill(null));
-    expect(result.wt2.slice(15)).toEqual(Array(9).fill(null));
+    expect(result.wt1.slice(15)).toEqual([null, 72, 69.86666666666667, 67.18315789473685, 65.4950799220273, 64.80429433002797, 64.75322336418594, 65.01162983600206, 65.3659522605756]);
+    expect(result.wt2.slice(15)).toEqual([null, null, 70.93333333333334, 68.52491228070176, 66.33911890838208, 65.14968712602763, 64.77875884710696, 64.88242660009399, 65.18879104828883]);
+    expect(result.buy.slice(15, 18)).toEqual([null, null, null]);
+    expect(result.sell.slice(15, 18)).toEqual([null, null, null]);
+    expect(result.buy[22]).toBe(64.88242660009399);
   });
 
   it('recalculates a forming tail without retaining its transient signal', () => {

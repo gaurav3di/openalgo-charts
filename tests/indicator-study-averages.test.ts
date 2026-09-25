@@ -84,7 +84,7 @@ describe('legacy price-source moving averages', () => {
   const legacyCases = [
     { descriptor: SMA, finite: [null, 2, 6, 8, 9], gap: [null, 2, null, null, 8, 10] },
     { descriptor: WMA, finite: [null, 7 / 3, 7, 23 / 3, 29 / 3], gap: [null, 7 / 3, null, null, 25 / 3, 31 / 3] },
-    { descriptor: EMA, finite: [null, 2, 20 / 3, 62 / 9, 260 / 27], gap: [null, 2, null, null, null, null] },
+    { descriptor: EMA, finite: [null, 2, 20 / 3, 62 / 9, 260 / 27], gap: [null, 2, null, 16 / 3, 70 / 9, 268 / 27] },
   ];
 
   it.each(legacyCases)('$descriptor.id retains string, default and unknown-string selection without consulting the resolver', ({ descriptor, finite }) => {
@@ -98,7 +98,7 @@ describe('legacy price-source moving averages', () => {
       finite.map(value => value === null ? null : value * 2));
   });
 
-  it.each(legacyCases)('$descriptor.id retains the existing price-gap calculation path', ({ descriptor, gap }) => {
+  it.each(legacyCases)('$descriptor.id applies its default price-gap calculation path', ({ descriptor, gap }) => {
     expectColumn(descriptor.calc(barsOf([1, 3, NaN, 7, 9, 11]), { source: 'close', length: 2 }, {}).ma, gap);
   });
 });

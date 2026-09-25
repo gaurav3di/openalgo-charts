@@ -34,7 +34,7 @@ const cases = [
   },
   {
     name: 'rma', run: rma,
-    legacy: [NaN, 1.5, NaN, NaN, NaN, NaN],
+    legacy: [NaN, 1.5, NaN, 2.75, 3.875, NaN],
     skipped: [NaN, NaN, NaN, 2, 3.5, 3.5, 5.25, 5.25],
     propagated: [NaN, NaN, 2, NaN, NaN, 6, 7.5, NaN],
     singleSkip: [NaN, 2, 2, 4], singlePropagate: [NaN, 2, NaN, 4],
@@ -55,7 +55,7 @@ const cases = [
   },
   {
     name: 'smaSeededEma', run: smaSeededEma,
-    legacy: [NaN, 1.5, NaN, NaN, NaN, NaN],
+    legacy: [NaN, 1.5, NaN, 3.1666666666666665, 4.388888888888888, NaN],
     skipped: [NaN, NaN, NaN, 2, 4, 4, 6, 6],
     propagated: [NaN, NaN, 2, NaN, NaN, 6, 8, NaN],
     singleSkip: [NaN, 2, 2, 4], singlePropagate: [NaN, 2, NaN, 4],
@@ -97,7 +97,7 @@ const cases = [
   },
 ];
 
-describe('legacy scalar-window behavior', () => {
+describe('default scalar-window behavior', () => {
   it.each(cases)('$name preserves omitted and undefined option results', ({ run, legacy }) => {
     const values = [1, 2, NaN, 4, 5, NaN];
     expect(run(values, 2)).toEqual(legacy);

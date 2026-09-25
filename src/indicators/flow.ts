@@ -25,10 +25,9 @@ const vol = (b: Bar): number =>
  * The Accumulation/Distribution money-flow term, shared by Chaikin Money Flow
  * and the Chaikin Oscillator.
  *
- * The guard is the reference own and it is load-bearing: a bar with no range has an
- * undefined close location, and the reference platform contributes exactly 0 for it rather
- * than na. Letting the division stand would put a NaN into a running sum and
- * blank every bar after it.
+ * A bar with no range has an undefined close location. Its flow contribution
+ * is deliberately zero, keeping the flat bar neutral in both the rolling and
+ * cumulative calculations that consume this term.
  */
 function moneyFlow(bars: readonly Bar[]): number[] {
   const out = new Array<number>(bars.length);
@@ -41,12 +40,10 @@ function moneyFlow(bars: readonly Bar[]): number[] {
 }
 
 /**
- * the reference `ema` over a series that opens with a warmup gap.
- *
- * `change` is na on bar 0, so the input to an EMA built on it starts one bar
- * late. the reference seeds from the first *full window of real values*, which pushes
- * the whole plot one bar right; feeding the NaN straight to `smaSeededEma` would
- * instead poison the seed and blank the series forever.
+ * Align an SMA-seeded EMA with the first finite input. A `change` series has
+ * no value on bar 0, so its smoothing warmup starts later too. Slicing and
+ * padding preserve that bar alignment; `smaSeededEma` handles finite-window
+ * seeding and subsequent gaps.
  */
 function emaFromFirstFinite(values: readonly number[], period: number): number[] {
   const out = new Array<number>(values.length).fill(NaN);

@@ -182,3 +182,203 @@ test('Vortex and Ultimate paint finite suffixes after expired bad windows', asyn
   expect(errors).toEqual([]);
   await page.screenshot({ path: info.outputPath('finite-window-consumer-recovery.png') });
 });
+
+test('seeded smoothers paint recovered windows and revise the forming observation', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await fixture(page);
+  const result = await page.evaluate(async () => {
+    const { lib, math, chart, source, paint, ink } = window.__windowArithmetic;
+    lib.registerIndicator({
+      id: 'browser-seeded-recovery', name: 'Seeded recovery', placement: 'pane', inputs: [],
+      plots: [
+        { key: 'ema', type: 'line', style: { color: '#ff9900', lineWidth: 3 } },
+        { key: 'rma', type: 'line', style: { color: '#00ccff', lineWidth: 3 } },
+      ],
+      calc: bars => {
+        const values = bars.map(bar => bar.close);
+        return { ema: math.nulls(math.smaSeededEma(values, 2)), rma: math.nulls(math.rma(values, 2)) };
+      },
+    });
+    source.setData([NaN, 1, 3, NaN, 7, 9, 11].map((close, i) => ({
+      time: 1700000000 + i * 60, open: close, high: close, low: close, close,
+    })));
+    const study = chart.addIndicator('browser-seeded-recovery');
+    window.__windowArithmetic.study = study;
+    const plot = study.series('ema')!;
+    plot.priceScale().setAutoScale(false);
+    plot.priceScale().setPriceRange({ min: 0, max: 12 });
+    chart.setPaneWeight(study.paneIndex, 1.5);
+    chart.setVisibleLogicalRange({ from: 0.5, to: 7 });
+    await paint();
+    return { values: study.values(),
+      ema: ink(plot, study.paneIndex, 4.5, 59 / 9, [255, 153, 0]),
+      rma: ink(plot, study.paneIndex, 4.5, 5.625, [0, 204, 255]),
+      gap: ink(plot, study.paneIndex, 3, 11 / 3, [255, 153, 0]),
+    };
+  });
+  expect(result.values.ema).toEqual([null, null, 2, null, 16 / 3, 70 / 9, 268 / 27]);
+  expect(result.values.rma).toEqual([null, null, 2, null, 4.5, 6.75, 8.875]);
+  expect(result.ema).toBeGreaterThan(1);
+  expect(result.rma).toBeGreaterThan(1);
+  expect(result.gap).toBe(0);
+  await page.screenshot({ path: info.outputPath('seeded-recovery.png') });
+  const revision = await page.evaluate(async () => {
+    const { source, study, paint, ink } = window.__windowArithmetic;
+    const update = (close: number) => source.update({
+      time: 1700000000 + 6 * 60, open: close, high: close, low: close, close,
+    });
+    update(NaN);
+    await paint();
+    const absent = study!.values();
+    const gapInk = ink(study!.series('rma')!, study!.paneIndex, 5.5, 7.8125, [0, 204, 255]);
+    update(13);
+    await paint();
+    const revised = study!.values();
+    update(11);
+    await paint();
+    return { absent, gapInk, revised, restored: study!.values(),
+      restoredInk: ink(study!.series('rma')!, study!.paneIndex, 5.5, 7.8125, [0, 204, 255]) };
+  });
+  expect(revision.absent.ema).toEqual([...result.values.ema.slice(0, -1), null]);
+  expect(revision.absent.rma).toEqual([...result.values.rma.slice(0, -1), null]);
+  expect(revision.gapInk).toBe(0);
+  expect(revision.revised.ema).toEqual([...result.values.ema.slice(0, -1), 11.25925925925926]);
+  expect(revision.revised.rma).toEqual([...result.values.rma.slice(0, -1), 9.875]);
+  expect(revision.restored).toEqual(result.values);
+  expect(revision.restoredInk).toBeGreaterThan(1);
+  expect(errors).toEqual([]);
+  await page.screenshot({ path: info.outputPath('seeded-forming-restored.png') });
+});
+
+test('WaveTrend retains a genuine later crossing after an absent observation', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await fixture(page);
+  const result = await page.evaluate(async () => {
+    const { chart, source, paint, ink } = window.__windowArithmetic;
+    source.setData(Array.from({ length: 23 }, (_, i) => {
+      const close = i === 15 ? NaN : 100 + i / 4;
+      return { time: 1700000000 + i * 60, open: close, high: close, low: close, close };
+    }));
+    const study = chart.addIndicator('wavetrend', {
+      source: 'close', n1: 3, n2: 4, sigLen: 2, filterZone: false,
+      wt1Color: '#ff9900', wt2Color: '#00ccff', buyColor: '#ff00ff', sellColor: '#ff00ff',
+      showRegDiv: false, showHidDiv: false,
+    });
+    window.__windowArithmetic.study = study;
+    const plot = study.series('wt2')!;
+    plot.priceScale().setAutoScale(false);
+    plot.priceScale().setPriceRange({ min: 60, max: 80 });
+    chart.setPaneWeight(study.paneIndex, 1.5);
+    chart.setVisibleLogicalRange({ from: 13.5, to: 23 });
+    await paint();
+    return { values: study.values(),
+      falseMarker: ink(plot, study.paneIndex, 18, 68.52491228070176, [255, 0, 255]),
+      genuine: ink(plot, study.paneIndex, 22, 64.88242660009399, [255, 0, 255]),
+      resumedLine: ink(plot, study.paneIndex, 16.5, 70.93333333333334, [255, 153, 0]) };
+  });
+  expect(result.values.wt1.slice(15, 18)).toEqual([null, 72, 69.86666666666667]);
+  expect(result.values.wt2.slice(15, 18)).toEqual([null, null, 70.93333333333334]);
+  expect(result.values.buy).toEqual([...Array(22).fill(null), 64.88242660009399]);
+  expect(result.values.sell).toEqual(Array(23).fill(null));
+  expect(result.falseMarker).toBe(0);
+  expect(result.genuine).toBeGreaterThan(3);
+  expect(result.resumedLine).toBeGreaterThan(1);
+  await page.screenshot({ path: info.outputPath('wavetrend-gap-crossing.png') });
+  const revision = await page.evaluate(async () => {
+    const { source, study, paint, ink } = window.__windowArithmetic;
+    const update = (close: number) => source.update({
+      time: 1700000000 + 22 * 60, open: close, high: close, low: close, close,
+    });
+    update(105);
+    await paint();
+    const removed = study!.values().buy[22];
+    const removedInk = ink(study!.series('wt2')!, study!.paneIndex, 22, 64.88242660009399, [255, 0, 255]);
+    update(105.5);
+    await paint();
+    return { removed, removedInk, restored: study!.values(),
+      restoredInk: ink(study!.series('wt2')!, study!.paneIndex, 22, 64.88242660009399, [255, 0, 255]) };
+  });
+  expect(revision.removed).toBeNull();
+  expect(revision.removedInk).toBe(0);
+  expect(revision.restored).toEqual(result.values);
+  expect(revision.restoredInk).toBeGreaterThan(3);
+  expect(errors).toEqual([]);
+  await page.screenshot({ path: info.outputPath('wavetrend-forming-crossing-restored.png') });
+});
+
+test('directional averages retain state across unavailable changes without drawing stale readings', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await fixture(page);
+  const result = await page.evaluate(async () => {
+    const { chart, source, paint, ink } = window.__windowArithmetic;
+    source.setData(Array.from({ length: 11 }, (_, i) => {
+      const close = i === 6 ? NaN : 40 + i;
+      return { time: 1700000000 + i * 60, open: close, high: close + 1, low: close - 1, close };
+    }));
+    const study = chart.addIndicator('adx', {
+      period: 3, adxPeriod: 3, plusColor: '#ff9900', minusColor: '#00ccff', adxColor: '#ff00ff',
+    });
+    window.__windowArithmetic.study = study;
+    const plot = study.series('plusDi')!;
+    plot.applyOptions({ lineWidth: 3 });
+    plot.priceScale().setAutoScale(false);
+    plot.priceScale().setPriceRange({ min: 0, max: 120 });
+    chart.setPaneWeight(study.paneIndex, 1.5);
+    chart.setVisibleLogicalRange({ from: 2.5, to: 11 });
+    await paint();
+    return { values: study.values(),
+      gap: ink(plot, study.paneIndex, 6.5, 50, [255, 153, 0]),
+      resumed: ink(plot, study.paneIndex, 8.5, 50, [255, 153, 0]),
+      strength: ink(plot, study.paneIndex, 8.5, 100, [255, 0, 255]) };
+  });
+  expect(result.values.plusDi).toEqual([null, null, null, 50, 50, 50, null, null, 50, 50, 50]);
+  expect(result.values.minusDi).toEqual([null, null, null, 0, 0, 0, null, null, 0, 0, 0]);
+  expect(result.values.adx).toEqual([null, null, null, null, null, 100, null, null, 100, 100, 100]);
+  expect(result.gap).toBe(0);
+  expect(result.resumed).toBeGreaterThan(1);
+  expect(result.strength).toBeGreaterThan(1);
+  const revision = await page.evaluate(async () => {
+    const { source, study, paint, ink } = window.__windowArithmetic;
+    const update = (close: number) => source.update({
+      time: 1700000000 + 10 * 60, open: close, high: close + 1, low: close - 1, close,
+    });
+    update(NaN);
+    await paint();
+    const absent = study!.values();
+    const gapInk = ink(study!.series('plusDi')!, study!.paneIndex, 9.5, 50, [255, 153, 0]);
+    update(50);
+    await paint();
+    return { absent, gapInk, restored: study!.values(),
+      restoredInk: ink(study!.series('plusDi')!, study!.paneIndex, 9.5, 50, [255, 153, 0]) };
+  });
+  for (const key of ['plusDi', 'minusDi', 'adx']) {
+    expect(revision.absent[key]).toEqual([...result.values[key].slice(0, -1), null]);
+  }
+  expect(revision.gapInk).toBe(0);
+  expect(revision.restored).toEqual(result.values);
+  expect(revision.restoredInk).toBeGreaterThan(1);
+  expect(errors).toEqual([]);
+  await page.screenshot({ path: info.outputPath('directional-gap-restored.png') });
+  const flat = await page.evaluate(async () => {
+    const { chart, source, study, paint, ink } = window.__windowArithmetic;
+    study!.setSettings({ period: 1, adxPeriod: 2 });
+    source.setData([[10, 0, 5], [11, 1, 6], [10, 2, 6], [6, 6, 6], [12, 6, 9], [11, 5, 8]]
+      .map(([high, low, close], i) => ({ time: 1700000000 + i * 60, open: close, high, low, close })));
+    chart.setVisibleLogicalRange({ from: 0.5, to: 6 });
+    await paint();
+    const plot = study!.series('adx')!;
+    return { values: study!.values(),
+      stale: ink(plot, study!.paneIndex, 3, 25, [255, 0, 255]),
+      resumed: ink(plot, study!.paneIndex, 4.5, 81.25, [255, 0, 255]) };
+  });
+  expect(flat.values.plusDi).toEqual([null, 10, 0, null, 100, 0]);
+  expect(flat.values.minusDi).toEqual([null, 0, 0, null, 0, (1 / 6) * 100]);
+  expect(flat.values.adx).toEqual([null, null, 50, null, 75, 87.5]);
+  expect(flat.stale).toBe(0);
+  expect(flat.resumed).toBeGreaterThan(1);
+  expect(errors).toEqual([]);
+  await page.screenshot({ path: info.outputPath('directional-zero-range-recovery.png') });
+});

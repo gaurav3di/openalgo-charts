@@ -315,10 +315,38 @@ export function wma(values: readonly number[], period: number | readonly number[
   return out;
 }
 
+/** Seed from a current finite suffix; later source gaps leave running state intact. */
+function seededSmoothing(values: readonly number[], period: number, exponential: boolean): number[] {
+  const out = new Array<number>(values.length).fill(NaN);
+  if (values.length < period) return out;
+  const weight = 2 / (period + 1);
+  let consecutive = 0, running = NaN, seeded = false;
+  for (let i = 0; i < values.length; i++) {
+    const value = values[i];
+    if (!Number.isFinite(value)) { consecutive = 0; continue; }
+    if (!seeded) {
+      if (++consecutive < period) continue;
+      let sum = 0;
+      for (let at = i + 1 - period; at <= i; at++) sum += values[at];
+      const mean = sum / period;
+      if (!Number.isFinite(mean)) continue;
+      running = mean === 0 ? 0 : mean;
+      seeded = true;
+    } else {
+      // Overflow from an actual update remains committed. It is not a new seed.
+      running = exponential ? value * weight + running * (1 - weight)
+        : (running * (period - 1) + value) / period;
+    }
+    if (Number.isFinite(running)) out[i] = running === 0 ? 0 : running;
+  }
+  return out;
+}
+
 /**
- * Wilder's smoothing (RMA): seed with the SMA of the first `period` values,
- * then `(prev * (period - 1) + v) / period`. The basis of RSI, ATR, and ADX.
- * Omitted options preserve legacy behavior. Supplied `skip` seeds from period
+ * Wilder's smoothing (RMA): seed from the first complete finite window,
+ * then `(prev * (period - 1) + v) / period`. Valid scalar defaults retry
+ * nonfinite seeds, leave a gap for missing inputs and retain seeded state.
+ * Running overflow is unavailable without restarting. Supplied `skip` seeds from period
  * finite observations and holds state across gaps. `propagate` clears state on
  * a missing input and reseeds after period consecutive finite observations.
  * Warmup is NaN. The option path requires a positive safe-integer period and
@@ -326,6 +354,7 @@ export function wma(values: readonly number[], period: number | readonly number[
  */
 export function rma(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
   if (options !== undefined) return observedSmoothing(values, period, options, 1);
+  if (Number.isSafeInteger(period) && period > 0) return seededSmoothing(values, period, false);
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0 || n < period) return out;
@@ -443,8 +472,10 @@ export function nulls(values: readonly number[]): (number | null)[] {
 // documented behaviour (`ema` matches `openalgo.ta`, not the reference).
 
 /**
- * EMA seeded with an SMA, then smoothed with alpha=2/(period+1). Omitted
- * options preserve the legacy seed and missing-value behavior. Supplied
+ * EMA seeded with an SMA, then smoothed with alpha=2/(period+1). Valid scalar
+ * defaults seed from the first complete finite window, retry nonfinite seeds,
+ * and emit gaps for missing inputs while retaining seeded state. A nonfinite
+ * running update stays committed, without restarting. Supplied
  * `skip` seeds from period finite observations and holds state across gaps.
  * `propagate` clears state on any missing input and reseeds with period
  * consecutive finite observations. Warmup is NaN. Invalid option-path
@@ -453,6 +484,7 @@ export function nulls(values: readonly number[]): (number | null)[] {
  */
 export function smaSeededEma(values: readonly number[], period: number, options?: NumericalWindowOptions): number[] {
   if (options !== undefined) return observedSmoothing(values, period, options, 2);
+  if (Number.isSafeInteger(period) && period > 0) return seededSmoothing(values, period, true);
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
   if (period <= 0 || n < period) return out;

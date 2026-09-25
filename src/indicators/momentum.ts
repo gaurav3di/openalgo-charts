@@ -262,54 +262,36 @@ export const ADX: IndicatorDescriptor = {
     // on that fabricated term starts the whole study a bar early and biases every
     // value after it, so the standard definition leaves bar 0 absent here.
     if (n > 0) tr[0] = NaN;
-    const plusDm = new Array<number>(n).fill(0);
-    const minusDm = new Array<number>(n).fill(0);
+    const plusDm = new Array<number>(n).fill(NaN);
+    const minusDm = new Array<number>(n).fill(NaN);
     for (let i = 1; i < n; i++) {
+      if (!Number.isFinite(high[i]) || !Number.isFinite(low[i])
+        || !Number.isFinite(high[i - 1]) || !Number.isFinite(low[i - 1])) continue;
       const up = high[i] - high[i - 1];
       const down = low[i - 1] - low[i];
       plusDm[i] = up > down && up > 0 ? up : 0;
       minusDm[i] = down > up && down > 0 ? down : 0;
     }
-    // Directional movement and true range describe the same bar-to-bar changes.
-    // Seed all three on the same window: including bar 0's placeholder movement
-    // only in the numerators biases both ratios after their warmup.
-    const trStart = tr.findIndex((v) => Number.isFinite(v));
-    const trR = new Array<number>(n).fill(NaN);
-    const plusR = new Array<number>(n).fill(NaN);
-    const minusR = new Array<number>(n).fill(NaN);
-    if (trStart >= 0) {
-      const trSmoothed = rma(tr.slice(trStart), period);
-      const plusSmoothed = rma(plusDm.slice(trStart), period);
-      const minusSmoothed = rma(minusDm.slice(trStart), period);
-      for (let i = 0; i < trSmoothed.length && trStart + i < n; i++) {
-        trR[trStart + i] = trSmoothed[i];
-        plusR[trStart + i] = plusSmoothed[i];
-        minusR[trStart + i] = minusSmoothed[i];
-      }
-    }
+    // Bar 0 is absent in every stream. Later partial observations can make their
+    // finite windows start separately, so each smoother retains its own history.
+    const trR = rma(tr, period);
+    const plusR = rma(plusDm, period);
+    const minusR = rma(minusDm, period);
     const plusDi = new Array<number>(n).fill(NaN);
     const minusDi = new Array<number>(n).fill(NaN);
     const dx = new Array<number>(n).fill(NaN);
-    // A smoothed true range of zero leaves both ratios undefined. That is not
-    // exotic: an instrument locked at one price for a whole window, a circuit
-    // freeze or a halt, prints exactly that. The standard definition holds the
-    // last reading across the hole rather than dropping it, and it has to, since
-    // a gap would enter the ADX average below and take every value after it with
-    // it: one frozen stretch would silently end the study for the rest of the
-    // chart.
-    let heldPlus = NaN;
-    let heldMinus = NaN;
+    // A zero or unavailable denominator defines no directional ratio. Emitting
+    // a held reading would also advance DX and ADX with an invented observation.
     for (let i = 0; i < n; i++) {
       const range = trR[i];
-      if (Number.isFinite(range) && range !== 0) {
-        heldPlus = (plusR[i] / range) * 100;
-        heldMinus = (minusR[i] / range) * 100;
-      }
-      if (!Number.isFinite(heldPlus) || !Number.isFinite(heldMinus)) continue;
-      plusDi[i] = heldPlus;
-      minusDi[i] = heldMinus;
-      const sum = heldPlus + heldMinus;
-      dx[i] = sum > 0 ? (Math.abs(heldPlus - heldMinus) / sum) * 100 : 0;
+      if (!Number.isFinite(range) || range === 0) continue;
+      const plus = (plusR[i] / range) * 100;
+      const minus = (minusR[i] / range) * 100;
+      if (Number.isFinite(plus)) plusDi[i] = plus;
+      if (Number.isFinite(minus)) minusDi[i] = minus;
+      if (!Number.isFinite(plusDi[i]) || !Number.isFinite(minusDi[i])) continue;
+      const sum = plusDi[i] + minusDi[i];
+      dx[i] = sum > 0 ? (Math.abs(plusDi[i] - minusDi[i]) / sum) * 100 : 0;
     }
     // The DX series is NaN during DI warmup; smooth only the finite tail.
     const start = dx.findIndex((v) => Number.isFinite(v));

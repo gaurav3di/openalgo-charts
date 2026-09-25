@@ -1855,6 +1855,21 @@ Default scalar `wma`, `stdev` and `dev` with valid periods accumulate their wind
 terms oldest first and omit nonfinite final results. Explicit options, varying
 lengths and unsupported periods keep their existing behavior.
 
+Default scalar `rma` and `smaSeededEma` with positive safe-integer periods seed
+from the first complete finite window with a finite chronological sum. Missing
+or overflowing seed windows can expire, allowing a later window to seed. Once
+seeded, a missing input produces NaN while retaining the previous running state.
+An overflowing running update remains unavailable without restarting. Ordinary
+work is O(bars + period); repeated overflowing seed windows can cost
+O(bars * period). Explicit options retain their separate policies below. The
+base tier's first-value `ema` and the EMA descriptor's resolved study-source
+propagation keep their existing behavior.
+
+ADX/DMI treats unavailable high/low changes as absent observations, retaining
+each smoother's state across gaps. Zero or unavailable smoothed true range leaves
+directional ratios and strength absent. It does not feed an old displayed ratio
+into the strength calculation; later finite observations resume the saved states.
+
 With options, NaN and infinities are missing. Propagation requires a complete
 chronological finite window. Skip collects `period` finite observations and holds
 numeric window values across gaps. Extreme-bar offsets retain original indices,
