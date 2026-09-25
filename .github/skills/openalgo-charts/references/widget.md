@@ -531,11 +531,18 @@ the widest bar spacing when short. Placement runs after the accepted load, so
 later live bars and refreshes keep its anchor. A newer request, a symbol or
 interval change, `restoreState` onto another context, or `destroy` settles the
 promise `{ status: 'cancelled' }` without moving the view, and so does closing the
-panel while its request loads. The top bar's **Go to** button and the mobile
-**More** sheet open the panel (`openDateNavigation()`); on a tick or volume
-interval both are greyed with the reason and `openDateNavigation()` returns false.
-Daily and longer intervals show date fields only, since a time cannot change which
-bar a date names.
+panel while its request loads. So does a pan or zoom while an older page loads,
+whether it comes from a gesture, a key, a linked chart or the host's own
+`setVisibleLogicalRange`: the view is wanted elsewhere, and the older bars still
+arrive without moving it. The widget's own move that keeps the bars in view still
+when a refresh lands does not count; nor does a move of the blank chart during a
+first load, which that load's arrival resets. The top bar's **Go to** button and
+the mobile **More** sheet open the panel (`openDateNavigation()`); on a tick or
+volume interval both are greyed with the reason and `openDateNavigation()` returns
+false. Daily and longer intervals show date fields only, since a time cannot change
+which bar a date names. The panel closes when the interval or the chart timezone
+changes under it, since its fields and hint were built for both, and it clears its
+loading line when its request is cancelled.
 
 `DateNavigator` is the DOM-free coordinator behind it, for custom hosts:
 
@@ -566,6 +573,20 @@ openDateNavigation(ctx, anchor, {
 });
 ```
 
+The navigator cannot tell the host's own view moves from the user's, so a custom
+host that wants a pan or zoom to drop a loading request watches for it around its
+loader, as the widget and the reference host do, and skips the moves it makes
+itself for arriving bars:
+
+```ts
+loadHistory: async time => {
+  const moved = () => { if (!keepingViewForData) navigator.cancel(); };
+  const offs = [chart.on('pan', moved), chart.on('zoom', moved)];
+  try { await controller.loadMore(time); } finally { for (const off of offs) off(); }
+  // ...then read the state as above
+},
+```
+
 | Export | Kind | Purpose |
 |---|---|---|
 | `DateNavigator` | class | `goTo(target)`, `cancel()`, `destroy()`. One request at a time; a new one cancels the previous. |
@@ -575,7 +596,7 @@ openDateNavigation(ctx, anchor, {
 | `DateNavigationStatus` | type | `placed`, `partial`, `no-data`, `unsupported`, `invalid`, `cancelled`, `error`. |
 | `HistoryReach` | type | What one loader call achieved: `loaded`, `empty`, `exhausted`, `limited`, `unavailable`. |
 | `openDateNavigation(ctx, anchor, options)` | function | The compact panel (Date or Range, date and optional time in the chart timezone). Returns `PanelHandle`; closes once placed and keeps any other outcome's reason in place. |
-| `DateNavigationDialogOptions` | type | `navigate(target)`, optional `cancel()` (the panel was dismissed while its request loaded; not called when its chart was destroyed), optional `pending: { target, result }` (show and report a request already under way, for a host whose load rebuilt the chart and closed the panel that started it), and `onClose()`. A closed panel reports nothing. |
+| `DateNavigationDialogOptions` | type | `navigate(target)`, optional `cancel()` (the panel was dismissed, or closed by an interval or timezone change, while its request loaded; not called when its chart was destroyed), optional `pending: { target, result }` (show and report a request already under way, for a host whose load rebuilt the chart and closed the panel that started it), and `onClose()`. A closed panel reports nothing. |
 | `DATE_NAVIGATION_CSS` | const | The panel's styles; part of `WIDGET_COMPONENT_CSS`. |
 
 Rules the coordinator applies:
@@ -586,6 +607,11 @@ Rules the coordinator applies:
   hours around a clock change keeps its own bar. Shorter bars keep their stamp; an
   instant in an overnight or weekend gap moves to the next session; a range with
   no bar inside it is `no-data`.
+- A date names the bar the axis labels with that date. West of UTC a daily bar
+  stamped at UTC midnight is the previous evening on the chart's clock, so the
+  axis, crosshair and data window label it with the previous date, and that is
+  the date that names it. Set the chart timezone to `UTC` for such a feed when its
+  bars should read, and be found, by their UTC date.
 - Only time-bucketed intervals navigate (fixed and calendar); tick, volume and
   unknown codes are `unsupported`. The view never moves for `no-data`,
   `unsupported`, `invalid`, `cancelled` or `error`.
