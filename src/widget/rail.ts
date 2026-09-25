@@ -584,8 +584,10 @@ export function mountRail(ctx: WidgetContext, host: HTMLElement, opts: RailOptio
       glyphEl: chromeGlyph(doc, 'trash'),
       tip: () => {
         const sel = selectionOf();
+        // The count is what the press deletes: read-only drawings stay.
+        const n = editableIds(draw, sel).length;
         return sel.length > 0
-          ? { title: sel.length > 1 ? widgetText(ctx, 'Delete {count} drawings', { count: sel.length }) : widgetText(ctx, 'Delete drawing'), chord: 'Del', sub: readOnlyNote(sel) ?? widgetText(ctx, 'Right-click to remove all'), side: 'right' }
+          ? { title: n > 1 ? widgetText(ctx, 'Delete {count} drawings', { count: n }) : widgetText(ctx, 'Delete drawing'), chord: 'Del', sub: readOnlyNote(sel) ?? widgetText(ctx, 'Right-click to remove all'), side: 'right' }
           : { title: widgetText(ctx, 'Delete drawing'), chord: 'Del', sub: widgetText(ctx, 'Select one first. Right-click to remove all'), side: 'right' };
       },
       onClick: () => {

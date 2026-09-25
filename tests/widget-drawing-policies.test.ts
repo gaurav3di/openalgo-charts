@@ -13,6 +13,7 @@ import {
   mountDrawingProperties, mountLevelEditor, mountTextEditor, contextMenuEntries, type MenuEntry, type MenuItem,
 } from '../src/widget/dialogs/index';
 import { createObjectsPanelContent } from '../src/widget/objects-panel';
+import { alertSourceFields } from '../src/widget/dialogs/alert-source';
 import { createWidget, type Widget, type WidgetOptions } from '../src/widget/index';
 import { installDom, asDoc, asEl, type FakeElement, type Dom } from './widget-form.test';
 import {
@@ -26,6 +27,8 @@ const BARS: Bar[] = Array.from({ length: 40 }, (_, i) => {
   return { time: T0 + i * 60, open: c - 0.5, high: c + 1, low: c - 1, close: c, volume: 100 + i };
 });
 const READ_ONLY: DrawingPolicy = { editable: false };
+/** A macrotask: long enough for a cut's clipboard write, and the delete after it, to finish. */
+const settle = (): Promise<void> => new Promise((resolve) => { setTimeout(resolve, 0); });
 
 interface Rig { ctx: WidgetContext; dom: Dom; chart: Chart; draw: DrawingController; toasts: string[]; stack: OverlayStack; q(sel: string): FakeElement | null; qa(sel: string): FakeElement[] }
 const rigs: Rig[] = [];
@@ -122,6 +125,20 @@ describe('the context menu on a read-only drawing', () => {
   });
 });
 
+describe('the alert dialog\'s drawing picker', () => {
+  it('leaves unlisted drawings out, unless the alert already names one', () => {
+    const rig = makeRig();
+    const shown = add(rig.draw, 'horizontal-line', { points: [{ time: T0 + 600, price: 100 }] });
+    const quiet = add(rig.draw, 'horizontal-line', { points: [{ time: T0 + 600, price: 99 }], policy: { listed: false } });
+    const choices = (draft: Record<string, unknown>): string[] => {
+      const control = alertSourceFields(rig.ctx, draft).controls.find((c) => c.key === 'drawingId');
+      return (control?.options ?? []).map((o) => o.value);
+    };
+    expect(choices({ kind: 'drawing' })).toEqual([shown.id]);
+    expect(choices({ kind: 'drawing', drawingId: quiet.id })).toEqual([shown.id, quiet.id]);
+  });
+});
+
 describe('the editors on a read-only drawing', () => {
   it('opens the properties read-only: every field and edit action disabled, duplicate still there', () => {
     const rig = makeRig();
@@ -148,16 +165,52 @@ describe('the editors on a read-only drawing', () => {
 });
 
 describe('the widget shell with a read-only drawing selected', () => {
-  it('keeps it through Delete, Backspace, the arrows and cut, and through a hover and Delete', () => {
+  it('keeps it through Delete, Backspace, the arrows and cut, and through a hover and Delete', async () => {
     const { w, chartEl } = makeWidget();
     const fixed = w.draw.add({ tool: 'horizontal-line', paneIndex: 0, style: {}, points: [{ time: T0 + 600, price: 100 }], policy: READ_ONLY });
     w.draw.select(fixed.id);
     for (const key of ['Delete', 'Backspace', 'ArrowUp', 'ArrowLeft']) fireKey(chartEl, key);
+    // A cut deletes only once the clipboard write has resolved, so the
+    // assertion waits for it; without the wait a cut that ignored the policy
+    // would pass here too.
     fireKey(chartEl, 'x', { ctrlKey: true });
+    await settle();
+    expect(w.draw.get(fixed.id)).toBeDefined();
     w.draw.select(null);
     w.chart.emit('hover', { id: `draw:${fixed.id}` });
     fireKey(chartEl, 'Delete');
     expect(w.draw.get(fixed.id)?.points).toEqual([{ time: T0 + 600, price: 100 }]);
+    // The same wait is long enough to see an ordinary drawing cut.
+    const free = w.draw.add({ tool: 'horizontal-line', paneIndex: 0, style: {}, points: [{ time: T0 + 600, price: 99 }] });
+    w.draw.select(free.id);
+    fireKey(chartEl, 'x', { ctrlKey: true });
+    await settle();
+    expect(w.draw.get(free.id)).toBeUndefined();
+  });
+
+  it('counts only what delete and cut take in a selection that mixes read-only and editable drawings', () => {
+    const { w, root } = makeWidget();
+    const fixed = w.draw.add({ tool: 'horizontal-line', paneIndex: 0, style: {}, points: [{ time: T0 + 600, price: 100 }], policy: READ_ONLY });
+    const a = w.draw.add({ tool: 'horizontal-line', paneIndex: 0, style: {}, points: [{ time: T0 + 600, price: 99 }] });
+    const b = w.draw.add({ tool: 'horizontal-line', paneIndex: 0, style: {}, points: [{ time: T0 + 600, price: 98 }] });
+    w.draw.select([fixed.id, a.id, b.id]);
+    const target: ContextMenuTarget = { kind: 'drawing', id: `draw:${fixed.id}` };
+    const e: ContextMenuEvent = { paneIndex: 0, point: { x: 200, y: 150 }, price: 100, time: T0 + 600, index: 10, target, preventDefault: () => {} };
+    const rows = items(contextMenuEntries(w.context, e));
+    const label = (id: string): string | undefined => rows.find((r) => r.id === id)?.label;
+    expect(label('draw-copy')).toBe('Copy 3 drawings');
+    expect(label('draw-cut')).toBe('Cut 2 drawings');
+    expect(label('draw-delete')).toBe('Delete 2 drawings');
+    const rail = root.querySelector('.oac-rail') as WidgetElement;
+    const trash = rail.querySelectorAll('.oac-rail__ctl .oac-rail__btn')[4];
+    vi.useFakeTimers();
+    try {
+      trash.rect = { left: 5, top: 400, width: 32, height: 32 };
+      fire(trash, 'pointerenter');
+      vi.advanceTimersByTime(700);
+      expect((root.querySelector('.oac-tip') as WidgetElement).textContent).toContain('Delete 2 drawings');
+      fire(trash, 'pointerleave');
+    } finally { vi.useRealTimers(); }
   });
 
   it('turns the rail\'s lock, eye and trash off and counts only removable drawings', () => {
@@ -196,6 +249,26 @@ describe('the widget shell with a read-only drawing selected', () => {
     expect(actions).toContain('select');
     for (const action of ['visibility', 'lock', 'remove']) expect(actions).not.toContain(action);
     expect(panel.querySelector(`[data-object-id="drawing:${quiet.id}"]`)).toBeNull();
+    content.destroy();
+  });
+
+  it('offers no grouping for a selection of read-only drawings, which keep the group the host gave them', () => {
+    const { w } = makeWidget();
+    const fixed = w.draw.add({ tool: 'horizontal-line', paneIndex: 0, style: {}, points: [{ time: T0 + 600, price: 100 }], policy: READ_ONLY });
+    const free = w.draw.add({ tool: 'horizontal-line', paneIndex: 0, style: {}, points: [{ time: T0 + 600, price: 99 }] });
+    const content = createObjectsPanelContent(w.context);
+    const panel = content.element as unknown as WidgetElement;
+    const name = panel.querySelector('[data-action="group-name"]') as WidgetElement;
+    const group = panel.querySelector('[data-action="group"]') as WidgetElement;
+    name.value = 'Mine';
+    w.draw.select(fixed.id);
+    fire(name, 'input');
+    expect(group.disabled).toBe(true);
+    w.draw.select([fixed.id, free.id]);
+    fire(name, 'input');
+    expect(group.disabled).toBe(false);
+    group.click();
+    expect(w.draw.groups().map((g) => [g.name, g.members])).toEqual([['Mine', [free.id]]]);
     content.destroy();
   });
 

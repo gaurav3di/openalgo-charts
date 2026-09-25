@@ -121,8 +121,10 @@ function drawingEntries(ctx: WidgetContext, primary: Drawing, ids: readonly stri
   const behind = primary.zIndex < 0;
   const many = ids.length > 1;
   // A selection with nothing the user may edit keeps its edit rows, greyed
-  // with the reason; the controller would refuse each one anyway.
-  const fixed = editableIds(draw, ids).length === 0;
+  // with the reason; the controller would refuse each one anyway. Cut and
+  // delete count only what they take.
+  const mine = editableIds(draw, ids).length;
+  const fixed = mine === 0;
   const why = fixed ? widgetText(ctx, 'read-only') : undefined;
   out.push({ id: 'draw-props', label: many ? widgetText(ctx, 'Properties of the selection...') : widgetText(ctx, 'Properties...'), icon: 'settings',
     run: () => { mountDrawingProperties(ctx, undefined, { ids }); } });
@@ -134,7 +136,7 @@ function drawingEntries(ctx: WidgetContext, primary: Drawing, ids: readonly stri
   }
   out.push(SEP);
   out.push({ id: 'draw-copy', label: many ? widgetText(ctx, 'Copy {count} drawings', { count: ids.length }) : widgetText(ctx, 'Copy drawing'), icon: 'copy', chord: 'Ctrl+C', run: () => { void draw.copy(ids); } });
-  out.push({ id: 'draw-cut', label: many ? widgetText(ctx, 'Cut {count} drawings', { count: ids.length }) : widgetText(ctx, 'Cut drawing'), chord: 'Ctrl+X', disabled: locked || fixed, note: why ?? (locked ? widgetText(ctx, 'locked') : undefined),
+  out.push({ id: 'draw-cut', label: mine > 1 ? widgetText(ctx, 'Cut {count} drawings', { count: mine }) : widgetText(ctx, 'Cut drawing'), chord: 'Ctrl+X', disabled: locked || fixed, note: why ?? (locked ? widgetText(ctx, 'locked') : undefined),
     run: () => { void draw.cut(ids); } });
   out.push({ id: 'draw-duplicate', label: widgetText(ctx, 'Duplicate'), icon: 'duplicate', chord: 'Ctrl+D', run: () => { draw.duplicate(ids); } });
   out.push(SEP);
@@ -153,7 +155,7 @@ function drawingEntries(ctx: WidgetContext, primary: Drawing, ids: readonly stri
   out.push({ id: 'draw-behind', label: widgetText(ctx, 'Behind the series'), icon: glyphSvg(BEHIND_GLYPH), mark: 'radio', on: behind,
     run: () => { for (const id of ids) draw.sendBehindSeries(id); } });
   out.push(SEP);
-  out.push({ id: 'draw-delete', label: many ? widgetText(ctx, 'Delete {count} drawings', { count: ids.length }) : widgetText(ctx, 'Delete'), icon: 'trash', chord: 'Del', danger: true,
+  out.push({ id: 'draw-delete', label: mine > 1 ? widgetText(ctx, 'Delete {count} drawings', { count: mine }) : widgetText(ctx, 'Delete'), icon: 'trash', chord: 'Del', danger: true,
     disabled: locked || fixed, note: why ?? (locked ? widgetText(ctx, 'locked') : undefined), run: () => { draw.removeMany(ids); } });
   return out;
 }

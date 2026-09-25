@@ -51,7 +51,9 @@ export function alertSourceFields(ctx: WidgetContext, draft: Record<string, unkn
     };
   }
   if (kind === 'drawing') {
-    const drawings = ctx.draw.drawings();
+    // A host's unlisted drawings stay out of every list, this one included,
+    // unless the alert being edited already names one.
+    const drawings = ctx.draw.drawings().filter(item => item.policy?.listed !== false || item.id === draft.drawingId);
     const choices = drawings.map((item, index) => ({ value: item.id, label: `${widgetText(ctx, `schema.drawing.${item.tool}.name`, {}, toolName(item.tool))} (${index + 1})` }));
     const drawingId = choose('drawingId', choices);
     const info = ctx.draw.alertInfo(drawingId);
