@@ -325,7 +325,12 @@ objects.destroy(); // releases observers, not the chart or its objects
 `onSettings(object: ChartObjectSnapshot)`. `ChartObjectDrawingSource` describes
 `drawings`, `get`, `selection`, `select`, `update` and `remove`; the draw tier's
 `DrawingController` satisfies it. `ChartObjectDrawing` is the structural record
-with `id`, `tool`, `paneIndex`, `points: { time, price }[]`, optional `visible` and `locked`.
+with `id`, `tool`, `paneIndex`, `points: { time, price }[]`, optional `visible`, `locked`
+and `policy`. The inventory honours the drawing policy (see
+[drawing policies](drawing-tools.md#drawing-policies)): `listed: false` leaves the
+drawing out of the list and out of its group's row, `selectable: false` withholds
+`select`, and `editable: false` withholds `visibility`, `lock` and `remove`, for the
+drawing and for any group holding it.
 
 `ChartObjectSnapshot` is immutable: `{ id, sourceId, kind, name, paneIndex, visible,
 selected, locked?, dataStatus?, capabilities }`. `ChartObjectKind` is

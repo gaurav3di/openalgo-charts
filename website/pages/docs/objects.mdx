@@ -89,6 +89,11 @@ inventory actions; `sourceId` identifies the existing indicator, drawing, or pro
 The primary row is `source:primary`; indicator and drawing IDs have their kind prefix.
 Host registrations use `custom:<provider.id>` and cannot replace a built-in row.
 
+The inventory honours [drawing policies](/docs/drawing-tools#drawing-policies). A drawing
+with `policy.listed: false` has no row and is left out of its group's row. One with
+`policy.editable: false` offers no `visibility`, `lock` or `remove`, and neither does a
+group holding it. One with `policy.selectable: false` offers no `select`.
+
 ## Register a profile with supported actions
 
 Primitives are not automatically manageable objects. A profile host declares the

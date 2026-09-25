@@ -4,6 +4,16 @@ All notable changes to OpenAlgo Charts.
 
 ## Unreleased
 
+- Drawings accept an independent `policy`: `selectable`, `editable`, `persistent`
+  and `listed`, each defaulting to true. A read-only drawing still selects and
+  copies, but no drag, handle, key, menu, dialog, rail, mobile or objects action
+  changes or deletes it, and undo never touches it; the owning host passes
+  `{ force: true }` to `update`, `updateMany`, `remove`, `removeMany` or `clear`.
+  An unselectable drawing never joins the selection and a click passes through it.
+  A transient drawing is left out of `toJSON`, the chart state and saved layouts.
+  An unlisted drawing is left out of `ChartObjects` and every objects panel. Copies
+  carry no policy, and `locked` behaves as before. The yfinance host adds session
+  price marks that use all three host policies.
 - CSV export supports explicit study instances, inclusive UTC ranges and
   display-aligned plot values with effective runtime offsets. Candle plots expand
   into OHLC fields; projected times are identified without exposing future replay
