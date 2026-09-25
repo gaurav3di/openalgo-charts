@@ -984,6 +984,39 @@ describe('routed layer lifecycle', () => {
     expect(stack(chart, studies, 0)).toEqual(['A marks buy', 'A shapes range', 'B shapes late']);
   });
 
+  it('leaves an untargeted study\'s late layers where they land when a routed study restacks on the same pass', () => {
+    const untargeted = (from: number): string => {
+      const id = `targets-untargeted-beside-${seq++}`;
+      registerIndicator({
+        ...untargetedPrice, id,
+        draws: context => (context.bars.length >= from ? untargetedPrice.draws!(context) : []),
+        markers: context => (context.bars.length >= from ? untargetedPrice.markers!(context) : []),
+      });
+      return id;
+    };
+    const routed = `targets-routed-beside-${seq++}`;
+    registerIndicator({
+      id: routed, name: 'Routed late', placement: 'pane', plots: PLOTS, calc: CALC, inputs: [],
+      markers: ({ bars }) => (bars.length > 40 ? [{ time: bars[15].time, position: 'belowBar', shape: 'circle', size: 'small',
+        color: '#26a69a', overlay: true } as never] : []),
+      draws: ({ bars }) => (bars.length > 40 ? [{ kind: 'box', from: { time: bars[10].time, price: 124 },
+        to: { time: bars[20].time, price: 112 }, overlay: true } as never] : []),
+    });
+    // U first draws on a live pass, V on its first pass; R, when present, routes on the same live pass as U.
+    const run = (withRouted: boolean): string[] => {
+      const { chart } = mount();
+      const studies: Record<string, IndicatorApi> = { U: chart.addIndicator(untargeted(41)), V: chart.addIndicator(untargeted(0)) };
+      if (withRouted) studies.R = chart.addIndicator(routed);
+      tick(chart, 40);
+      return stack(chart, studies, 0);
+    };
+    const base = run(false);
+    expect(base).toEqual(['V marks', 'V shapes', 'U marks', 'U shapes']);
+    const beside = run(true);
+    expect(beside.filter(layer => !layer.startsWith('R '))).toEqual(base);
+    expect(beside).toEqual([...base, 'R marks', 'R shapes']);
+  });
+
   it('puts a released target back where the first pass stacked it, whatever order the outputs came in', () => {
     const id = `targets-recreated-${seq++}`;
     // The guide comes first in each list, and the price pane is left out of one pass only.

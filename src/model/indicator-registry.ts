@@ -375,7 +375,9 @@ export interface DrawAnchor {
  * order: its own marks, its marker targets, its own shapes, then its drawing
  * targets, each kind's targets taking the price pane first and then the plots
  * in declaration order. A targeted layer created after the study was added
- * takes that place too, below the studies added after it.
+ * is put back in that order among the targeted layers on its pane, below
+ * those of the studies added after it. No other layer moves for it, so an
+ * output that names no target stacks exactly as before.
  */
 export interface IndicatorOutputTarget {
   /**

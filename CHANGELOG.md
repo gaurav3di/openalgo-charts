@@ -18,13 +18,14 @@ All notable changes to OpenAlgo Charts.
   study's own marks already use join that layer, so marks at one bar stack,
   except marks naming an overlay first plot of a study in its own pane. A
   study's layers stack in a fixed order, and a targeted layer made on a later
-  pass takes its study's place, without recomputing or recolouring any study.
-  An invalid target or style throws before any layer of that kind changes; the
-  rest of that pass is not rolled back, and its bar colours are not published.
-  Outputs that name no target render and stack exactly as before.
-  `IndicatorOutputTarget` and `IndicatorMarker` are exported, and
-  `IndicatorDrawings` takes an optional callback that picks the price scale
-  from each frame's context.
+  pass takes its study's place among the targeted layers on its pane, moving
+  no other layer and recomputing or recolouring no study. An invalid target or
+  style throws before any layer of that kind changes; the rest of that pass is
+  not rolled back, and its bar colours are not published. Outputs that name no
+  target render and stack exactly as before, even beside a study that routes
+  on the same pass. `IndicatorOutputTarget` and `IndicatorMarker` are
+  exported, and `IndicatorDrawings` takes an optional callback that picks the
+  price scale from each frame's context.
 - CSV export supports explicit study instances, inclusive UTC ranges and
   display-aligned plot values with effective runtime offsets. Candle plots expand
   into OHLC fields; projected times are identified without exposing future replay

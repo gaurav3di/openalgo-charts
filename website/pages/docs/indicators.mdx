@@ -745,9 +745,11 @@ What the runtime does with a target:
 - **Stacking.** A study's layers stack in a fixed order: its own marks, its marker
   targets, its own shapes, then its drawing targets, with each kind's targets taking the
   price pane first and then the plots in declaration order. A targeted layer made after
-  the study was added, for a target returned again or for the first time, takes that
-  place, below the studies added after it. Nothing is recomputed or recoloured to do it.
-  A descriptor that names no target stacks exactly as before.
+  the study was added, for a target returned again or for the first time, is put back in
+  that order among the targeted layers on its pane, below those of the studies added
+  after it. Only targeted layers move to do it, and nothing is recomputed or recoloured.
+  A descriptor that names no target stacks exactly as before, even beside a study that
+  routes on the same pass: its layers stay where they landed.
 - **Hits.** A `box` or `label` with an `id` or `tooltip`, and a marker with an `id`, report
   through `subscribeClick` where they are drawn: on the price pane or on the plot's axis.
 - **Saved state.** Targets are descriptor data, so a restored layout routes the same way.

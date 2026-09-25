@@ -233,9 +233,11 @@ export interface IndicatorHost {
    * Restore the host's study stack after settings replace series or attached
    * visuals. Also called from inside a calculation pass when that pass first
    * creates a layer for an output target (see `IndicatorOutputTarget`), so the
-   * layer takes its study's place instead of landing above every later study.
-   * That call must only restack: recomputing studies from it would run them in
-   * the middle of another study's pass.
+   * layer takes its study's place among the targeted layers instead of landing
+   * above every later study's. During that call the instances report their
+   * targeted layers alone, so nothing else moves. It must only restack:
+   * recomputing studies from it would run them in the middle of another
+   * study's pass.
    */
   resourcesChanged?(): void;
   /** Bars of the primary price series — the calculation input. */
@@ -365,7 +367,8 @@ let nextGeneration = 1;
  * Set while a pass restacks the host for a routed layer it created. Study order
  * has not changed, so no bar colours need republishing, and doing it there would
  * publish this pass's colours before the pass has succeeded and run every other
- * study's hook against bars its values do not describe yet.
+ * study's hook against bars its values do not describe yet. It also narrows
+ * `renderResources` to routed layers, so that restack moves nothing else.
  */
 let restacking = false;
 
@@ -796,10 +799,15 @@ export class IndicatorInstance implements IndicatorApi {
     // Each kind's targeted layers follow its own layer in target order, which
     // is where a pass creates them, so restacking keeps a study's first stack
     // and a released target that is used again comes back to the same place.
+    const moved: typeof primitives = [];
     const routed = (layer: (key: string | null) => IPrimitive | undefined): void => {
       for (const key of this._targets()) {
         const primitive = layer(key);
-        if (primitive) primitives.push({ primitive, overlay: this._overlayTarget(key) });
+        if (primitive) {
+          const item = { primitive, overlay: this._overlayTarget(key) };
+          primitives.push(item);
+          moved.push(item);
+        }
       }
     };
     own(this._legend, ...this._levels, this._markers);
@@ -807,7 +815,9 @@ export class IndicatorInstance implements IndicatorApi {
     own(this._table, this._draws);
     routed(key => this._drawLayers.get(key));
     own(this._background, ...this._attachedPrimitives);
-    return { series, primitives };
+    // A pass's restack hands the host routed layers alone, so the resources of
+    // a study that names no target stay exactly where they landed.
+    return restacking ? { series: [], primitives: moved } : { series, primitives };
   }
 
   /** Move the existing instance without rerunning its external attach lifecycle. */
@@ -1082,9 +1092,10 @@ export class IndicatorInstance implements IndicatorApi {
 
   /**
    * A targeted layer created after the first pass is appended above every later
-   * study on its pane. The host puts the stack back in study order, which it
-   * would otherwise only do on the next settings change or move. A study's own
-   * layers are left where they land, exactly as before targets existed.
+   * study on its pane. The host puts the targeted layers back in study order,
+   * which it would otherwise only do on the next settings change or move. Only
+   * those move (see `restacking`): series and every study's own layers are left
+   * where they land, exactly as before targets existed.
    */
   private _restack(created: boolean): void {
     if (!created || !this._constructed) return;
