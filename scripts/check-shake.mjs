@@ -134,7 +134,9 @@ const BUNDLE = new URL('../dist/openalgo-charts.mjs', import.meta.url).pathname.
 // Their measured chart-only build is 73.26 KiB; optional host tiers still disappear.
 // Study drawing and marker targets route outputs inside the indicator runtime,
 // which every chart carries: 73.35 to 73.70 KiB measured, so allow 73.75 KiB.
-const LIMIT_BYTES = 73.75 * 1024;
+// Measuring price-pane shapes on the candles' own scale and restacking routed
+// layers created late take it from 73.70 to 73.92 KiB (75699 bytes); allow 73.93.
+const LIMIT_BYTES = 73.93 * 1024;
 
 // Absent from a chart-only build. Each is a string that appears in the adapter
 // source and nowhere in the rendering core.
