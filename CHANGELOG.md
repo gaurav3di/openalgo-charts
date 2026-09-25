@@ -11,13 +11,16 @@ All notable changes to OpenAlgo Charts.
   passes `{ force: true }` to `update`, `updateMany`, `remove`, `removeMany`,
   `clear`, `createGroup`, `renameGroup` or `removeGroup`. Placing a restricted
   drawing, a patch that carries `policy` and every forced call are the host's acts
-  and record no undo step; history never restores an older policy, and a step a new
-  restriction leaves with nothing to do is dropped, so `canUndo` and `canRedo` stay
-  accurate. An unselectable drawing never joins the selection and a click passes
-  through it. A transient drawing is left out of `toJSON`, the chart state and saved
-  layouts. An unlisted drawing is left out of `ChartObjects`, every objects panel,
-  every group-wide action there and the widget's alert source picker. Copies carry no
-  policy, and `locked` behaves as before. `ChartObjectDrawingSource` gains an
+  and record no undo step, and every recorded step takes them too, so undoing the
+  user's own steps never reverses a forced move, delete, regroup or rename. History
+  never restores an older policy, never regroups a read-only drawing or renames or
+  dissolves its group, and drops a step a new restriction or a forced call leaves with
+  nothing to do, so `canUndo` and `canRedo` stay accurate. An unselectable drawing
+  never joins the selection and a click passes through it. A transient drawing is
+  left out of `toJSON`, the chart state and saved layouts. An unlisted drawing is
+  left out of `ChartObjects`, every objects panel, every group-wide action there and
+  the widget's alert source picker. Copies carry no policy, and `locked` behaves as
+  before. `ChartObjectDrawingSource` gains an
   optional `removeMany`. The yfinance host adds session price marks that use all
   three host policies and return after every rebuild, strips policies from imported
   layout files, and keeps its toolbar's Del, Clear, Undo and Redo to what they would do.
