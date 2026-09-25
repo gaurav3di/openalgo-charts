@@ -793,21 +793,23 @@ export class IndicatorInstance implements IndicatorApi {
     });
     const primitives = this._fills.map((primitive, index) => ({ primitive: primitive as IPrimitive, overlay: this._d.fills?.[index].overlay === true }));
     for (const { table, overlay } of this._tables.values()) primitives.push({ primitive: table, overlay });
+    // A pass's restack hands the host routed layers alone (see `restacking`),
+    // so series and every other layer, all of a study that names no target
+    // included, stay exactly where they landed.
+    if (restacking) {
+      series.length = 0;
+      primitives.length = 0;
+    }
     const own = (...list: (IPrimitive | null)[]): void => {
-      for (const primitive of list) if (primitive !== null) primitives.push({ primitive, overlay: primitive === this._markers && (this._markerSeries === this._host.primarySeries?.() || series.some(item => item.api === this._markerSeries && item.overlay)) });
+      for (const primitive of list) if (primitive !== null && !restacking) primitives.push({ primitive, overlay: primitive === this._markers && (this._markerSeries === this._host.primarySeries?.() || series.some(item => item.api === this._markerSeries && item.overlay)) });
     };
     // Each kind's targeted layers follow its own layer in target order, which
     // is where a pass creates them, so restacking keeps a study's first stack
     // and a released target that is used again comes back to the same place.
-    const moved: typeof primitives = [];
     const routed = (layer: (key: string | null) => IPrimitive | undefined): void => {
       for (const key of this._targets()) {
         const primitive = layer(key);
-        if (primitive) {
-          const item = { primitive, overlay: this._overlayTarget(key) };
-          primitives.push(item);
-          moved.push(item);
-        }
+        if (primitive) primitives.push({ primitive, overlay: this._overlayTarget(key) });
       }
     };
     own(this._legend, ...this._levels, this._markers);
@@ -815,9 +817,7 @@ export class IndicatorInstance implements IndicatorApi {
     own(this._table, this._draws);
     routed(key => this._drawLayers.get(key));
     own(this._background, ...this._attachedPrimitives);
-    // A pass's restack hands the host routed layers alone, so the resources of
-    // a study that names no target stay exactly where they landed.
-    return restacking ? { series: [], primitives: moved } : { series, primitives };
+    return { series, primitives };
   }
 
   /** Move the existing instance without rerunning its external attach lifecycle. */
@@ -942,7 +942,7 @@ export class IndicatorInstance implements IndicatorApi {
     // own layer takes the candle while the study is on the price pane, a mark
     // naming a plot while that plot is, so an overlay plot of a study in its
     // own pane keeps a layer of its own.
-    const [markers, groups] = this._route(all, key => anchor(key) === first && (this.paneIndex === 0 || !this._overlayTarget(key)));
+    const [markers, groups] = this._route(all, key => anchor(key) === first && !(this.paneIndex && this._overlayTarget(key)));
     // Check every mark before any layer changes, as the drawings do.
     if (groups.size > 0) new SeriesMarkers(0).setMarkers(all);
     let created = false;

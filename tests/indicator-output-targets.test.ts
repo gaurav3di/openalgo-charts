@@ -994,6 +994,7 @@ describe('routed layer lifecycle', () => {
         ...untargetedPrice, id,
         draws: context => (context.bars.length >= from ? untargetedPrice.draws!(context) : []),
         markers: context => (context.bars.length >= from ? untargetedPrice.markers!(context) : []),
+        tables: ({ bars }) => (bars.length >= from ? [{ id: 'grid', rows: [[{ text: 'Grid' }]] }] : []),
       });
       return id;
     };
@@ -1005,19 +1006,28 @@ describe('routed layer lifecycle', () => {
       draws: ({ bars }) => (bars.length > 40 ? [{ kind: 'box', from: { time: bars[10].time, price: 124 },
         to: { time: bars[20].time, price: 112 }, overlay: true } as never] : []),
     });
+    // Everything the named studies own on the price pane, in the order it is drawn.
+    const drawn = (chart: Chart, studies: Record<string, IndicatorApi>): string[] => chart.panes()[0].primitives().flatMap(primitive => {
+      const [owner] = owners(studies, [primitive]);
+      return owner === undefined ? [] : [`${owner} ${primitive.constructor.name}`];
+    });
     // U first draws on a live pass, V on its first pass; R, when present, routes on the same live pass as U.
     const run = (withRouted: boolean): string[] => {
       const { chart } = mount();
       const studies: Record<string, IndicatorApi> = { U: chart.addIndicator(untargeted(41)), V: chart.addIndicator(untargeted(0)) };
       if (withRouted) studies.R = chart.addIndicator(routed);
       tick(chart, 40);
-      return stack(chart, studies, 0);
+      return drawn(chart, studies);
     };
+    // What an untargeted study has always done: its late layers land on top of the pane.
     const base = run(false);
-    expect(base).toEqual(['V marks', 'V shapes', 'U marks', 'U shapes']);
+    expect(base).toEqual([
+      'U PaneLegend', 'V PaneLegend', 'V SeriesMarkers', 'V ChartTable', 'V IndicatorDrawings',
+      'U SeriesMarkers', 'U ChartTable', 'U IndicatorDrawings',
+    ]);
     const beside = run(true);
     expect(beside.filter(layer => !layer.startsWith('R '))).toEqual(base);
-    expect(beside).toEqual([...base, 'R marks', 'R shapes']);
+    expect(beside).toEqual([...base, 'R SeriesMarkers', 'R IndicatorDrawings']);
   });
 
   it('puts a released target back where the first pass stacked it, whatever order the outputs came in', () => {
