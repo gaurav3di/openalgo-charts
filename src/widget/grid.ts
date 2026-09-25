@@ -136,6 +136,8 @@ interface Cell {
   columnSpan: number;
   member: LinkChart;
   offs: Array<() => void>;
+  /** Bars across the window the chart showed last, 0 while it had no plot. */
+  span: number;
 }
 
 interface Source { symbol?: string; exchange?: string; interval?: string; chartType?: string }
@@ -236,8 +238,13 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
   let themeSync = false, compact = false, pointerIn = false, destroyed = false;
   /** True while the grid itself moves a chart's window, which is no user navigation. */
   let syncing = false;
-  /** The linked window as wall-clock times, from the last navigation while viewports were linked. */
+  /**
+   * The linked window as wall-clock times, set by the last navigation while
+   * viewports were linked, and the chart it is read from: new bars there move
+   * it along, so it never goes stale behind a chart following the right edge.
+   */
   let view: { from: number; to: number } | null = null;
+  let keeper: Cell | null = null;
   let nextId = 0;
   let saveTimer: ReturnType<typeof setTimeout> | 0 = 0;
   let saveQueued = false;
@@ -446,7 +453,7 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
     const element = h(doc, 'div', 'oac-grid__cell', { role: 'group' });
     element.dataset.paneId = id;
     parent.appendChild(element);
-    const cell = { id, element, row: 0, column: 0, rowSpan: 1, columnSpan: 1, offs: [] } as unknown as Cell;
+    const cell = { id, element, row: 0, column: 0, rowSpan: 1, columnSpan: 1, offs: [], span: 0 } as unknown as Cell;
     try {
       cell.widget = createWidget(element, {
         ...cellOptions, theme: cellTheme, symbol: source.symbol, exchange: source.exchange, interval: source.interval,
@@ -459,20 +466,39 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
     return cell;
   };
 
+  const forget = (): void => { view = null; keeper = null; };
+  /** A chart with no plot shows an empty window, and has none to give. */
+  const span = (cell: Cell): number => {
+    const range = cell.widget.chart.getVisibleLogicalRange();
+    return range.to - range.from;
+  };
+  const keep = (cell: Cell): void => {
+    const chart = cell.widget.chart, range = chart.getVisibleLogicalRange(), data = chart.dataLayer;
+    const from = data.indexToTimeFloat(range.from), to = data.indexToTimeFloat(range.to);
+    if (to > from) { view = { from, to }; keeper = cell; }
+  };
+
   /**
-   * Put a chart on the linked window. A chart that was hidden (compact mode)
-   * had no width to take the mirrored range with, so it takes it when it is
-   * measured again; the window is kept as times, since a hidden leader's own
-   * range means nothing.
+   * After a resize a linked chart shows the window it showed before. The
+   * engine keeps its right edge, so a chart following new bars goes on
+   * following them; putting its span back, rather than its bar width, keeps
+   * charts of different widths on the same window. A chart that had no plot
+   * (hidden behind the compact tabs) had no window, and takes the linked one.
+   * Before any linked navigation there is no shared window, and a resize is
+   * left to the engine.
    */
-  const adopt = (cell: Cell, width: number): void => {
-    const chart = cell.widget.chart, data = chart.dataLayer;
-    if (view === null || !(width > 0) || !links.options().viewport || data.length < 2) return;
-    const from = data.timeToIndexFloat(view.from), to = data.timeToIndexFloat(view.to);
-    if (!(to > from)) return;
-    syncing = true;
-    try { chart.setVisibleLogicalRange({ from, to }); }
-    finally { syncing = false; }
+  const fit = (cell: Cell): void => {
+    const chart = cell.widget.chart, range = chart.getVisibleLogicalRange(), data = chart.dataLayer, had = cell.span;
+    const linked = links.options().viewport ? view : null;
+    if (linked !== null && (had > 0 || cell !== keeper)) {
+      syncing = true;
+      try {
+        chart.setVisibleLogicalRange(had > 0 ? { from: range.to - had, to: range.to }
+          : { from: data.timeToIndexFloat(linked.from), to: data.timeToIndexFloat(linked.to) });
+      } finally { syncing = false; }
+    }
+    cell.span = span(cell);
+    if (cell === keeper || (linked !== null && had === 0)) keep(cell);
   };
 
   /** Bring a built cell into the link group and the save and tab bookkeeping. */
@@ -482,7 +508,12 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
     let settling = false;
     // A window set by fresh bars or by the grid is not the user's navigation.
     const own = (): boolean => settling || syncing;
-    cell.offs.push(chart.on('data:update', () => { settling = true; queueMicrotask(() => { settling = false; }); }));
+    cell.offs.push(chart.on('data:update', () => {
+      settling = true;
+      queueMicrotask(() => { settling = false; });
+      cell.span = span(cell);
+      if (cell === keeper) keep(cell);
+    }));
     cell.member = {
       on: (event, cb) => chart.on(event, event === 'pan' || event === 'zoom'
         ? payload => { if (!own()) cb(payload); }
@@ -508,18 +539,16 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
       },
       appearance: { read: () => readChartSettings(chart), apply: values => applyChartSettings(chart, values) },
     });
-    // New bars fit their own view; the window from before them is no longer the linked one.
-    const changed = (): void => { view = null; syncCompact(); saveSoon(); };
+    // A new instrument fits its own view, so the keeper's window is no longer
+    // the linked one; the other charts still show it.
+    const changed = (): void => { if (cell === keeper) forget(); syncCompact(); saveSoon(); };
     const moved = (): void => {
-      if (own()) {
-        // Still written, but a desk held after a refused restore stays held.
-        if (!held) scheduleSave();
-        return;
-      }
-      const range = chart.getVisibleLogicalRange(), data = chart.dataLayer;
-      const from = data.indexToTimeFloat(range.from), to = data.indexToTimeFloat(range.to);
-      if (links.options().viewport && data.length > 1 && to > from) view = { from, to };
-      scheduleSave();
+      const mine = !own();
+      cell.span = span(cell);
+      // A navigation sets the linked window; the keeper's other moves carry it along.
+      if (mine || cell === keeper) keep(cell);
+      // A window set by data is still written, but a desk held after a refused restore stays held.
+      if (mine || !held) scheduleSave();
     };
     cell.offs.push(
       widget.on('interval', ({ interval }) => links.setInterval(cell.member, interval)),
@@ -529,7 +558,7 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
       widget.on('layout', scheduleSave),
       chart.on('pan', moved),
       chart.on('zoom', moved),
-      chart.on('resize', payload => adopt(cell, (payload as { width: number }).width)),
+      chart.on('resize', () => fit(cell)),
     );
     for (const event of ['draw:add', 'draw:remove', 'alert:created', 'alert:removed']) cell.offs.push(chart.on(event, saveSoon));
     // These arrive once per frame while something is dragged.
@@ -537,6 +566,7 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
   };
 
   const drop = (cell: Cell): void => {
+    if (cell === keeper) forget();
     for (const off of cell.offs.splice(0)) off();
     if (cell.member !== undefined) links.remove(cell.member);
     cell.widget.destroy();
@@ -609,6 +639,8 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
     },
 
     setLinks(patch) {
+      // A window from before viewport linking came on says nothing about the charts now.
+      if (patch.viewport && !links.options().viewport) forget();
       // Recorded before the switch flips, so the group converges on the active chart.
       if (active !== null && patch.symbol) links.setSymbol(active.member, instrument(active.widget.symbol(), active.widget.exchange()));
       if (active !== null && patch.interval) links.setInterval(active.member, active.widget.interval());
@@ -692,8 +724,6 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
       links.setSymbol(active.member, instrument(active.widget.symbol(), active.widget.exchange()));
       links.setInterval(active.member, active.widget.interval());
       links.setOptions({ crosshair: sync.crosshair, viewport: sync.viewport, symbol: sync.symbol, interval: sync.interval, appearance: sync.appearance === true });
-      // The replaced charts' window says nothing about these charts.
-      view = null;
       render();
       saveSoon();
       emit('layout', { reason: 'workspace' });

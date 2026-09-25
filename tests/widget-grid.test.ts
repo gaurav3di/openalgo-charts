@@ -767,18 +767,193 @@ describe('chart grid linked viewports across hidden charts', () => {
     }
   });
 
-  it('forgets the linked window once an instrument changes, so a resize keeps the fitted view', async () => {
+  it('keeps a chart that fitted a new instrument on that view through a resize', async () => {
+    const { feed, requests } = pendingFeed();
+    const { grid } = makeGrid({ feed, preset: '1x2', links: { viewport: true, crosshair: false } });
+    const charts = grid.cells().map(cell => cell.widget.chart);
+    requests[0].resolve(bars(200));
+    await flush();
+    charts[0].setVisibleLogicalRange({ from: 30, to: 60 });
+    grid.cells()[1].widget.setSymbol('BBB');
+    requests[requests.length - 1].resolve(bars(200, 400));
+    await flush();
+    const fitted = charts[1].getVisibleLogicalRange();
+    expect(fitted.from).not.toBeCloseTo(30, 3);
+    charts[1].applySize(700, 400);
+    expect(charts[1].getVisibleLogicalRange().from).toBeCloseTo(fitted.from, 6);
+    expect(charts[1].getVisibleLogicalRange().to).toBeCloseTo(fitted.to, 6);
+  });
+
+  it('forgets the linked window when the chart holding it changes instrument, and only then', async () => {
+    const { grid } = makeGrid({ preset: '1x3', links: { viewport: true, crosshair: false } });
+    const charts = grid.cells().map(cell => cell.widget.chart);
+    for (const cell of grid.cells()) cell.widget.series.setData(bars(200));
+    await flush();
+    const own = charts[2].getVisibleLogicalRange();
+    charts[2].applySize(0, 400);
+    charts[0].setVisibleLogicalRange({ from: 30, to: 60 });
+    // The first chart's own new instrument, on its new bars, is no linked window.
+    grid.cells()[0].widget.setSymbol('CCC');
+    grid.cells()[0].widget.series.setData(bars(150, 400));
+    charts[2].applySize(600, 400);
+    expect(charts[2].getVisibleLogicalRange().to).toBeCloseTo(own.to, 6);
+    charts[2].applySize(0, 400);
+    await flush();
+    charts[0].setVisibleLogicalRange({ from: 30, to: 60 });
+    // Another chart's new instrument leaves the window the first chart still shows.
+    grid.cells()[1].widget.setSymbol('BBB');
+    grid.cells()[1].widget.series.setData(bars(150, 400));
+    charts[2].applySize(600, 400);
+    expect(charts[2].getVisibleLogicalRange().to).toBeCloseTo(60, 6);
+  });
+
+  it('keeps a chart whose first bars fitted its view on that view through a resize', async () => {
+    const { grid } = makeGrid({ preset: '1x2', links: { viewport: true, crosshair: false } });
+    const [a, b] = grid.cells().map(cell => cell.widget.chart);
+    grid.cells()[0].widget.series.setData(bars(200));
+    await flush();
+    a.setVisibleLogicalRange({ from: 30, to: 60 });
+    // The second chart had no bars to follow the pan with, and was zoomed while
+    // empty; its first bars fit its view afresh.
+    b.setVisibleLogicalRange({ from: 0, to: 30 });
+    grid.cells()[1].widget.series.setData(bars(200));
+    const fitted = b.getVisibleLogicalRange();
+    expect(fitted.to - fitted.from).not.toBeCloseTo(30, 3);
+    b.applySize(700, 400);
+    expect(b.getVisibleLogicalRange().from).toBeCloseTo(fitted.from, 6);
+    expect(b.getVisibleLogicalRange().to).toBeCloseTo(fitted.to, 6);
+  });
+
+  it('leaves a resize to the engine until the linked charts share a window', async () => {
+    const { grid } = makeGrid({ preset: '1x2', links: { viewport: true, crosshair: false } });
+    const chart = grid.cells()[0].widget.chart;
+    for (const cell of grid.cells()) cell.widget.series.setData(bars(200));
+    await flush();
+    const before = chart.getVisibleLogicalRange(), spacing = chart.timeScale.barSpacing;
+    chart.applySize(900, 400);
+    // A wider chart shows more bars at the same bar width.
+    expect(chart.timeScale.barSpacing).toBe(spacing);
+    expect(chart.getVisibleLogicalRange().to).toBeCloseTo(before.to, 6);
+    expect(chart.getVisibleLogicalRange().from).toBeLessThan(before.from - 10);
+  });
+
+  /** One more bar on every chart, the way a live feed appends it. */
+  const tick = (grid: ChartGrid, index: number): void => {
+    for (const cell of grid.cells()) cell.widget.series.update(bars(index + 1)[index]);
+  };
+
+  it('keeps a resized chart on the right edge while new bars arrive, in step with the others', async () => {
+    const { grid } = makeGrid({ preset: '1x2', links: { viewport: true, crosshair: false } });
+    const charts = grid.cells().map(cell => cell.widget.chart);
+    for (const cell of grid.cells()) cell.widget.series.setData(bars(200));
+    await flush();
+    charts[0].setVisibleLogicalRange({ from: 160, to: 203 });
+    for (let i = 200; i < 210; i++) tick(grid, i);
+    await flush();
+    expect(charts[1].getVisibleLogicalRange().to).toBeCloseTo(213, 6);
+    // A splitter drag resizes the first chart only.
+    charts[0].applySize(700, 400);
+    expect(charts[0].getVisibleLogicalRange().to).toBeCloseTo(213, 6);
+    expect(charts[0].getVisibleLogicalRange().from).toBeCloseTo(charts[1].getVisibleLogicalRange().from, 6);
+    tick(grid, 210);
+    for (const chart of charts) expect(chart.getVisibleLogicalRange().to).toBeCloseTo(214, 6);
+  });
+
+  it('shows a hidden chart on the window the linked charts reached with new bars, not the last pan', async () => {
+    const { grid } = makeGrid({ preset: '1x2', links: { viewport: true, crosshair: false } });
+    const charts = grid.cells().map(cell => cell.widget.chart);
+    for (const cell of grid.cells()) cell.widget.series.setData(bars(200));
+    await flush();
+    charts[1].applySize(0, 400);
+    charts[0].setVisibleLogicalRange({ from: 160, to: 203 });
+    for (let i = 200; i < 210; i++) tick(grid, i);
+    await flush();
+    charts[1].applySize(600, 400);
+    expect(charts[1].getVisibleLogicalRange().from).toBeCloseTo(170, 6);
+    expect(charts[1].getVisibleLogicalRange().to).toBeCloseTo(213, 6);
+  });
+
+  it('pulls no chart back to a window from before viewport linking was switched off and on', async () => {
     const { grid } = makeGrid({ preset: '1x2', links: { viewport: true, crosshair: false } });
     const charts = grid.cells().map(cell => cell.widget.chart);
     for (const cell of grid.cells()) cell.widget.series.setData(bars(200));
     await flush();
     charts[0].setVisibleLogicalRange({ from: 30, to: 60 });
-    grid.cells()[1].widget.setSymbol('BBB');
-    grid.cells()[1].widget.series.setData(bars(200, 400));
+    grid.setLinks({ viewport: false });
+    charts[1].setVisibleLogicalRange({ from: 120, to: 170 });
+    charts[0].setVisibleLogicalRange({ from: 100, to: 150 });
+    // Unlinked, a chart shown again keeps its own window.
+    charts[1].applySize(0, 400);
+    charts[1].applySize(600, 400);
+    expect(charts[1].getVisibleLogicalRange().to).toBeCloseTo(170, 6);
+    charts[1].applySize(0, 400);
+    grid.setLinks({ viewport: true });
+    charts[0].applySize(700, 400);
+    charts[1].applySize(600, 400);
+    expect(charts[0].getVisibleLogicalRange().to).toBeCloseTo(150, 6);
+    expect(charts[1].getVisibleLogicalRange().to).toBeCloseTo(170, 6);
+  });
+
+  it('forgets the linked window when the chart it follows is removed', async () => {
+    const { grid } = makeGrid({ preset: '1x3', links: { viewport: true, crosshair: false } });
+    const charts = grid.cells().map(cell => cell.widget.chart);
+    for (const cell of grid.cells()) cell.widget.series.setData(bars(200));
     await flush();
-    const fitted = charts[1].getVisibleLogicalRange();
-    charts[1].applySize(700, 400);
-    expect(charts[1].getVisibleLogicalRange().from).not.toBeCloseTo(30, 3);
-    expect(charts[1].getVisibleLogicalRange().to).toBeCloseTo(fitted.to, 3);
+    const edge = charts[1].getVisibleLogicalRange().to;
+    charts[1].applySize(0, 400);
+    charts[2].setVisibleLogicalRange({ from: 160, to: 203 });
+    grid.setPreset('1x2');
+    for (let i = 200; i < 210; i++) tick(grid, i);
+    charts[1].applySize(600, 400);
+    // The removed chart's window is ten bars behind; the shown chart stays on its right edge.
+    expect(charts[1].getVisibleLogicalRange().to).toBeCloseTo(edge + 10, 6);
+  });
+
+  it('shows the chart the window was read from on its own window, which followed new bars while hidden', async () => {
+    const { grid } = makeGrid({ preset: '1x2', links: { viewport: true, crosshair: false } });
+    const charts = grid.cells().map(cell => cell.widget.chart);
+    for (const cell of grid.cells()) cell.widget.series.setData(bars(200));
+    await flush();
+    charts[0].setVisibleLogicalRange({ from: 160, to: 203 });
+    charts[0].applySize(0, 400);
+    for (let i = 200; i < 210; i++) tick(grid, i);
+    charts[0].applySize(600, 400);
+    expect(charts[0].getVisibleLogicalRange().to).toBeCloseTo(213, 6);
+  });
+
+  it('moves the linked window to a chart that takes it, so it follows the bars that chart receives', async () => {
+    const { grid } = makeGrid({ preset: '1x2', links: { viewport: true, crosshair: false } });
+    const charts = grid.cells().map(cell => cell.widget.chart);
+    grid.cells()[0].widget.series.setData(bars(205));
+    grid.cells()[1].widget.series.setData(bars(200));
+    await flush();
+    charts[1].applySize(0, 400);
+    charts[0].setVisibleLogicalRange({ from: 160, to: 203 });
+    // A tab switch: the first chart hides and the second, which ends five bars earlier, shows.
+    charts[0].applySize(0, 400);
+    charts[1].applySize(600, 400);
+    expect(charts[1].getVisibleLogicalRange().to).toBeCloseTo(203, 6);
+    for (let i = 200; i < 210; i++) grid.cells()[1].widget.series.update(bars(i + 1)[i]);
+    charts[1].applySize(0, 400);
+    charts[0].applySize(600, 400);
+    expect(charts[0].getVisibleLogicalRange().to).toBeCloseTo(213, 6);
+  });
+
+  it('keeps the linked window on what a refreshed chart shows, not on its bars before they were re-anchored', async () => {
+    const { feed, requests } = pendingFeed();
+    const { grid } = makeGrid({ feed, preset: '1x2', links: { viewport: true, crosshair: false } });
+    const charts = grid.cells().map(cell => cell.widget.chart);
+    requests[0].resolve(bars(200));
+    await flush();
+    charts[1].applySize(0, 400);
+    charts[0].setVisibleLogicalRange({ from: 100, to: 150 });
+    void grid.cells()[0].widget.reload();
+    await flush();
+    requests[requests.length - 1].resolve(bars(210));
+    await flush();
+    const shown = charts[0].getVisibleLogicalRange();
+    charts[1].applySize(600, 400);
+    expect(charts[1].getVisibleLogicalRange().from).toBeCloseTo(shown.from, 6);
+    expect(charts[1].getVisibleLogicalRange().to).toBeCloseTo(shown.to, 6);
   });
 });

@@ -140,6 +140,43 @@ test('a narrow grid shows the active chart alone with tabs, and widening restore
   expect(errors).toEqual([]);
 });
 
+test('linked charts on the right edge keep following new bars through a splitter drag', async ({ page }, info) => {
+  const errors = await mount(page, '1x2');
+  await page.evaluate(() => (window as any).fixture.readyAll());
+  await expect.poll(() => counts(page)).toEqual([120, 120]);
+  /** Append bar `n` to both charts, the way a live feed does. */
+  const append = (n: number): Promise<void> => page.evaluate(i => {
+    const { grid, bars } = (window as any).fixture;
+    for (const cell of grid.cells()) cell.widget.series.update(bars(i + 1, 165)[i]);
+  }, n);
+  await page.evaluate(() => {
+    const grid = (window as any).fixture.grid;
+    grid.setLinks({ viewport: true });
+    grid.cells()[0].widget.chart.setVisibleLogicalRange({ from: 80, to: 123 });
+  });
+  for (let n = 120; n < 130; n++) await append(n);
+  const before = await ranges(page);
+  expect(before[0].to).toBeCloseTo(133, 6);
+  expect(before[1].to).toBeCloseTo(133, 6);
+  const split = page.locator('.oac-grid__split');
+  const box = (await split.boundingBox())!;
+  const width = await page.locator('.oac-grid__cell .oac-chart').first().evaluate(el => el.clientWidth);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 200, box.y + box.height / 2, { steps: 6 });
+  await page.mouse.up();
+  await expect.poll(() => page.locator('.oac-grid__cell .oac-chart').first().evaluate(el => el.clientWidth)).toBeGreaterThan(width + 150);
+  // Both charts were resized and both still show the same window, up to the newest bar.
+  await expect.poll(async () => (await ranges(page)).map(range => [Math.round(range.from * 1e4) / 1e4, Math.round(range.to * 1e4) / 1e4]))
+    .toEqual([[90, 133], [90, 133]]);
+  await append(130);
+  const after = await ranges(page);
+  expect(after[0].to).toBeCloseTo(134, 6);
+  expect(after[1].to).toBeCloseTo(134, 6);
+  await page.screenshot({ path: info.outputPath('grid-live-split.png') });
+  expect(errors).toEqual([]);
+});
+
 test('importing a workspace replaces every chart at once, and a failed import changes nothing', async ({ page }, info) => {
   const errors = await mount(page, '1x2');
   await page.evaluate(() => (window as any).fixture.readyAll());
