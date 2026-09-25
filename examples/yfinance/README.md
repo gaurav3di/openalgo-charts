@@ -321,6 +321,14 @@ page checks first that the grid view can open it, and refuses there otherwise. T
 link menu on the main page also opens the grid view. Open `grid.html?test=1` to
 expose the grid as `window.__grid` for the end-to-end suite.
 
+A one or two chart layout exported from the grid view opens on the main page
+through the same Layouts import. The widget's `1w` becomes the page's `1wk`, the
+per-chart theme is dropped because the main page has one theme for the page, and
+each chart opens fitted to its data with its studies and drawings, because the
+saved window counts the grid view's bars. The main page still refuses what it
+cannot show, such as a `1m` chart or two charts with different drawing magnet or
+stay settings.
+
 ## How it connects
 
 ```

@@ -4,8 +4,8 @@ import { parseWorkspaceDocument } from '/dist/openalgo-charts.workspace.mjs';
 import {
   GRID_HANDOFF_KEY, GRID_INTERVALS, GRID_PRESET_LABELS, gridFeed, gridFeeds, gridPeriod, gridViewRefusal, presetGlyph, handOffToGrid, takeGridHandoff, readGridFile, gridDocument,
 } from '../src/grid-view.js';
-import { needsGridView, validateReferenceWorkspace } from '../src/workspace-document.js';
-import { gridFileDocument } from '../src/workspaces.js';
+import { needsGridView, validateReferenceWorkspace, layoutFromWorkspace } from '../src/workspace-document.js';
+import { gridFileDocument, workspaceFileDocument } from '../src/workspaces.js';
 
 const pane = (id, symbol) => ({
   id, symbol, exchange: '', interval: '1d', chartType: 'candlestick', chart: { version: 1 }, settings: {},
@@ -148,6 +148,31 @@ describe('grid view documents', () => {
     expect(readGridFile(JSON.stringify(payload(1, 3))).layout.columns).toBe(3);
     expect(() => readGridFile('{"panes":[]}')).toThrow();
     expect(() => gridDocument({ ...payload(1, 1), activePaneId: 'missing' })).toThrow();
+  });
+
+  it('opens on the main page a one or two chart layout the grid view exported', () => {
+    const exported = gridDocument(payload(1, 2));
+    for (const pane of exported.panes) {
+      pane.settings = { 'widget.theme': 'light' };
+      // A window counted in the grid view's bars, which are not this page's.
+      pane.chart = { version: 1, viewport: { from: 450, to: 525 }, barSpacing: 12, indicators: [] };
+    }
+    exported.panes[0].interval = '1w';
+    // A period the main page saved at 1d, on a chart the grid view moved to 1h.
+    Object.assign(exported.panes[1], { interval: '1h', historyPeriod: '5y' });
+    const text = JSON.stringify(exported);
+    expect(() => layoutFromWorkspace(JSON.parse(text))).toThrow();
+    const layout = layoutFromWorkspace(workspaceFileDocument(text, 'grid.json'));
+    expect(layout.request).toEqual({ symbol: 'AAPL', interval: '1wk', period: '1y' });
+    expect(layout.secondary.request).toEqual({ symbol: 'MSFT', interval: '1h', period: '1y' });
+    expect([layout.viewport, layout.barSpacing, layout.secondary.state.viewport]).toEqual([undefined, undefined, undefined]);
+    expect(layout.indicators).toEqual([]);
+    // A document of the main page's own keeps its strict checks untouched.
+    const own = gridDocument(payload(1, 2));
+    own.panes[0].interval = '1w';
+    own.panes[1].historyPeriod = 'max';
+    own.panes[1].interval = '5m';
+    expect(workspaceFileDocument(JSON.stringify(own), 'own.json')).toEqual(own);
   });
 
   it('draws one box per chart in each preset glyph, with a label for every preset', () => {

@@ -14,6 +14,12 @@ test.beforeEach(async ({ request }) => {
 const grid = <T>(page: Page, fn: (grid: any) => T): Promise<T> =>
   page.evaluate(`(${fn.toString()})(window.__grid)`) as Promise<T>;
 const loaded = (page: Page): Promise<boolean> => grid(page, g => g.cells().every((cell: any) => cell.widget.series.getData().length > 0));
+/** Whether a main page chart's window reaches its newest bar, rather than bars it does not have. */
+const onNewest = (page: Page, key: string): Promise<boolean> => page.evaluate(name => {
+  const chart = (window as any).__oac.app[name];
+  const count = chart.primaryBars().length, range = chart.getVisibleLogicalRange();
+  return count > 1 && range.from < count - 1 && range.to >= count - 1;
+}, key);
 
 test('the grid view loads four instruments, switches presets and links, and keeps them across a reload', async ({ page }, info) => {
   const errors: string[] = [];
@@ -124,5 +130,34 @@ test('the main page hands a layout it cannot draw to the grid view, which opens 
   // The periods stay with the charts, so the saved grid and an exported layout carry them back.
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('oac-widget:yfinance-grid:grid')!).panes
     .map((pane: { historyPeriod?: string }) => pane.historyPeriod ?? null))).toEqual([null, '5y', '6mo', null]);
+  expect(errors).toEqual([]);
+});
+
+test('a one or two chart layout the grid view exports opens on the main page', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto(ORIGIN + '/examples/yfinance/grid.html?test=1');
+  await page.waitForFunction(() => (window as any).__grid?.cells().length === 4);
+  await page.getByRole('button', { name: 'Two columns' }).click();
+  await expect(page.locator('.oac-grid__cell')).toHaveCount(2);
+  await page.evaluate(() => (window as any).__grid.cells()[0].widget.setInterval('1w'));
+  const pending = page.waitForEvent('download');
+  await page.locator('#grid-export').click();
+  const file = await (await pending).path();
+  if (!file) throw new Error('Export did not create a file');
+  await page.goto(ORIGIN + '/examples/yfinance/index.html?test=1');
+  await page.waitForFunction(() => (window as any).__oac?.app.chart && !(window as any).__oac.app.loading);
+  await page.getByRole('button', { name: 'Layouts', exact: true }).click();
+  await page.locator('#ws-file').setInputFiles(file);
+  await expect(page.locator('#ws-current')).toHaveText('Current: Chart grid');
+  // The widget's weekly code opens as the page's own, beside the second chart.
+  await expect.poll(() => page.evaluate(() => {
+    const app = (window as any).__oac.app;
+    return app.chart2 && !app.workspaceLoading ? { primary: app.req, secondary: { symbol: app.p2.symbol, interval: app.p2.interval, period: app.p2.period } } : null;
+  }), { timeout: 20_000 }).toEqual({ primary: { symbol: 'AAPL', interval: '1wk', period: '1y' }, secondary: { symbol: 'MSFT', interval: '1d', period: '1y' } });
+  // Each chart shows its newest bars, not an empty plot: the grid view's window counted other bars.
+  await page.getByRole('button', { name: 'Close', exact: true }).first().click();
+  for (const key of ['chart', 'chart2']) await expect.poll(() => onNewest(page, key), { timeout: 20_000 }).toBe(true);
+  await page.screenshot({ path: info.outputPath('yfinance-grid-export-main.png') });
   expect(errors).toEqual([]);
 });
