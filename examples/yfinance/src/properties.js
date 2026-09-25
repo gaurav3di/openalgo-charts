@@ -216,6 +216,7 @@ export function mountPropertiesBar(app, anchorEl) {
   host.appendChild(bar);
 
   let ids = [];        // the selection the bar edits, primary first
+  let shownReadOnly = false;   // whether the bar was built in its read-only form
   let schema = null;   // the fields shared by every selected tool
   let pinned = loadPos();
   let pop = null;      // { el, for } while a popover is open
@@ -748,7 +749,8 @@ export function mountPropertiesBar(app, anchorEl) {
     // A selection the user may not edit (the host's session marks, say) gets
     // no control the controller would refuse: it says what it is and offers
     // a copy, which is the user's own drawing and edits normally.
-    if (live.every(isReadOnly)) {
+    shownReadOnly = live.every(isReadOnly);
+    if (shownReadOnly) {
       span('pb-note', bar).textContent = 'Read-only';
       const copy = button(chrome('duplicate'), { title: 'Duplicate as your own drawing', chord: 'Ctrl+D', side: 'top' }, () => { app.draw.duplicate(ids.slice()); });
       copy.dataset.act = 'duplicate';
@@ -1040,7 +1042,11 @@ export function mountPropertiesBar(app, anchorEl) {
   /** Refresh every control from the model, then park the bar. */
   function sync() {
     if (bar.hidden) return;
-    if (!drawingsOf().length) { hide(); return; }
+    const live = drawingsOf();
+    if (!live.length) { hide(); return; }
+    // The host made the selection read-only, or lifted that: the controls
+    // on the bar are the wrong set, so it is built again rather than synced.
+    if (live.every(isReadOnly) !== shownReadOnly) { ids = []; show(); return; }
     for (const s of syncers) s();
     reposition();
   }

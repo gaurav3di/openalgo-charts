@@ -77,6 +77,17 @@ describe('the properties bar on a read-only selection', () => {
     expect(q('.pb-note')).toBeNull();
   });
 
+  it('rebuilds when the host lifts or applies the policy on the drawing it shows', () => {
+    const mark = addSessionMark(draw, { time: T0 + 600, price: 100 });
+    draw.select(mark.id);
+    expect(q('.pb-note')).not.toBeNull();
+    draw.update(mark.id, { policy: { editable: true } }, { force: true });
+    expect(q('.pb-note')).toBeNull();
+    expect(q('[data-act="delete"]')).not.toBeNull();
+    draw.update(mark.id, { policy: { editable: false } });
+    expect(q('.pb-note').textContent).toBe('Read-only');
+  });
+
   it('opens no text editor on a read-only text drawing, from Enter or a double-click', () => {
     const note = text(draw, { policy: { editable: false } });
     draw.select(note.id);
