@@ -1,6 +1,6 @@
 # Per-plot scale assignments
 
-Indicator templates need to represent studies whose plots use different scales, including plots explicitly drawn on the price pane. A whole-study override cannot express these bindings. This prerequisite adds native per-plot assignments; portable template pane metadata and copy ownership remain a separate step.
+Indicator templates need to represent studies whose plots use different scales, including plots explicitly drawn on the price pane. A whole-study override cannot express these bindings. This prerequisite adds native per-plot assignments; the subsequent [indicator template layouts](template-layouts.md) batch adds portable pane metadata and copy ownership.
 
 ## Contract
 
@@ -30,4 +30,4 @@ Review focuses on a fill whose endpoints are patched separately, explicit overla
 
 The implementation passes full package verification with 7,193 unit tests, 436 example-host tests and seven endurance-harness checks. Seventeen compiled-program checks pass with the existing adapter. Fifteen browser cases cover assignments, exact restored pixels, the documented controls and the original autofit regression in three engines. The built website passes 60 desktop/mobile states with its displayed units checked and screenshots inspected.
 
-Review regressions cover malformed saved fields, empty maps, callback failures and reentry, unrelated formatter preservation and price formatting after a shared percent scale. API generation passes with warnings treated as errors. The base bundle measures 108.87 kB Brotli; chart-only imports measure 67.99 KiB. Template pane metadata and copy ownership remain the next separate capability.
+Review regressions cover malformed saved fields, empty maps, callback failures and reentry, unrelated formatter preservation and price formatting after a shared percent scale. API generation passes with warnings treated as errors. This batch measured 108.87 kB Brotli for the base bundle and 67.99 KiB for chart-only imports. Current measurements and subsequent template layout validation are recorded in [progress.json](progress.json).

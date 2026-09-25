@@ -2,11 +2,20 @@
 
 Implement missing indicator and chart functionality through the existing native APIs. Preserve the companion script engine's public descriptor contract, calculations and saved settings. Do not introduce a second scripting runtime, a drop-in API facade or an additional feed compatibility adapter.
 
+Issue #22, exposing higher-timeframe inputs on built-in indicators, is deferred at the user's request. Existing native requested-context capabilities remain supported. The remaining listed fixes and gaps are in scope, including price-only autoscaling and a collapsible indicator list.
+
 Native feeds and custom broker feeds continue using the current data interface. New provider contracts are justified only by a missing capability, such as authoritative bar-close events or a dataset that cannot be represented as ordinary bars. Provider-dependent functionality must be verified against supplied data; an interface declaration alone is not implementation evidence.
 
 ## Ownership
 
 The chart owns rendering, lifecycle context, chart interactions, data access and persistence. The script engine owns compilation, execution, rollback and strategy arithmetic. Extend their existing boundary when a demonstrated capability requires it. Keep comparative research and raw reference inventories outside the repository. Use generic descriptions in source, tests, comments, documentation and commit messages. Implementation and tests must be independently authored from documented behavior.
+
+Numerical changes require common input/output fixtures for equivalent chart,
+JavaScript-engine and Python-engine calculations. Adapter compatibility alone does
+not establish numerical agreement. Patch an engine only where the same contract
+has a demonstrated defect; keep documented seed and missing-value differences
+explicit and preserve existing program defaults. New language-level calculation
+contracts require matching support and checks in both engines.
 
 ## Required capabilities
 

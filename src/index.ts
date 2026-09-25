@@ -134,6 +134,7 @@ export type {
   SeriesState,
   IndicatorState,
   RestoreReport,
+  ChartRestoreOptions,
 } from './model/chart-state';
 
 // settings dialog: a declarative schema in the same control vocabulary the

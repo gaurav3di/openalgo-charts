@@ -7,7 +7,8 @@
     "preserveScriptEngineCompatibility": true,
     "dropInApis": false,
     "additionalFeedCompatibilityAdapter": false,
-    "sourceLanguageExecution": false
+    "sourceLanguageExecution": false,
+    "builtInHigherTimeframeInputs": false
   },
   "coverage": {
     "functionalPercentage": null,
@@ -71,7 +72,8 @@
         "Missing-value options on remaining composed helpers",
         "Composed calculations and arbitrary anchor policies",
         "Varying parameters on remaining composed calculations",
-        "Independent numerical fixtures"
+        "Independent numerical fixtures",
+        "Cross-language numerical audit, confirmed deviation fixes and companion package release 0.7.0"
       ]
     },
     {
@@ -171,13 +173,14 @@
       "id": "native-chart-apis",
       "status": "partial",
       "remaining": [
-        "Axis placement metadata and explicit copy-versus-sharing policy in indicator templates",
         "Legacy whole-axis transfers for mixed studies and explicit overlays",
         "Pane placement and collapse",
         "History beyond drawing edits",
         "Widget and navigation",
         "Layouts and persistence",
-        "Trading and provider APIs"
+        "Trading and provider APIs",
+        "Issue #25: price-only autoscaling",
+        "Issue #12: collapsible indicator list"
       ],
       "implemented": [
         "Persisted candle density in CSS pixels",
@@ -201,7 +204,13 @@
         "Chart-wide autofit on every visible scale without changing hidden-scale policy",
         "Atomic per-plot scale assignments for mixed studies, fill pairs and explicit price overlays",
         "Per-plot overrides in chart, workspace and template state with validation before mutation",
-        "Scale transaction safeguards for callback errors, reentry and unrelated formatting"
+        "Scale transaction safeguards for callback errors, reentry and unrelated formatting",
+        "Portable template pane weights, effective plot bindings, scale placement and range ownership",
+        "Independent template scale copies by default, explicit scale sharing and manual-view policies",
+        "Template dependency identity remapping, host-series preservation and detached validation before restore",
+        "Scoped destination formatter preservation without serializing runtime callbacks",
+        "Occupied no-plot study panes survive restoration and newer restore-start operations supersede older ones",
+        "Example-host template controls with guarded rollback, replay ownership and complete document round trips"
       ],
       "evidence": [
         "tests/navigation-settings.test.ts",
@@ -235,7 +244,15 @@
         "tests/indicator-plot-scale-instance.test.ts",
         "tests/indicator-plot-scale-state.test.ts",
         "tests/workspace-plot-scale-assignments.test.ts",
-        "tests/e2e/native-plot-scale-assignments.spec.ts"
+        "tests/e2e/native-plot-scale-assignments.spec.ts",
+        "tests/workspace-template-layout-documents.test.ts",
+        "tests/workspace-template-layout-plan.test.ts",
+        "tests/chart-restore-scale-format.test.ts",
+        "tests/chart-state-primitive-studies.test.ts",
+        "examples/yfinance/tests/native-template-layouts.test.js",
+        "examples/yfinance/tests/template-controls.test.js",
+        "tests/e2e/native-template-layouts.spec.ts",
+        "tests/e2e/yfinance-templates.spec.ts"
       ]
     },
     {
@@ -255,12 +272,14 @@
         "Native close alerts using compiled output and explicit provider confirmation through the unchanged adapter",
         "Compiled scalar output consumed by a native study across same-time updates and reverse-order restoration",
         "Compiled output on independent visible axes through movement, ordering, viewport changes, full restoration and live tail updates",
-        "Compiled plots with independent per-plot bindings through reassignment, restoration and same-time updates"
+        "Compiled plots with independent per-plot bindings through reassignment, restoration and same-time updates",
+        "Compiled template copies with independent axes, preserved host formatting and equal original/copy values through same-time updates"
       ],
       "remaining": [
         "Wider output and request fixtures",
         "Adapter extensions for new chart capabilities",
-        "Recheck latest development revision"
+        "Recheck latest development revision",
+        "Exhaustive numerical inventory and shared arithmetic fixtures across both language engines and comparable native calculations"
       ],
       "evidence": [
         "scripts/check-script-engine.mjs",
@@ -269,8 +288,10 @@
     }
   ],
   "next": [
-    "Complete remaining native capabilities with independently authored implementation and tests.",
-    "Execute the authorized release sequence after the full scope is verified."
+    "Audit all shipped numerical indicators and both script engines in parallel; fix confirmed contract deviations.",
+    "Complete remaining listed fixes and native capabilities; defer issue #22.",
+    "Implement issue #25 price-only autoscaling and issue #12 collapsible indicator list.",
+    "Execute the authorized chart and companion package release sequences after verification."
   ],
   "release": {
     "version": "2.5.4",
@@ -283,26 +304,36 @@
       "Commit and push",
       "Publish package and website",
       "Create release and verify published artifacts"
-    ]
+    ],
+    "companion": {
+      "version": "0.7.0",
+      "authorized": true,
+      "status": "pending-numerical-audit",
+      "requirement": "Compare all shipped numerical indicators with equivalent calculations in both language engines, fix confirmed deviations and publish both companion packages from one versioned source."
+    }
   },
   "validation": {
-    "chartTests": 7193,
-    "chartTestFiles": 313,
-    "compiledProgramTests": 17,
-    "demoTests": 436,
-    "demoTestFiles": 38,
-    "browserEvidence": "This batch passed 15 browser cases across all three engines: six per-plot geometry/restoration cases, six documented-example control cases and three original example autofit regressions. Fill and overlay pixels, unchanged data, exact formatted units and byte-identical restored screenshots pass at desktop and 390-pixel widths. The right axis expands when an extreme enters view and contracts when it leaves. The actual built website passed 60 states across desktop and mobile layouts, including all nine controls, with no page, console or example errors, badge overlap or overflow. Final engine, autofit and built-site screenshots were inspected. Traffic uses fixtures rather than live brokers.",
-    "website": "63 static pages built successfully; per-plot example verified through initial state and all nine controls at desktop and mobile widths in all three engines",
-    "chartOnlyBrotliKiB": 67.99,
-    "chartOnlyBudgetKiB": 68.25,
-    "baseBrotliKB": 108.87,
+    "chartTests": 7266,
+    "chartTestFiles": 317,
+    "compiledProgramTests": 18,
+    "demoTests": 455,
+    "demoTestFiles": 40,
+    "browserEvidence": "This batch passed 33 browser cases across all three engines: 12 native template layout, no-plot pane and formatter cases, 18 example-host template cases and three original autofit regressions. Actual built-site checks passed 30 states across desktop and 390-pixel layouts, including all four template controls. Data, source identity, copied values, pane weights, scale ownership, ranges, axis placement and rendered pixels were checked. Final engine, host and built-site screenshots were inspected. Traffic uses fixtures rather than live brokers.",
+    "website": "63 static pages built successfully; template example verified through initial state and all four controls at desktop and mobile widths in all three engines",
+    "chartOnlyBrotliKiB": 68.37,
+    "chartOnlyBudgetKiB": 68.5,
+    "baseBrotliKB": 109.13,
     "indicatorBrotliKB": 35.97,
-    "allTiersBrotliKB": 286.65,
-    "budgetChange": "Per-plot assignment, validation and transaction safeguards add 0.75 kB to the base bundle (108.12 to 108.87) and 0.68 KiB to chart-only imports (67.31 to 67.99). Workspace persistence measures 6.30 kB versus 6.09 kB. Limits are now 109 kB base, 117 kB base plus trade, 246.5 kB terminal, 6.5 kB workspace, 287 kB all tiers and 68.25 KiB chart-only. All optional-tier removal checks pass.",
-    "review": "Independent review and failing regressions covered outer saved-map accessors, nonenumerable fields, empty-map compatibility, callback reentry, range callback failures, interrupted legend formatting and unintended formatter writes. Screenshot inspection found stale percent formatting after restoring a price plot; explicit price formats now restore the chart formatter. Exact restored screenshots match in all three engines. Axis metadata and copy ownership in indicator templates remain explicitly tracked.",
-    "packageVerification": "Full verify passed lint, typecheck, 7193 unit tests, seven endurance-harness checks, build, 436 example tests, declaration identity, measured size limits and tree-shake checks. Seventeen compiled-program checks and public adapter typechecking passed with the unchanged engine adapter.",
-    "latestEngineSourceReview": "d95bd70daf598892d40a9265607537b86ce712dd has no source changes relative to the pinned tested engine revision.",
+    "workspaceBrotliKB": 8.61,
+    "allTiersBrotliKB": 289.23,
+    "budgetChange": "Template layout planning and validation add 2.31 kB to the workspace bundle (6.30 to 8.61). Scoped restore formatting and occupied-pane handling add 0.26 kB to base (108.87 to 109.13) and 0.38 KiB to chart-only imports (67.99 to 68.37). Limits are 109.5 kB base, 117.5 kB base plus trade, 247 kB terminal, 8.75 kB workspace, 289.5 kB all tiers and 68.5 KiB chart-only. All optional-tier removal checks pass.",
+    "review": "Independent review covered malformed layout metadata, effective overlay bindings, removed plot handles, host-bearing pane detection, nested restore ownership, rollback, primitive-only panes and destination formatter preservation. Failing regressions reproduced hidden-scale recreation and selector-array accessor defects before the fixes. Both review findings are closed.",
+    "packageVerification": "Full verify passed lint, typecheck, 7266 unit tests, seven endurance-harness checks, build, 455 example tests, declaration identity, measured size limits and tree-shake checks. Eighteen compiled-program checks and public adapter typechecking passed with the unchanged pinned engine adapter.",
+    "latestEngineSourceReview": "Development revision d95bd70daf598892d40a9265607537b86ce712dd has unchanged JavaScript engine source relative to the pinned revision. Python changes cover installed-distribution identity metadata rather than calculations. No companion numerical implementation has been changed by this work yet.",
     "apiDocumentation": "Generated with warnings treated as errors",
-    "skillsCoverage": "975 of 975 named exports and registry entries; not functional coverage"
-  }
+    "skillsCoverage": "978 of 978 named exports and registry entries; not functional coverage"
+  },
+  "deferred": [
+    "Issue #22: higher-timeframe inputs on built-in indicators, excluded by the user on 2026-09-25"
+  ]
 }

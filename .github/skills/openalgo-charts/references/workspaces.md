@@ -12,10 +12,26 @@ Runtime exports:
   panes, grid slots, focus and crosshair/viewport/symbol/interval sync settings.
   Optional layout `rowWeights`/`columnWeights` preserve unequal tracks: positive
   finite values up to 1,000, one per track. Missing lists mean equal tracks.
-- `parseIndicatorTemplate`, `parseIndicatorStates`: retain duplicate instances,
+- `parseIndicatorTemplate`, `parseIndicatorTemplatePayload`, `parseIndicatorStates`: retain duplicate instances,
   settings, visibility, pane placement and unavailable custom IDs. Empty is valid.
-  Chart states retain unique instanceId values for alert anchors. Templates omit
-  them so applying a reusable study set creates fresh instance identities.
+  Chart states retain unique instanceId values for alert anchors. Layout-bearing
+  and connected templates retain source IDs for their links; independent legacy
+  templates omit IDs. Applying a template creates fresh incoming identities.
+- `captureIndicatorTemplate(chart)`: capture studies, pane/scale configuration and
+  effective plot bindings, including overlays and the actual primary scale. No bars
+  or runtime formatters are stored. Save the complete payload to retain layout.
+- `planIndicatorTemplateState(chart, input, mode, options?)`: validate loaded
+  descriptors and return a detached `{ indicators, panes?, restoreOptions? }` plan. No mutation or
+  data reload. Default `scalePolicy: 'copy'` gives non-primary main-pane scales fresh
+  IDs while preserving source sharing; `'share'` reuses IDs and existing destination
+  settings. Source primary bindings follow the destination primary scale. Positive
+  pane groups stay separate, with proportional weights. Replace reserves host-series
+  panes. Default `rangePolicy: 'auto'` drops copied manual views/ratio locks and
+  recomputes study-owned defaults; `'preserve'` retains them with remapped owners.
+  Both preserve destination primary/shared views and host fixed bands.
+  Pass `plan.restoreOptions` as the second argument of `chart.restoreState` to
+  retain runtime formatters on destination scales. Copied/replaced study scales
+  receive descriptor formatting; no callback enters the portable document.
 - `planIndicatorTemplate(current, incoming, mode, available, nextPaneIndex)`:
   prepare detached studies before mutation. `replace` uses the incoming groups;
   `append` retains current identities and places incoming positive pane groups
@@ -29,8 +45,9 @@ Runtime exports:
 - `WorkspaceRepository`: asynchronous `load`, `createWorkspace`, `saveWorkspace`,
   `createTemplate`, `saveTemplate`, `rename`, `duplicate`, `remove`, `openWorkspace`, `setAutosave`,
   `importDocument`, `exportDocument`; immutable `namespace`; optional `now`/`id`.
-  `saveTemplate` retains metadata identity, captures detached inputs and strips
-  study instance IDs. Empty updates are valid; failed writes preserve old content.
+  `createTemplate`/`saveTemplate` accept study arrays or complete payloads.
+  `saveTemplate` retains metadata identity and captures detached inputs; saving an
+  array removes prior layout metadata. Empty updates are valid; failed writes preserve old content.
 - `WorkspaceConflictError`: a saved revision changed; reload before retrying.
 - `createIndexedDbWorkspaceStorage`: explicit `IDBFactory`, optional database name,
   atomic revision checks across tabs. `close()` releases the connection. Database
@@ -40,7 +57,9 @@ Types: `WorkspaceKind`, `WorkspaceSettings`, `WorkspaceChartState`,
 `WorkspaceComparison`, `WorkspaceSlot`, `WorkspacePane`, `WorkspacePayload`,
 `WorkspaceDocument`, `IndicatorTemplateDocument`, `WorkspaceCatalog`,
 `WorkspaceStorage`, `WorkspaceRepositoryOptions`, `WorkspaceOperationOptions`, `WorkspaceOpenOptions`,
-`IndexedDbWorkspaceStorage`, `IndicatorTemplateMode`.
+`IndexedDbWorkspaceStorage`, `IndicatorTemplateMode`, `IndicatorTemplateInput`,
+`IndicatorTemplatePayload`, `IndicatorTemplateLayout`, `IndicatorTemplatePlotBinding`,
+`IndicatorTemplateApplyOptions`, `IndicatorTemplatePlan`.
 
 `WorkspaceStorage.write(namespace, catalog, expectedRevision, options?)` MUST compare and
 write atomically. A read/then-write localStorage adapter does not meet this
@@ -65,7 +84,8 @@ bound to their original owner. Show a save error when storage rejects.
 When applying a planned study list with `restoreState`, explicitly retain the
 current drawings and alerts: omitted state slots clear them. Check the restore
 report and applied study count; recover the previous list and decorations after
-failure. Do not reload market data or change the captured chart's source to apply
+failure only while the same operation still owns the chart. A nested newer restore
+invalidates recovery ownership, even on the same chart object. Do not reload market data or change the captured chart's source to apply
 a study template.
 
 Metadata is epoch milliseconds; chart/drawing times stay UTC seconds. Import

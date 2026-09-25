@@ -174,6 +174,16 @@ export interface ChartState {
   alerts?: AlertsDocument;
 }
 
+/** Runtime choices for restoring configuration without serializing callbacks. */
+export interface ChartRestoreOptions {
+  /**
+   * Keep the current formatter callback or default formatter on selected live
+   * scales while recreating study series. Numeric saved scale settings still
+   * apply. Selectors must name existing panes/scales; no callbacks are serialized.
+   */
+  preserveScaleFormats?: readonly { paneIndex: number; scaleId: PriceScaleId }[];
+}
+
 /** What `restoreState` actually applied, so a caller can finish the job. */
 export interface RestoreReport {
   /** True when the payload was a recognised, applicable state object. */

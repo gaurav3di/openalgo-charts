@@ -1,7 +1,6 @@
-import type { IndicatorState } from 'openalgo-charts';
 import {
-  parseIndicatorStates, parseIndicatorTemplate, parseWorkspaceDocument, parseWorkspacePayload,
-  type IndicatorTemplateDocument, type WorkspaceDocument, type WorkspaceKind, type WorkspacePayload,
+  parseIndicatorTemplatePayload, parseIndicatorTemplate, parseWorkspaceDocument, parseWorkspacePayload,
+  type IndicatorTemplateDocument, type IndicatorTemplateInput, type WorkspaceDocument, type WorkspaceKind, type WorkspacePayload,
 } from './documents';
 import { boolean, list, number, readJson, record, string, WorkspaceDocumentError } from './json';
 
@@ -107,24 +106,25 @@ export class WorkspaceRepository {
     });
   }
 
-  async createTemplate(name: string, input: IndicatorState[]): Promise<IndicatorTemplateDocument> {
-    const indicators = parseIndicatorStates(input);
+  async createTemplate(name: string, input: IndicatorTemplateInput): Promise<IndicatorTemplateDocument> {
+    const payload = parseIndicatorTemplatePayload(input);
     const title = string(name, 'name', 120);
     return this._transact(catalog => {
       const now = this._now();
       const doc = parseIndicatorTemplate({ kind: 'indicator-template', version: 1, id: this._newId(catalog), name: title,
-        createdAt: now, updatedAt: now, indicators });
+        createdAt: now, updatedAt: now, ...payload });
       catalog.templates.push(doc);
       return doc;
     });
   }
 
   /** Update reusable study settings without changing the saved template identity. */
-  async saveTemplate(id: string, input: IndicatorState[]): Promise<IndicatorTemplateDocument> {
-    const indicators = parseIndicatorStates(input);
+  async saveTemplate(id: string, input: IndicatorTemplateInput): Promise<IndicatorTemplateDocument> {
+    const payload = parseIndicatorTemplatePayload(input);
     return this._transact(catalog => {
       const existing = this._find(catalog, 'indicator-template', id) as IndicatorTemplateDocument;
-      const doc = parseIndicatorTemplate({ ...existing, indicators, updatedAt: this._updatedAt(existing) });
+      const doc = parseIndicatorTemplate({ kind: 'indicator-template', version: existing.version,
+        id: existing.id, name: existing.name, createdAt: existing.createdAt, updatedAt: this._updatedAt(existing), ...payload });
       catalog.templates[catalog.templates.indexOf(existing)] = doc;
       return doc;
     });

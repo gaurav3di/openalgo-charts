@@ -1121,6 +1121,95 @@ for (const [label, action] of [
 render();
 return chart;`} />
 
+## Copy study layouts with templates
+
+A template captures pane weights and effective scale relationships as well as
+study inputs. The orange metric has a saved manual view from 0 to 100. Copy it
+with an automatic view to fit its current values, preserve that view, or explicitly
+share the original scale. Each action starts from the same two-study layout.
+The price guide stays attached to the primary scale and source bars stay loaded.
+
+<RunnableExample height={600} caption="Templates carry configuration. Applying one keeps the destination chart's source and primary scale." code={`el.style.display = 'flex';
+el.style.flexDirection = 'column';
+const controls = document.createElement('div');
+controls.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;padding:8px 64px 8px 8px';
+controls.addEventListener('pointerdown', event => event.stopPropagation());
+el.appendChild(controls);
+const status = document.createElement('div');
+status.setAttribute('role', 'status');
+status.style.cssText = 'padding:0 8px 8px;font:12px/1.5 sans-serif;overflow-wrap:anywhere';
+el.appendChild(status);
+const host = document.createElement('div');
+host.style.cssText = 'flex:1;min-height:220px;width:100%';
+el.appendChild(host);
+lib.registerIndicator({
+  id: 'demo-template-metric', name: 'Metric and price guide', placement: 'onchart', inputs: [],
+  plots: [
+    { key: 'metric', type: 'line', title: 'Metric', priceScaleId: 'overlay:template-metric',
+      style: { color: '#e8a23a', lineWidth: 3 } },
+    { key: 'price', type: 'line', title: 'Price guide',
+      style: { color: '#b16bdf', lineWidth: 2 } },
+  ],
+  calc: bars => ({ metric: bars.map((bar, i) => 35 + 10 * Math.sin(i / 8)), price: bars.map(bar => bar.close + 2) }),
+});
+lib.registerIndicator({
+  id: 'demo-template-signal', name: 'Signal', placement: 'pane', inputs: [],
+  plots: [{ key: 'signal', type: 'line', title: 'Signal', style: { color: '#26a69a', lineWidth: 2 } }],
+  calc: bars => ({ signal: bars.map((bar, i) => Math.cos(i / 8)) }),
+});
+const chart = lib.createChart(host, { branding: false, priceAxisWidth: 52, animAutoscale: false });
+const palette = chart.theme();
+status.style.color = palette.axisText;
+chart.addSeries('candlestick').setData(Array.from({ length: 64 }, (_, i) => ({
+  time: 1700000000 + i * 60, open: 100 + i / 4, high: 102 + i / 4,
+  low: 99 + i / 4, close: 101 + i / 4,
+})));
+const metric = chart.addIndicator('demo-template-metric');
+const signal = chart.addIndicator('demo-template-signal');
+chart.setPaneWeight(signal.paneIndex, 0.55);
+chart.setPriceAxisPlacement(0, 'overlay:template-metric', 'left');
+const scale = metric.series('metric').priceScale();
+scale.setOptions({ minMove: 0.25, marginTop: 0.1, marginBottom: 0.1 });
+scale.setPriceRange({ min: 0, max: 100 });
+scale.setAutoScale(false);
+chart.panes()[signal.paneIndex].priceScale.setOptions({ inverted: true });
+chart.fitContent();
+const initial = chart.getState();
+const template = lib.captureIndicatorTemplate(chart);
+function reset() {
+  if (!chart.restoreState(initial).applied) throw new Error('Template example reset failed');
+}
+function apply(scalePolicy, rangePolicy) {
+  reset();
+  const before = chart.getState();
+  const plan = lib.planIndicatorTemplateState(chart, template, 'append', { scalePolicy, rangePolicy });
+  const report = chart.restoreState({ version: 1, indicators: plan.indicators, panes: plan.panes,
+    drawings: before.drawings, alerts: before.alerts }, plan.restoreOptions);
+  if (!report.applied || chart.indicators().length !== 4) throw new Error('Template example application failed');
+  const studies = chart.indicators();
+  const shared = studies[0].series('metric').priceScale() === studies[2].series('metric').priceScale();
+  status.textContent = '4 studies, 3 panes. Metric scale: ' + (shared ? 'shared' : 'independent')
+    + '. Copied view: ' + (studies[2].series('metric').priceScale().autoScale ? 'automatic' : 'saved 0 to 100')
+    + '. Price guide follows the primary scale.';
+}
+const ready = () => { status.textContent = '2 studies, 2 panes. Saved metric view: 0 to 100. Signal pane weight: 0.55.'; };
+for (const [label, action] of [
+  ['Copy, automatic view', () => apply('copy', 'auto')],
+  ['Copy, saved view', () => apply('copy', 'preserve')],
+  ['Share scales', () => apply('share', 'auto')],
+  ['Reset studies', () => { reset(); ready(); }],
+]) {
+  const button = document.createElement('button');
+  button.type = 'button'; button.textContent = label;
+  button.style.cssText = 'padding:5px 9px;border:1px solid ' + palette.axisLine
+    + ';border-radius:4px;background:' + palette.background + ';color:' + palette.axisText
+    + ';font:12px sans-serif;cursor:pointer';
+  button.onclick = action;
+  controls.appendChild(button);
+}
+ready();
+return chart;`} />
+
 ## Computed fills and multiple summary grids
 
 A descriptor can color each part of a band and publish several tables. The fill

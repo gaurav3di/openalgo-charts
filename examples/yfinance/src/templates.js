@@ -33,6 +33,7 @@ export function initTemplates(app) {
     el('tp-summary').textContent = chosen ? `${chosen.indicators.length} studies` : 'No saved templates';
     const locked = busy || catalog.busy, reason = templateUnavailableReason(app, target);
     picker.disabled = locked || !templates.length; name.disabled = locked;
+    for (const id of ['tp-scale-policy', 'tp-range-policy']) el(id).disabled = locked || Boolean(reason) || !chosen;
     el('tp-new').disabled = locked || Boolean(reason) || !catalog.catalog || !name.value.trim();
     el('tp-update').disabled = locked || Boolean(reason) || !chosen;
     for (const id of ['tp-replace', 'tp-append']) el(id).disabled = locked || Boolean(reason) || !chosen;
@@ -70,12 +71,12 @@ export function initTemplates(app) {
   name.addEventListener('input', render);
   picker.addEventListener('change', () => { pendingDelete = null; render(); });
   el('tp-new').addEventListener('click', () => action(() => {
-    const studies = captureIndicatorTemplate(app, target);
-    return transact(repository => repository.createTemplate(name.value, studies));
+    const payload = captureIndicatorTemplate(app, target);
+    return transact(repository => repository.createTemplate(name.value, payload));
   }, 'Template saved'));
   el('tp-update').addEventListener('click', () => action(() => {
-    const studies = captureIndicatorTemplate(app, target), id = selected().id;
-    return transact(repository => repository.saveTemplate(id, studies));
+    const payload = captureIndicatorTemplate(app, target), id = selected().id;
+    return transact(repository => repository.saveTemplate(id, payload));
   }, 'Template updated'));
   el('tp-rename').addEventListener('click', () => action(() => transact(repository => repository.rename('indicator-template', picker.value, name.value)), 'Template renamed'));
   el('tp-duplicate').addEventListener('click', () => action(() => transact(repository => repository.duplicate('indicator-template', picker.value, name.value)), 'Template duplicated'));
@@ -86,7 +87,9 @@ export function initTemplates(app) {
   el('tp-confirm-delete').addEventListener('click', () => action(() => transact(repository => repository.remove('indicator-template', pendingDelete)), 'Template deleted'));
   el('tp-refresh').addEventListener('click', () => action(() => catalog.refresh(), 'Saved templates reloaded'));
   for (const mode of ['replace', 'append']) el(`tp-${mode}`).addEventListener('click', () => action(() => {
-    try { applyIndicatorTemplate(app, target, selected().indicators, mode); }
+    try { applyIndicatorTemplate(app, target, selected(), mode, {
+      scalePolicy: el('tp-scale-policy').value, rangePolicy: el('tp-range-policy').value,
+    }); }
     finally { renderIndicatorChips(); }
     autosave();
   }, 'Template applied'));

@@ -89,6 +89,27 @@ indicator outputs itself. Reattach host controllers to a replacement chart.
 | `indicators` | `number` | Indicator instances recreated. |
 | `reason` | `string?` | Why the payload was rejected. |
 
+`restoreState` retains panes containing live studies even when those studies
+render only levels or primitives. Unavailable studies do not leave empty panes.
+If a `state:restore:start` listener installs a newer state synchronously, the
+older restore returns `applied: false` instead of overwriting it.
+
+`chart.restoreState(state, options?)` accepts `ChartRestoreOptions`. Use
+`preserveScaleFormats` when rebuilding studies must retain the destination's
+runtime formatter callback or default formatter on specific existing scales:
+
+```ts
+chart.restoreState(saved, {
+  preserveScaleFormats: [{ paneIndex: 0, scaleId: 'right' }],
+});
+```
+
+Selectors are validated before mutation and must refer to existing scales.
+Saved numeric scale settings still apply. The option only suppresses automatic
+formatter installation while study series are recreated; later explicit host
+formatting and study settings changes retain their usual behavior. No function
+is serialized. Without options, normal descriptor formatting applies.
+
 ### Saved axes
 
 `PaneState.priceScale` describes the right scale. Optional `PaneState.scales`

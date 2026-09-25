@@ -6,7 +6,7 @@ Scale identity and visible placement are independent. Existing `right`, `left`, 
 
 All panes share the maximum column count on each side so their time coordinates align. Each pane packs its active columns inward; unused outer cells have no price input target. Columns use the configured width, reduced equally on narrow charts to leave at least one column-width for the plot. Rendering, context menus, wheel input and axis dragging resolve the same column geometry. Tick and value labels are clipped to their own column. The primary crosshair price readout remains on the primary series' scale. Primitive lines retain plot coordinates while their axis labels receive their column's inner edge.
 
-Full chart and workspace snapshots preserve placement with optional `PriceScaleState.placement` metadata. Old snapshots restore default placement. Indicator templates currently carry scale IDs but no pane scale metadata; preserving column placement in templates requires a separate schema and sharing policy and remains outstanding.
+Full chart and workspace snapshots preserve placement with optional `PriceScaleState.placement` metadata. Old snapshots restore default placement. The subsequent [indicator template layouts](template-layouts.md) batch preserves column placement in templates with portable pane metadata and explicit copy and sharing policies.
 
 Implementation and verification sequence:
 

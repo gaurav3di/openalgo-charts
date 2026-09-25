@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DiagnosticBag, check, emit, isError, parse, sourceFile } from 'script-engine-under-test';
 import { descriptorFor } from 'script-engine-under-test/adapters/charts';
+import { Chart as PublicChart, registerIndicator as registerPublicIndicator } from 'openalgo-charts';
+import { captureIndicatorTemplate, planIndicatorTemplateState } from 'openalgo-charts/workspace';
 import { Chart } from '../src/core/chart';
 import { registerIndicator, type IndicatorDescriptor } from '../src/model/indicator-registry';
 import type { Bar } from '../src/model/bar';
@@ -53,6 +55,71 @@ function makeChart(data: Bar[], now: number, updatesOnly = false) {
 const bar = (time: number, close: number): Bar => ({ time, open: 1, high: close + 1, low: 0, close });
 
 describe('compiled script engine on an actual Chart', () => {
+  it('copies a compiled study through public template planning with independent scale settings', () => {
+    const compiled = compile(`version 1
+study("Template mean", overlay = true)
+factor = input(10, "Factor", min = 1, max = 20)
+plot(close, "Price")
+plot(sma(close, 2) * factor, "Mean")
+`);
+    registerPublicIndicator(compiled);
+    const document = fakeDocument();
+    const chart = new PublicChart(document.createElement('div'), {
+      document, timezone: 'Etc/UTC', pixelRatio: () => 1, shortcuts: false,
+      raf: { schedule: () => 1, cancel: () => {} },
+    });
+    try {
+      chart.applySize(800, 600);
+      chart.setDataContext({ symbol: 'SAMPLE', interval: '1m' });
+      const source = chart.addSeries('candlestick');
+      source.setData([1, 3, 5, 7].map((close, index) => bar(index * 60, close)));
+      const priceKey = compiled.plots.find(plot => plot.title === 'Price')!.key;
+      const meanKey = compiled.plots.find(plot => plot.title === 'Mean')!.key;
+      const scaleId = 'overlay:template-mean';
+      const original = chart.addIndicator(compiled.id, {}, { plotPriceScaleIds: { [meanKey]: scaleId } });
+      const originalId = original.id, scale = original.series(meanKey)!.priceScale();
+      scale.setOptions({ inverted: true, minMove: 0.25, minPrecision: 2 });
+      scale.setAutoScale(false); scale.setPriceRange({ min: 0, max: 100 });
+      chart.setPriceAxisPlacement(0, scaleId, 'left');
+      source.priceScale().setPriceFormatter(value => `Q${value}`);
+      const data = source.getData(), values = original.values();
+      expect(values[meanKey]).toEqual([null, 20, 40, 60]);
+
+      const payload = captureIndicatorTemplate(chart);
+      const plan = planIndicatorTemplateState(chart, payload, 'append', { rangePolicy: 'preserve' });
+      expect(chart.indicators()).toEqual([original]);
+      expect(plan.indicators).toHaveLength(2);
+      const copyId = plan.indicators[1].instanceId!;
+      expect(copyId).not.toBe(originalId);
+      const report = chart.restoreState({ version: 1, indicators: plan.indicators, panes: plan.panes }, plan.restoreOptions);
+      expect(report.applied).toBe(true); expect(report.indicators).toBe(2);
+      const restored = chart.indicators().find(study => study.id === originalId)!;
+      const copied = chart.indicators().find(study => study.id === copyId)!;
+      const copiedScaleId = copied.plotPriceScaleId(meanKey)!;
+      expect(copiedScaleId).not.toBe(scaleId);
+      expect(copied.series(meanKey)!.priceScale()).not.toBe(scale);
+      expect(copied.series(meanKey)!.priceScale()).not.toBe(source.priceScale());
+      expect(copied.series(meanKey)!.priceScale().options).toMatchObject({ inverted: true, minMove: 0.25, minPrecision: 2 });
+      expect(copied.series(meanKey)!.priceScale().priceRange()).toEqual({ min: 0, max: 100 });
+      expect(chart.priceAxisPlacement(0, copiedScaleId)).toEqual({ side: 'left', order: 1 });
+      expect(restored.series(meanKey)!.priceScale()).toBe(scale);
+      expect(copied.series(priceKey)!.priceScale()).toBe(source.priceScale());
+      expect(chart.primarySeries()).toBe(source);
+      expect(source.getData()).toEqual(data);
+      expect(source.priceScale().format(2)).toBe('Q2');
+      expect(restored.values()).toEqual(values); expect(copied.values()).toEqual(values);
+
+      source.update(bar(180, 9));
+      for (const study of [restored, copied]) {
+        expect(study.values()[priceKey]).toEqual([1, 3, 5, 9]);
+        expect(study.values()[meanKey]).toEqual([null, 20, 40, 70]);
+        expect(study.series(meanKey)!.getData()[3].close).toBe(70);
+      }
+      expect(chart.primarySeries()).toBe(source);
+      expect(copied.series(meanKey)!.priceScale()).not.toBe(restored.series(meanKey)!.priceScale());
+    } finally { chart.destroy(); }
+  });
+
   it('keeps compiled plots independent through per-plot reassignment and restoration', () => {
     const compiled = compile(`version 1
 study("Separate plot units", overlay = true)

@@ -1,4 +1,4 @@
-import type { ChartState, ChartSettingsState, IndicatorState, PriceScaleId, SeriesState } from 'openalgo-charts';
+import type { ChartState, ChartSettingsState, IndicatorState, PaneState, PriceScaleId, SeriesState } from 'openalgo-charts';
 import { parseAlertsDocument, parsePaneState } from 'openalgo-charts';
 import { boolean, choice, list, number, readJson, record, string, WorkspaceDocumentError, type Json } from './json';
 
@@ -28,9 +28,15 @@ interface DocumentMetadata {
   version: 1; id: string; name: string; createdAt: number; updatedAt: number;
 }
 export interface WorkspaceDocument extends DocumentMetadata, WorkspacePayload { kind: 'workspace' }
-export interface IndicatorTemplateDocument extends DocumentMetadata {
-  kind: 'indicator-template'; indicators: IndicatorState[];
+export interface IndicatorTemplatePlotBinding {
+  instanceId: string; plotKey: string; paneIndex: number; scaleId: PriceScaleId;
 }
+export interface IndicatorTemplateLayout {
+  panes: PaneState[]; plots: IndicatorTemplatePlotBinding[]; primaryScaleId?: PriceScaleId;
+}
+export interface IndicatorTemplatePayload { indicators: IndicatorState[]; layout?: IndicatorTemplateLayout }
+export type IndicatorTemplateInput = IndicatorState[] | IndicatorTemplatePayload;
+export interface IndicatorTemplateDocument extends DocumentMetadata, IndicatorTemplatePayload { kind: 'indicator-template' }
 
 function metadata(input: Record<string, Json>, kind: WorkspaceKind): DocumentMetadata {
   if (input.kind !== kind || input.version !== WORKSPACE_VERSION) throw new WorkspaceDocumentError(`Unsupported ${kind} kind or version`);
@@ -92,13 +98,16 @@ function indicatorStates(input: Json | undefined, preserveIdentity = true): Indi
 /** Keep repeated/custom descriptor IDs; availability is checked by the applying host. */
 export function parseIndicatorStates(input: unknown): IndicatorState[] { return indicatorStates(readJson(input)); }
 
-function templateIndicatorStates(input: Json | undefined): IndicatorState[] {
+function templateIndicatorStates(input: Json | undefined, requireIdentity = false): IndicatorState[] {
   const entries = list(input, 'indicators', 256);
   const connected = entries.some(item => {
     const keys = record(item, 'indicator').studyInputs;
     return Array.isArray(keys) && keys.length > 0;
   });
-  const states = indicatorStates(entries, connected);
+  const states = indicatorStates(entries, connected || requireIdentity);
+  if (requireIdentity && states.some(state => state.instanceId === undefined)) {
+    throw new WorkspaceDocumentError('Template layout requires every indicator instance ID');
+  }
   if (!connected) return states;
   const identities = new Map(states.flatMap((state, index) => state.instanceId === undefined ? [] : [[state.instanceId, index] as const]));
   const dependencies = states.map((state, index) => (state.studyInputs ?? []).map(key => {
@@ -124,6 +133,92 @@ function templateIndicatorStates(input: Json | undefined): IndicatorState[] {
 /** Internal shared normalization; only metadata declares portable graph edges. */
 export function parseTemplateIndicatorStates(input: unknown): IndicatorState[] {
   return templateIndicatorStates(readJson(input));
+}
+
+function chartPanes(input: Json | undefined): PaneState[] {
+  return list(input, 'chart panes', 32).map(item => {
+    try {
+      const pane = parsePaneState(item);
+      // Portable workspaces retain their established numeric limits; the engine
+      // can restore larger native states without inheriting a host catalog limit.
+      number(pane.weight, 'pane weight', Number.MIN_VALUE);
+      for (const scale of [pane.priceScale, ...Object.values(pane.scales ?? {})]) {
+        if (!scale) continue;
+        number(scale.marginTop, 'marginTop', 0, 1);
+        number(scale.marginBottom, 'marginBottom', 0, 1);
+        number(scale.minMove, 'minMove', 0);
+        if (scale.marginTop + scale.marginBottom >= 1) throw new WorkspaceDocumentError('Price scale margins leave no chart area');
+        for (const range of [scale.range, scale.fixedRange]) {
+          if (!range) continue;
+          number(range.min, 'range.min', -Number.MAX_SAFE_INTEGER);
+          number(range.max, 'range.max', range.min);
+          if (range.max === range.min) throw new WorkspaceDocumentError('Price scale range must have positive width');
+        }
+      }
+      return pane;
+    }
+    catch (error) { throw new WorkspaceDocumentError(error instanceof Error ? error.message : 'Invalid pane scale state'); }
+  });
+}
+
+function templatePayload(input: Json): IndicatorTemplatePayload {
+  if (Array.isArray(input)) return { indicators: templateIndicatorStates(input) };
+  const source = record(input, 'indicator template payload');
+  const indicators = templateIndicatorStates(source.indicators, source.layout !== undefined);
+  if (source.layout === undefined) return { indicators };
+  const layout = record(source.layout, 'indicator template layout');
+  const panes = chartPanes(layout.panes);
+  if (!panes.length) throw new WorkspaceDocumentError('Template layout needs pane zero');
+  const studies = new Map(indicators.map(state => [state.instanceId!, state]));
+  for (const study of indicators) {
+    if (study.paneIndex >= panes.length) throw new WorkspaceDocumentError('Template indicator pane is missing');
+  }
+  for (const pane of panes) for (const scale of [pane.priceScale, ...Object.values(pane.scales ?? {})]) {
+    if (scale?.indicatorRange && !studies.has(scale.indicatorRange.instanceId)) {
+      throw new WorkspaceDocumentError('Template scale range owner is missing');
+    }
+  }
+  const requireScale = (paneIndex: number, scaleId: PriceScaleId): void => {
+    if (scaleId !== 'right' && !panes[paneIndex].scales?.[scaleId]) {
+      throw new WorkspaceDocumentError('Template plot or primary scale is missing');
+    }
+  };
+  const bindings = new Map<string, Map<string, PriceScaleId>>();
+  const plots = list(layout.plots, 'template plot bindings', 100000).map(item => {
+    const binding = record(item, 'template plot binding');
+    const instanceId = string(binding.instanceId, 'template plot instanceId');
+    const study = studies.get(instanceId);
+    if (!study) throw new WorkspaceDocumentError('Template plot indicator is missing');
+    // Plot keys are descriptor-owned values, including empty or private-looking names.
+    if (typeof binding.plotKey !== 'string') throw new WorkspaceDocumentError('Template plot key must be a string');
+    const plotKey = binding.plotKey;
+    const paneIndex = number(binding.paneIndex, 'template plot paneIndex', 0, panes.length - 1, true);
+    if (paneIndex !== 0 && paneIndex !== study.paneIndex) throw new WorkspaceDocumentError('Template plot belongs to another pane');
+    const scaleId = priceScaleId(binding.scaleId, 'template plot scaleId');
+    requireScale(paneIndex, scaleId);
+    const keys = bindings.get(instanceId) ?? new Map<string, PriceScaleId>();
+    if (keys.has(plotKey)) throw new WorkspaceDocumentError('Duplicate template plot binding');
+    keys.set(plotKey, scaleId);
+    bindings.set(instanceId, keys);
+    return { instanceId, plotKey, paneIndex, scaleId };
+  });
+  for (const study of indicators) for (const [key, scaleId] of Object.entries(study.plotPriceScaleIds ?? {})) {
+    if (bindings.get(study.instanceId!)?.get(key) !== scaleId) {
+      throw new WorkspaceDocumentError('Template plot override needs a matching scale binding');
+    }
+  }
+  const result: IndicatorTemplatePayload = { indicators, layout: { panes, plots } };
+  if (layout.primaryScaleId !== undefined) {
+    const scaleId = priceScaleId(layout.primaryScaleId, 'template primaryScaleId');
+    requireScale(0, scaleId);
+    result.layout!.primaryScaleId = scaleId;
+  }
+  return result;
+}
+
+/** Validate and detach portable study settings and optional pane/scale relationships. */
+export function parseIndicatorTemplatePayload(input: unknown): IndicatorTemplatePayload {
+  return templatePayload(readJson(input));
 }
 
 function chartState(input: Json | undefined): WorkspaceChartState {
@@ -155,29 +250,7 @@ function chartState(input: Json | undefined): WorkspaceChartState {
     if (source.drawings === null || typeof source.drawings !== 'object') throw new WorkspaceDocumentError('drawings must be a document or array');
     out.drawings = source.drawings;
   }
-  if (source.panes !== undefined) out.panes = list(source.panes, 'chart panes', 32).map(item => {
-    try {
-      const pane = parsePaneState(item);
-      // Portable workspaces retain their established numeric limits; the engine
-      // can restore larger native states without inheriting a host catalog limit.
-      number(pane.weight, 'pane weight', Number.MIN_VALUE);
-      for (const scale of [pane.priceScale, ...Object.values(pane.scales ?? {})]) {
-        if (!scale) continue;
-        number(scale.marginTop, 'marginTop', 0, 1);
-        number(scale.marginBottom, 'marginBottom', 0, 1);
-        number(scale.minMove, 'minMove', 0);
-        if (scale.marginTop + scale.marginBottom >= 1) throw new WorkspaceDocumentError('Price scale margins leave no chart area');
-        for (const range of [scale.range, scale.fixedRange]) {
-          if (!range) continue;
-          number(range.min, 'range.min', -Number.MAX_SAFE_INTEGER);
-          number(range.max, 'range.max', range.min);
-          if (range.max === range.min) throw new WorkspaceDocumentError('Price scale range must have positive width');
-        }
-      }
-      return pane;
-    }
-    catch (error) { throw new WorkspaceDocumentError(error instanceof Error ? error.message : 'Invalid pane scale state'); }
-  });
+  if (source.panes !== undefined) out.panes = chartPanes(source.panes);
   if (source.series !== undefined) out.series = list(source.series, 'series descriptors', 512).map(item => {
     const series = record(item, 'series');
     const scaleId = series.priceScaleId;
@@ -267,7 +340,7 @@ export function parseWorkspaceDocument(input: unknown): WorkspaceDocument {
 export function parseWorkspacePayload(input: unknown): WorkspacePayload { return payload(record(readJson(input), 'workspace')); }
 export function parseIndicatorTemplate(input: unknown): IndicatorTemplateDocument {
   const source = record(readJson(input), 'indicator template');
-  return { kind: 'indicator-template', ...metadata(source, 'indicator-template'), indicators: templateIndicatorStates(source.indicators) };
+  return { kind: 'indicator-template', ...metadata(source, 'indicator-template'), ...templatePayload(source) };
 }
 
 /** Explicit migration of the existing single-widget state; no input is modified. */

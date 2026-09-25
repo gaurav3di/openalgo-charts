@@ -114,7 +114,18 @@ subscription or an explicit `objects.refresh()` after a host-side change.
 
 ## getState and restoreState
 
-`chart.getState(): ChartState & ChartSettingsState` returns a JSON-safe snapshot; `chart.restoreState(state): RestoreReport` puts it back. The widened return type is still a `ChartState` to every existing consumer.
+`chart.getState(): ChartState & ChartSettingsState` returns a JSON-safe snapshot; `chart.restoreState(state, options?: ChartRestoreOptions): RestoreReport` puts it back. The widened return type is still a `ChartState` to every existing consumer.
+
+`ChartRestoreOptions.preserveScaleFormats` selects existing `{ paneIndex, scaleId }`
+targets whose runtime formatter callback or default formatter must survive automatic
+study-series recreation. Numeric saved scale settings still apply. Invalid or absent
+targets reject before mutation. No callbacks are serialized, and later explicit
+settings/formatter changes retain normal behavior. Forward the workspace template
+planner's `restoreOptions` when applying its state patch. Omitted options preserve
+ordinary full-restore semantics.
+
+A synchronous newer restore from `state:restore:start` supersedes the older call,
+which returns `applied: false`. Hosts must not roll back over that newer state.
 
 | Captured in `ChartState` | Restored |
 |---|---|
@@ -132,7 +143,7 @@ subscription or an explicit `objects.refresh()` after a host-side change.
 | `series[]`: `{ type, style, paneIndex, priceScaleId }` | **no**, reported back to you |
 | series **data** | **no**, never captured |
 
-**`restoreState` never recreates series.** The chart does not know your symbol, timeframe, or feed. It restores what it owns and hands back the descriptors so you rebuild and refeed them.
+**`restoreState` never recreates host source series.** It rebuilds registered indicator outputs. The returned descriptors include both kinds, so use the host's source manifest when rebuilding and feeding price, volume or comparison series.
 
 Indicator visibility is saved with its instance settings. Drawing visibility and
 lock remain in the drawing document. `ChartObjects` provider callbacks, profile
@@ -163,7 +174,7 @@ formatter functions or a price scale's data-derived baseline.
 
 Rejection is total, never partial: a non-object, or one without a numeric `version`, gives `reason: 'not a chart state object'`; a `version` greater than `CHART_STATE_VERSION` gives `state version N is newer than M`. An **older** version is accepted. `CHART_STATE_VERSION` is `1` and is exported from the package root.
 
-**An indicator whose tier was never imported is skipped, not thrown.** `restoreState` checks `hasIndicator(id)` and moves on, so a layout saved with `openalgo-charts/indicators` loaded still restores everything else in an app that omits the tier. Any pane left empty as a result (index > 0, no series) is then removed, so a skipped indicator does not leave a blank region claiming height.
+**An indicator whose tier was never imported is skipped, not thrown.** `restoreState` checks `hasIndicator(id)` and moves on, so a layout saved with `openalgo-charts/indicators` loaded still restores everything else in an app that omits the tier. Empty positive panes are then removed. A pane containing a live study or host primitive survives even with no series, including studies that render only levels or perform calculations without plots.
 
 **Restore the viewport after your data lands.** Logical ranges index bars, so `viewport` is skipped entirely while `dataLayer.length === 0`. Calling `restoreState` a second time is safe and idempotent, indicators are removed and rebuilt, not duplicated.
 

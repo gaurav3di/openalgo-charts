@@ -261,6 +261,9 @@
         <p id="tp-summary" class="ws-hint"></p>
         <div class="ws-actions"><button id="tp-new" class="btn" type="button">Save new template</button><button id="tp-update" class="btn" type="button">Update selected</button><button id="tp-rename" class="btn" type="button">Rename</button><button id="tp-duplicate" class="btn" type="button">Duplicate</button></div>
         <p class="ws-hint">Replace changes this chart's studies. Append keeps existing studies and adds separate copies.</p>
+        <div class="set-row"><label for="tp-scale-policy">Scale ownership</label><div class="set-ctl"><select id="tp-scale-policy"><option value="copy">Independent copies</option><option value="share">Share existing scales</option></select></div></div>
+        <div class="set-row"><label for="tp-range-policy">Saved view</label><div class="set-ctl"><select id="tp-range-policy"><option value="auto">Reset manual view</option><option value="preserve">Keep saved view</option></select></div></div>
+        <p class="ws-hint">The current price scale keeps its settings. Sharing also keeps existing destination scales. Older templates without layout settings use their original behavior.</p>
         <div class="ws-actions"><button id="tp-import" class="btn btn--ghost" type="button">Import file</button><button id="tp-export" class="btn btn--ghost" type="button">Export selected</button><button id="tp-delete" class="btn btn--ghost" type="button">Delete selected</button></div>
         <input id="tp-file" type="file" accept="application/json,.json" hidden />
         <div id="tp-confirm" class="ws-confirm" hidden><p id="tp-delete-name"></p><div class="ws-actions"><button id="tp-keep" class="btn" type="button">Keep template</button><button id="tp-confirm-delete" class="btn" type="button">Confirm delete</button></div></div>

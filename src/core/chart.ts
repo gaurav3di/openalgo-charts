@@ -45,6 +45,7 @@ interface PreparedIndicatorRestore {
   order: readonly string[];
   descriptors: ReadonlyMap<string, IndicatorDescriptor>;
 }
+type PreservedScaleFormats = ReadonlyMap<Pane, ReadonlySet<PriceScaleId>>;
 /** How close to the chart top counts as "in the host's corner", in media px. */
 const LEGEND_TOP_EPS = 12;
 
@@ -93,6 +94,7 @@ import {
   type PriceScaleState,
   type SeriesState,
   type RestoreReport,
+  type ChartRestoreOptions,
   type IndicatorState,
 } from '../model/chart-state';
 import type { SeriesStyle } from '../render/series-style';
@@ -816,6 +818,7 @@ export class Chart {
   private readonly _seriesRecords = new WeakMap<SeriesApi, SeriesRecord>();
   private readonly _seriesProvenance = new Map<number, SeriesProvenance>();
   private readonly _indicators: IndicatorInstance[] = [];
+  private _restoreGeneration = 0;
   private readonly _indicatorRanges = new Map<string, {
     pane: Pane; scaleId: PriceScaleId; range: { min: number; max: number };
     series: readonly SeriesApi[]; token: object;
@@ -1264,7 +1267,8 @@ export class Chart {
    * (indicator plots), so an indicator's line never becomes the price series
    * that drives the magnet crosshair and the OHLC legend.
    */
-  private _createSeries(type: SeriesType, options: AddSeriesOptions, claimPrimary: boolean): SeriesApi {
+  private _createSeries(type: SeriesType, options: AddSeriesOptions, claimPrimary: boolean,
+    preservedFormats?: PreservedScaleFormats): SeriesApi {
     const dataId = this._dataLayer.createSeries();
     const provenance = new SeriesProvenance(dataId);
     this._seriesProvenance.set(dataId, provenance);
@@ -1309,8 +1313,9 @@ export class Chart {
     for (const key of Object.keys(options.style ?? {}) as (keyof SeriesStyle)[]) delete inheritedStyle[key];
     const owner = { pane: this._panes[paneIndex], priceFormat: options.priceFormat, inheritedStyle, indicatorOwned: !claimPrimary };
     const scale = owner.pane.scaleOf(record);
-    this._applySeriesPriceFormat(scale, options.priceFormat);
-    if (record.style.precision !== undefined) this._applyPrecision(scale, record.style.precision);
+    const preserveFormat = preservedFormats?.get(owner.pane)?.has(record.scaleId) === true;
+    this._applySeriesPriceFormat(scale, options.priceFormat, preserveFormat);
+    if (!preserveFormat && record.style.precision !== undefined) this._applyPrecision(scale, record.style.precision);
 
     const api: SeriesApi = {
       setData: (bars: readonly SeriesDataItem[], metadata?: BarConfirmationOptions): void => this._setData(dataId, bars.map(toBar), metadata),
@@ -1363,15 +1368,15 @@ export class Chart {
     return api;
   }
 
-  private _applySeriesPriceFormat(scale: PriceScale, pf: AddSeriesOptions['priceFormat']): void {
+  private _applySeriesPriceFormat(scale: PriceScale, pf: AddSeriesOptions['priceFormat'], preserveFormat = false): void {
     if (pf) {
-      if (pf.type === 'custom') scale.setPriceFormatter(pf.formatter);
-      else if (pf.type === 'volume') scale.setPriceFormatter(compactVolume);
+      if (pf.type === 'custom') { if (!preserveFormat) scale.setPriceFormatter(pf.formatter); }
+      else if (pf.type === 'volume') { if (!preserveFormat) scale.setPriceFormatter(compactVolume); }
       else if (pf.type === 'percent') {
         const digits = pf.precision ?? 2;
-        scale.setPriceFormatter((v) => `${v.toFixed(digits)}%`);
+        if (!preserveFormat) scale.setPriceFormatter((v) => `${v.toFixed(digits)}%`);
       } else {
-        scale.setPriceFormatter(this._priceFormatter);
+        if (!preserveFormat) scale.setPriceFormatter(this._priceFormatter);
         const minMove = pf.minMove ?? (pf.precision !== undefined ? Math.pow(10, -pf.precision) : undefined);
         if (minMove !== undefined) scale.setOptions({ minMove });
       }
@@ -1833,7 +1838,7 @@ export class Chart {
     this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Light));
   }
 
-  private _indicatorHost(): IndicatorHost {
+  private _indicatorHost(preservedFormats?: PreservedScaleFormats): IndicatorHost {
     return {
       assignIndicatorScale: (id, series, primitives, commit) => this._assignIndicatorScale(id, series, primitives, commit),
       bindIndicatorPrimitiveScale: (primitive, scaleId) => {
@@ -1914,6 +1919,7 @@ export class Chart {
             priceFormat,
           },
           false,
+          preservedFormats,
         ),
       addIndicatorLevel: (l, paneIndex): PriceLine => {
         // `dashed` rides along beside `lineStyle` because a descriptor written
@@ -3442,7 +3448,7 @@ export class Chart {
    * a range applied to an empty chart means nothing. Call `restoreState` again
    * (or `setVisibleLogicalRange`) once the series are populated.
    */
-  public restoreState(state: unknown): RestoreReport {
+  public restoreState(state: unknown, options: ChartRestoreOptions = {}): RestoreReport {
     const s = state as (ChartState & ChartSettingsState & { timezone?: unknown }) | null;
     if (s === null || typeof s !== 'object' || typeof s.version !== 'number') {
       return { applied: false, series: [], indicators: 0, reason: 'not a chart state object' };
@@ -3454,8 +3460,33 @@ export class Chart {
     let alerts: AlertsDocument | undefined;
     let panes: PaneState[] | undefined;
     let studies: PreparedIndicatorRestore | undefined;
+    const preservedFormats = new Map<Pane, Set<PriceScaleId>>();
     const reservedIds = new Set<string>();
     try {
+      const plain = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object'
+        && [Object.prototype, null].includes(Object.getPrototypeOf(value))
+        && Object.values(Object.getOwnPropertyDescriptors(value)).every(property => 'value' in property);
+      if (!plain(options)) throw new Error('Invalid chart restore options');
+      if (options.preserveScaleFormats !== undefined) {
+        const selectors = options.preserveScaleFormats;
+        if (!Array.isArray(selectors)) throw new Error('Invalid preserved scale formats');
+        const properties = Object.getOwnPropertyDescriptors(selectors);
+        if (Reflect.ownKeys(properties).some(key => key !== 'length' && (typeof key !== 'string'
+          || !/^(0|[1-9]\d*)$/.test(key) || Number(key) >= selectors.length
+          || !('value' in properties[key])))) throw new Error('Invalid preserved scale formats');
+        for (let index = 0; index < selectors.length; index++) {
+          const selector = properties[index]?.value as unknown;
+          if (!plain(selector) || typeof selector.paneIndex !== 'number' || !Number.isInteger(selector.paneIndex) || selector.paneIndex < 0
+            || !this._validPriceScaleId(selector.scaleId)) throw new Error('Invalid preserved scale selector');
+          const pane = this._panes[selector.paneIndex];
+          if (!pane || !Object.prototype.hasOwnProperty.call(pane.scaleStates(), selector.scaleId)) {
+            throw new Error('Preserved scale must already exist');
+          }
+          const ids = preservedFormats.get(pane) ?? new Set<PriceScaleId>();
+          ids.add(selector.scaleId);
+          preservedFormats.set(pane, ids);
+        }
+      }
       if (s.panes !== undefined) {
         if (!Array.isArray(s.panes)) throw new Error('Invalid pane list');
         panes = s.panes.map(pane => parsePaneState(pane, true));
@@ -3512,10 +3543,18 @@ export class Chart {
     // Restore callbacks may add studies before the saved layout is applied.
     this._reserveAlertStudyIds(alerts, reservedIds);
     for (const id of reservedIds) this._indicatorReservedIds.add(id);
+    const generation = ++this._restoreGeneration;
     this.emit('state:restore:start', {});
     const before = this._timeScale.visibleRange();
-    try { return this._mutateTimeScale(() => this._restoreState(s, alerts, reservedIds, panes, studies)); }
+    try {
+      // A start listener can synchronously install a newer layout on this chart.
+      if (generation !== this._restoreGeneration) {
+        return { applied: false, series: [], indicators: 0, reason: 'superseded by a newer chart restore' };
+      }
+      return this._mutateTimeScale(() => this._restoreState(s, alerts, reservedIds, panes, studies, preservedFormats));
+    }
     finally {
+      preservedFormats.clear();
       // Restore listeners can replace the viewport after its last internal paint.
       this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
       this._emitViewportIfMoved(before);
@@ -3524,7 +3563,8 @@ export class Chart {
   }
 
   private _restoreState(s: ChartState & ChartSettingsState & { timezone?: unknown }, alerts: AlertsDocument | undefined,
-    reservedIds: Set<string>, panes: PaneState[] | undefined, studies: PreparedIndicatorRestore | undefined): RestoreReport {
+    reservedIds: Set<string>, panes: PaneState[] | undefined, studies: PreparedIndicatorRestore | undefined,
+    preservedFormats: PreservedScaleFormats): RestoreReport {
 
     // Old locks describe the outgoing ranges, not the settings about to be restored.
     if (panes) for (const pane of this._panes) pane.clearRatioLocks();
@@ -3569,7 +3609,7 @@ export class Chart {
         const spec = byId.get(id)!;
         const descriptor = studies.descriptors.get(id)!;
         const instance = new IndicatorInstance(
-          this._indicatorHost(), descriptor, spec.settings, spec.paneIndex,
+          this._indicatorHost(preservedFormats), descriptor, spec.settings, spec.paneIndex,
           spec.instanceId, reservedIds, spec.priceScaleId, spec.plotPriceScaleIds,
         );
         reservedIds.add(instance.id);
@@ -3629,14 +3669,13 @@ export class Chart {
       });
     }
 
-    // A saved pane only exists to hold an indicator, and an indicator is skipped
-    // when its tier was never imported — so a restore can leave a pane behind
-    // with nothing in it. An empty pane still claims its weight and still draws
-    // a default 0..100 axis, which reads as a large blank region under the
-    // chart. Drop them, the same way removing the last indicator from a pane
-    // already does. Walk backwards so the indices stay valid as panes go.
+    // Unavailable studies leave empty panes, but a live study can have no plot
+    // series. Keep its pane and host primitives; chart furniture alone does not
+    // occupy a pane. Walk backwards so removal keeps the remaining indices valid.
     for (let i = this._panes.length - 1; i > 0; i--) {
-      if (this._panes[i].series().length === 0) this.removePane(i);
+      const pane = this._panes[i];
+      if (pane.series().length === 0 && !this._indicators.some(study => study.paneIndex === i)
+        && pane.primitives().every(primitive => primitive === this._timeNav || this._anchored.some(entry => entry.primitive === primitive))) this.removePane(i);
     }
 
     this._drawingState = s.drawings;
