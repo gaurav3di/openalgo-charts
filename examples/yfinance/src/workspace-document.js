@@ -68,13 +68,24 @@ function secondaryWidth(payload) {
   return 100 * weights[1] / (weights[0] + weights[1]);
 }
 
+/** One chart, or two side by side: the geometry this page draws itself. */
+const singleOrSplit = payload => {
+  const grid = payload.layout;
+  return grid.rows === 1 && grid.columns === payload.panes.length && grid.columns <= 2
+    && grid.slots.every(slot => slot.row === 0 && slot.rowSpan === 1 && slot.columnSpan === 1);
+};
+
+/** A valid layout whose geometry only the grid view (grid.html) can show. */
+export function needsGridView(input) {
+  try { return !singleOrSplit(parseWorkspacePayload(input)); }
+  catch { return false; }
+}
+
 /** Library validity does not imply the current host can honor every saved option. */
 export function validateReferenceWorkspace(input) {
   const payload = parseWorkspacePayload(input);
-  const grid = payload.layout;
-  if (grid.rows !== 1 || grid.columns !== payload.panes.length || grid.columns > 2
-    || grid.slots.some(slot => slot.row !== 0 || slot.rowSpan !== 1 || slot.columnSpan !== 1)) {
-    fail('This host supports one chart or two horizontal charts; unsupported workspace geometry');
+  if (!singleOrSplit(payload)) {
+    fail('This page shows one chart or two horizontal charts; open other workspace geometry in the grid view');
   }
   if (payload.panes.length === 2 && (secondaryWidth(payload) < 18 || secondaryWidth(payload) > 78)) {
     fail('The second chart width must be between 18 and 78 percent');

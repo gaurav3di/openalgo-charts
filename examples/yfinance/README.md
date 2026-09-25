@@ -16,7 +16,8 @@ descriptor settings and require no feed adapter.
 The custom host includes linked chart grids, named layouts and indicator templates
 stored through the optional workspace tier. Layout changes prepare history before
 publication, retain visible storage errors and guard simulated order entry during
-replay or a pending workspace switch. It does not use the packaged widget shell.
+replay or a pending workspace switch. The main page does not use the packaged
+widget shell; the grid view, `grid.html`, does (see Grid view below).
 
 Choose **Indicators > Examples > Source signal sample** to add the host-owned
 2.4.6 demonstration to the focused chart. It alternates Up and Down labels every
@@ -213,7 +214,8 @@ tier files exactly as a page would.
 ```
 examples/yfinance/
   index.html          markup only: the shell, the dialogs, the menus
-  styles.css          every rule the page uses
+  grid.html           the grid view: the widget tier's chart grid over the same feed
+  styles.css          every rule the pages use
   server.py           static server, /api/history (yfinance or fixture), the self-test
   requirements.txt    yfinance, the one dependency, needed only outside --fixture
   src/
@@ -258,6 +260,8 @@ examples/yfinance/
     workspace-host.js  reference chart ownership, pending guards and transition wiring
     workspace-catalog.js  named saves, revision conflicts, autosave ownership and storage recovery
     workspaces.js     named-layout dialog, startup selection, autosave and portable files
+    grid.js           the grid view's start-up: presets, links, import and export
+    grid-view.js      the grid view's feed adapter, layout hand-off and document helpers
   tests/              vitest specs for the modules that can run without a browser
   vitest.config.ts    the config those specs run under (see Tests)
 ```
@@ -279,6 +283,30 @@ without any module reading another's binding before it exists.
 Opening the page with `?test=1` puts `window.__oac = { chart, draw, app }` on
 the window for the end-to-end suite; `chart` and `draw` are getters, so they
 follow a rebuild.
+
+## Grid view
+
+`grid.html` is the second page of the reference host. It builds the widget
+tier's chart grid (`createChartGrid`) over the same `/api/history` feed, so each
+chart is a complete widget with its own top bar, loading status and retry.
+
+- The bar picks a preset (one chart, two or three columns, two or three rows, two
+  by two), switches crosshair, viewport, symbol and interval links, and imports or
+  exports a layout file.
+- Click or focus a chart to make it active: it gets the outline and the keyboard.
+  Drag a gap to resize, or focus it and use the arrow keys; double click evens it.
+- Below 640 CSS px only the active chart shows, with tabs to switch.
+- The grid keeps its layout in `localStorage` under the `yfinance-grid` namespace.
+  A first visit opens AAPL, MSFT, RELIANCE.NS and ^NSEI in a two by two grid.
+- Import accepts any portable workspace document or payload. It is validated in
+  full, then applied all at once; on failure nothing on screen changes and the
+  status line says why. Comparison symbols are refused, since a widget draws none.
+
+The main page draws one chart or two side by side. Importing a layout with more
+charts, or with rows, into its Layouts dialog offers **Open in grid view**, which
+hands the document over through `sessionStorage` (`oac-grid-handoff`). The link
+menu on the main page also opens the grid view. Open `grid.html?test=1` to expose
+the grid as `window.__grid` for the end-to-end suite.
 
 ## How it connects
 
