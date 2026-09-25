@@ -368,9 +368,13 @@ export interface DrawAnchor {
  *
  * Each distinct target gets a layer of its own, owned by the instance: it
  * hides with the study, is released with it, and is released as soon as a
- * calculation returns nothing for that target. A layer created later keeps
- * its study's place in the stack. Marks in different layers do not stack
- * against each other at a shared bar.
+ * calculation returns nothing for that target. Marks sent to the series the
+ * study's own marks already anchor to join that layer instead, so marks at
+ * one bar stack rather than overlap. A study's layers stack in a fixed order:
+ * its own marks, its marker targets, its own shapes, then its drawing
+ * targets, each kind's targets taking the price pane first and then the plots
+ * in declaration order. A targeted layer created after the study was added
+ * takes that place too, below the studies added after it.
  */
 export interface IndicatorOutputTarget {
   /**
@@ -383,11 +387,12 @@ export interface IndicatorOutputTarget {
   plot?: string;
   /**
    * The price pane, in the instrument's own units, staying there when the
-   * study moves. A shape is measured on the candles' own scale, whichever
-   * axis that is, and holds no axis itself, so the price axis stays free to
-   * move. A marker is anchored to the instrument's candles, so `belowBar`
-   * sits under the low; it is drawn once the chart has a primary series.
-   * Naming a plot as well is rejected: a plot already decides its pane.
+   * study moves. A shape is measured on the scale that pane quotes prices on
+   * (its crosshair readout, which is the candles' own scale on whichever axis
+   * they sit) and holds no axis itself, so the price axis stays free to move.
+   * A marker is anchored to the instrument's candles, so `belowBar` sits
+   * under the low; it is drawn once the chart has a primary series. Naming a
+   * plot as well is rejected: a plot already decides its pane.
    */
   overlay?: boolean;
 }

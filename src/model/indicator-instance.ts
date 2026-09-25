@@ -229,7 +229,14 @@ export interface IndicatorHost {
    * interface: one that recomputes eagerly has nothing to flush.
    */
   flushIndicators?(): void;
-  /** Restore the host's study stack after settings replace series or attached visuals. */
+  /**
+   * Restore the host's study stack after settings replace series or attached
+   * visuals. Also called from inside a calculation pass when that pass first
+   * creates a layer for an output target (see `IndicatorOutputTarget`), so the
+   * layer takes its study's place instead of landing above every later study.
+   * That call must only restack: recomputing studies from it would run them in
+   * the middle of another study's pass.
+   */
   resourcesChanged?(): void;
   /** Bars of the primary price series — the calculation input. */
   sourceBars(): readonly Bar[];
@@ -354,6 +361,13 @@ export interface IndicatorApi {
 
 let nextInstance = 1;
 let nextGeneration = 1;
+/**
+ * Set while a pass restacks the host for a routed layer it created. Study order
+ * has not changed, so no bar colours need republishing, and doing it there would
+ * publish this pass's colours before the pass has succeeded and run every other
+ * study's hook against bars its values do not describe yet.
+ */
+let restacking = false;
 
 class StudyInputUnavailable extends IndicatorInputError {}
 
@@ -567,16 +581,27 @@ export class IndicatorInstance implements IndicatorApi {
     return plot;
   }
 
-  /** Split outputs by target. The untargeted list keeps its identity when nothing is routed. */
-  private _route<T extends IndicatorOutputTarget>(items: readonly T[]): [readonly T[], Map<string | null, T[]>] {
+  /** Every target, in the order its layers stack: the price pane, then each plot. */
+  private _targets(): (string | null)[] {
+    return [null, ...this._d.plots.map(plot => plot.key)];
+  }
+
+  /**
+   * Split outputs by target. A target that `join` accepts stays with the
+   * untargeted outputs, in the order returned, and that list keeps its
+   * identity when nothing is routed. Groups come out in target order rather
+   * than the order a pass returned them in, so a pass creates layers in the
+   * order the host stacks them and a later restack leaves the stack as that
+   * pass left it.
+   */
+  private _route<T extends IndicatorOutputTarget>(items: readonly T[], join?: (key: string | null) => boolean): [readonly T[], Map<string | null, T[]>] {
     const local: T[] = [];
-    const groups = new Map<string | null, T[]>();
+    const groups = new Map<string | null, T[]>(this._targets().map(key => [key, []]));
     for (const item of items) {
       const key = this._targetKey(item);
-      if (key === undefined) local.push(item);
-      else if (groups.has(key)) groups.get(key)!.push(item);
-      else groups.set(key, [item]);
+      (key === undefined || join?.(key) ? local : groups.get(key)!).push(item);
     }
+    for (const [key, list] of groups) if (list.length === 0) groups.delete(key);
     return [groups.size > 0 ? local : items, groups];
   }
 
@@ -587,9 +612,11 @@ export class IndicatorInstance implements IndicatorApi {
 
   /**
    * Pane and scale of a targeted drawing layer. A price-pane shape is in the
-   * instrument's units, so it binds no scale and measures on the candles'
-   * own (see `_syncDraws`): a fixed id would strand it when the instrument
-   * sits on another axis, and would pin that axis in place.
+   * instrument's units, so it binds no scale and measures on the one pane zero
+   * quotes prices on, the candles' own (see `_syncDraws`): a fixed id would
+   * strand it when the instrument sits on another axis, and would pin that
+   * axis in place. It is read from the pane being drawn, never from the
+   * candles' series, because the candles can live on another pane.
    */
   private _drawTarget(key: string | null, override = this._scaleOverride, assignments = this._plotScaleOverrides): [number, PriceScaleId | null] {
     const plot = this._d.plots.find(item => item.key === key);
@@ -763,17 +790,23 @@ export class IndicatorInstance implements IndicatorApi {
     });
     const primitives = this._fills.map((primitive, index) => ({ primitive: primitive as IPrimitive, overlay: this._d.fills?.[index].overlay === true }));
     for (const { table, overlay } of this._tables.values()) primitives.push({ primitive: table, overlay });
-    for (const primitive of [this._legend, ...this._levels, this._markers, this._table, this._draws, this._background, ...this._attachedPrimitives]) {
-      if (primitive !== null) primitives.push({ primitive, overlay: primitive === this._markers && (this._markerSeries === this._host.primarySeries?.() || series.some(item => item.api === this._markerSeries && item.overlay)) });
-    }
-    // Target order rather than creation order, so a target that is released
-    // and used again restacks into the same place.
-    for (const layer of [(key: string | null) => this._drawLayers.get(key), (key: string | null) => this._markerLayers.get(key)?.[0]]) {
-      for (const key of [null, ...this._d.plots.map(plot => plot.key)]) {
+    const own = (...list: (IPrimitive | null)[]): void => {
+      for (const primitive of list) if (primitive !== null) primitives.push({ primitive, overlay: primitive === this._markers && (this._markerSeries === this._host.primarySeries?.() || series.some(item => item.api === this._markerSeries && item.overlay)) });
+    };
+    // Each kind's targeted layers follow its own layer in target order, which
+    // is where a pass creates them, so restacking keeps a study's first stack
+    // and a released target that is used again comes back to the same place.
+    const routed = (layer: (key: string | null) => IPrimitive | undefined): void => {
+      for (const key of this._targets()) {
         const primitive = layer(key);
         if (primitive) primitives.push({ primitive, overlay: this._overlayTarget(key) });
       }
-    }
+    };
+    own(this._legend, ...this._levels, this._markers);
+    routed(key => this._markerLayers.get(key)?.[0]);
+    own(this._table, this._draws);
+    routed(key => this._drawLayers.get(key));
+    own(this._background, ...this._attachedPrimitives);
     return { series, primitives };
   }
 
@@ -786,7 +819,7 @@ export class IndicatorInstance implements IndicatorApi {
   }
 
   /** Republish candle colors after a change in instance stacking order. */
-  public refreshBarColors(): void { this._syncBarColors(this._host.sourceBars()); }
+  public refreshBarColors(): void { if (!restacking) this._syncBarColors(this._host.sourceBars()); }
 
   /** Calculation order must not choose the visual color-overlay winner. */
   public republishBarColors(): void {
@@ -879,7 +912,7 @@ export class IndicatorInstance implements IndicatorApi {
 
   /**
    * Refresh the descriptor's signal markers. The layer is created lazily on the
-   * first plot's series — so it shares the indicator's pane and price scale —
+   * first plot's series, so it shares the indicator's pane and price scale,
    * and is only created once the descriptor actually returns a marker, which
    * keeps the common no-marker indicator free of an extra primitive.
    */
@@ -889,20 +922,23 @@ export class IndicatorInstance implements IndicatorApi {
     const all = this._visible
       ? this._d.markers({ bars, values: this._values, settings: this._descriptorSettings() })
       : [];
-    const [markers, groups] = this._route(all);
-    // Check every mark before any layer changes, as the drawings do.
-    if (groups.size > 0) new SeriesMarkers(0).setMarkers(all);
-    let created = false;
     const primary = this._host.primarySeries?.() ?? undefined;
     const first = (this._d.markerAnchor === 'price' && this.paneIndex === 0 ? primary : undefined)
       ?? this._series.get(this._d.plots[0]?.key ?? '');
+    const anchor = (key: string | null): SeriesApi | undefined => (key === null ? primary : this._series.get(key));
+    // Marks sent to the series the study's own marks already anchor to join
+    // that layer, so marks at one bar stack there instead of drawing over each
+    // other from two layers.
+    const [markers, groups] = this._route(all, key => anchor(key) === first);
+    // Check every mark before any layer changes, as the drawings do.
+    if (groups.size > 0) new SeriesMarkers(0).setMarkers(all);
+    let created = false;
     if (this._markers !== null && first !== this._markerSeries) {
       this._host.removeIndicatorMarkers(this._markers);
       this._markers = null;
     }
     if (this._markers === null && markers.length > 0 && first !== undefined) {
       this._markerSeries = first;
-      created = true;
       // Only substitute instrument bars when both series share price units.
       // Resolve scales lazily so moving an axis keeps the same guarantee.
       this._markers = first.createMarkers(() => {
@@ -917,14 +953,14 @@ export class IndicatorInstance implements IndicatorApi {
     // same layer; a visible pass releases a vacated group, and a replaced
     // series gets a layer of its own, which the host then restacks.
     for (const [key, [layer, series]] of this._markerLayers) {
-      if (series !== (key === null ? primary : this._series.get(key)) || (this._visible && !groups.has(key))) {
+      if (series !== anchor(key) || (this._visible && !groups.has(key))) {
         this._host.removeIndicatorMarkers(layer);
         this._markerLayers.delete(key);
       } else if (!this._visible) layer.setMarkers([]);
     }
     for (const [key, list] of groups) {
       let entry = this._markerLayers.get(key);
-      const series = key === null ? primary : this._series.get(key);
+      const series = anchor(key);
       if (entry === undefined && series !== undefined) {
         // The candles are their own bars and need no fallback; a plot takes
         // them on the same terms as the default layer, judged by its own pane.
@@ -1011,7 +1047,6 @@ export class IndicatorInstance implements IndicatorApi {
     if (groups.size > 0) new IndicatorDrawings().setItems(all);
     let created = false;
     if (this._draws === null && items.length > 0 && this._host.addIndicatorPrimitive !== undefined) {
-      created = true;
       this._draws = new IndicatorDrawings();
       this._draws.setVisible(this._visible);
       this._host.addIndicatorPrimitive(this._draws, this.paneIndex);
@@ -1032,7 +1067,7 @@ export class IndicatorInstance implements IndicatorApi {
         if (this._host.addIndicatorPrimitive === undefined) return;
         const [pane, scale] = this._drawTarget(key);
         created = true;
-        this._drawLayers.set(key, layer = new IndicatorDrawings(scale === null ? () => this._host.primarySeries?.()?.priceScale() : undefined));
+        this._drawLayers.set(key, layer = new IndicatorDrawings(scale === null ? rc => rc.readoutPriceScale : undefined));
         layer.setVisible(this._visible);
         this._host.addIndicatorPrimitive(layer, pane);
         if (scale !== null) this._host.bindIndicatorPrimitiveScale?.(layer, scale);
@@ -1043,12 +1078,15 @@ export class IndicatorInstance implements IndicatorApi {
   }
 
   /**
-   * A layer created after the first pass is appended above every later study
-   * on its pane. The host puts the stack back in study order, which it would
-   * otherwise only do on the next settings change or move.
+   * A targeted layer created after the first pass is appended above every later
+   * study on its pane. The host puts the stack back in study order, which it
+   * would otherwise only do on the next settings change or move. A study's own
+   * layers are left where they land, exactly as before targets existed.
    */
   private _restack(created: boolean): void {
-    if (created && this._constructed) this._host.resourcesChanged?.();
+    if (!created || !this._constructed) return;
+    restacking = true;
+    try { this._host.resourcesChanged?.(); } finally { restacking = false; }
   }
 
   /**

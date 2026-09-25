@@ -125,7 +125,7 @@ export class IndicatorDrawings implements IPrimitive {
   private _items: readonly IndicatorDrawing[] = [];
   private _host: PrimitiveHost | null = null;
   private _visible = true;
-  private readonly _priceScale: (() => PriceScale | null | undefined) | undefined;
+  private readonly _priceScale: ((rc: PrimitiveRenderContext) => PriceScale | null | undefined) | undefined;
   /**
    * The labels and boxes that carry an id or a tooltip, where the last frame
    * put them. Only those are hit-testable: a bare trendline stays under the
@@ -135,13 +135,14 @@ export class IndicatorDrawings implements IPrimitive {
   private _hits: HitRect[] = [];
 
   /**
-   * @param priceScale The scale prices are measured on, read on every frame.
-   * Without it the layer uses the scale its pane binds it to. Shapes that
-   * belong to a series, the way a study's price-pane shapes belong to the
-   * candles, pass that series' scale: they then go wherever the series goes,
-   * and the layer never holds an axis of its own or pins one in place.
+   * @param priceScale The scale prices are measured on, read on every frame
+   * from that frame's context. Without it, or when it returns nothing, the
+   * layer uses the scale its pane binds it to. Shapes quoted in the pane's own
+   * price units, the way a study's price-pane shapes are, return
+   * `rc.readoutPriceScale`: they then go wherever the candles' axis goes, and
+   * the layer never holds an axis of its own or pins one in place.
    */
-  public constructor(priceScale?: () => PriceScale | null | undefined) {
+  public constructor(priceScale?: (rc: PrimitiveRenderContext) => PriceScale | null | undefined) {
     this._priceScale = priceScale;
   }
 
@@ -188,7 +189,7 @@ export class IndicatorDrawings implements IPrimitive {
     // anchor with a margin wide enough to cover any label anyone will write.
     const m = 200 * d;
     const x = (a: DrawAnchor): number => rc.timeScale.indexToX(rc.dataLayer.timeToIndexFloat(a.time)) * d;
-    const scale = this._priceScale?.() ?? rc.priceScale;
+    const scale = this._priceScale?.(rc) ?? rc.priceScale;
     const y = (a: DrawAnchor): number => scale.priceToY(a.price) * d;
     // A shape entirely off-pane costs a path and a fill for nothing, and a
     // descriptor that marks every pivot in 50k bars leaves most of them there.
