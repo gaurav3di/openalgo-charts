@@ -360,30 +360,38 @@ export interface DrawAnchor {
 }
 
 /**
- * Where one returned drawing is drawn, when the study's own layer is the wrong
- * place for it. A study in its own pane still has things to say about the
- * candles (a supply zone, a projected target), and a study whose plots sit on
- * two axes has shapes measured on each. Naming no target keeps the shape in
- * the study's own layer, exactly as before.
+ * Where one returned drawing or marker goes, when the study's own layer is the
+ * wrong place for it. A study in its own pane still has things to say about
+ * the candles (a supply zone, a buy signal), and a study whose plots sit on
+ * two axes has shapes and marks measured on each. Naming no target keeps the
+ * output in the study's own layer, exactly as before.
  *
  * Each distinct target gets a layer of its own, owned by the instance: it
  * hides with the study, is released with it, and is released as soon as a
- * calculation returns nothing for that target.
+ * calculation returns nothing for that target. Marks in different layers do
+ * not stack against each other at a shared bar.
  */
 export interface IndicatorOutputTarget {
   /**
-   * A declared plot key. The shape is drawn on that plot's pane and measured on
-   * its effective price scale, and follows the plot through a scale
-   * reassignment or a study move. An `overlay` plot takes it to the price pane.
+   * A declared plot key. A shape is drawn on that plot's pane and measured on
+   * its effective price scale; a marker is anchored to that plot's series, so
+   * `aboveBar` and `belowBar` read its values. Either follows the plot through
+   * a scale reassignment or a study move. An `overlay` plot takes it to the
+   * price pane.
    */
   plot?: string;
   /**
-   * Draw on the price pane, measured on its right scale in the instrument's
-   * own units, and stay there when the study moves. Naming a plot as well is
+   * The price pane, in the instrument's own units, staying there when the
+   * study moves. A shape is measured on the pane's right scale. A marker is
+   * anchored to the instrument's candles, so `belowBar` sits under the low; it
+   * is drawn once the chart has a primary series. Naming a plot as well is
    * rejected: a plot already decides its pane.
    */
   overlay?: boolean;
 }
+
+/** A signal marker a study returns, optionally sent to another pane or plot. */
+export type IndicatorMarker = SeriesMarker & IndicatorOutputTarget;
 
 /**
  * A free-standing shape an indicator paints in its own pane, anchored to time
@@ -852,13 +860,15 @@ export interface IndicatorDescriptor {
    *
    * A plot cannot express this: a plot is a column of prices drawn as a line or
    * histogram, whereas a signal is a discrete event with a label. Returning `[]`
-   * (when a `showLabels`-style input is off, say) clears the layer.
+   * (when a `showLabels`-style input is off, say) clears every layer. A mark
+   * can name the price pane or a plot to anchor to instead of the default
+   * (see {@link IndicatorOutputTarget}).
    */
   markers?(ctx: {
     bars: readonly Bar[];
     values: IndicatorValues;
     settings: Readonly<IndicatorSettings>;
-  }): readonly SeriesMarker[];
+  }): readonly IndicatorMarker[];
   /**
    * What `aboveBar` and `belowBar` are measured against.
    *
@@ -874,7 +884,9 @@ export interface IndicatorDescriptor {
    *
    * Ignored by a study in its own pane, which has no candles to measure
    * against, and ignored when the chart has no primary series yet. Both fall
-   * back to the first plot rather than dropping the marker.
+   * back to the first plot rather than dropping the marker. It applies to the
+   * marks that name no target; a study in its own pane sends a mark to the
+   * candles with `overlay: true` on that mark.
    */
   markerAnchor?: 'plot' | 'price';
   /**

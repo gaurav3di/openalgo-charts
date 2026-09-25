@@ -15,7 +15,7 @@ import { validateIndicatorInputs } from './indicator-inputs';
 import type { PriceFormat, PriceScaleId, SeriesApi, SeriesDataState } from './series';
 import type { PriceLine } from '../primitives/price-line';
 import type { PaneLegend, LegendValue } from '../primitives/pane-legend';
-import type { SeriesMarkers } from '../primitives/markers';
+import { SeriesMarkers } from '../primitives/markers';
 import type { ChartTable } from '../primitives/table';
 import type { IPrimitive } from '../primitives/primitive';
 import type { IndicatorFillSpec, IndicatorPlot } from './indicator-registry';
@@ -406,6 +406,8 @@ export class IndicatorInstance implements IndicatorApi {
   private _legend: PaneLegend | null = null;
   private _markers: SeriesMarkers | null = null;
   private _markerSeries: SeriesApi | undefined;
+  /** Marker layers for explicit targets, each with the series it was created on. */
+  private readonly _markerLayers = new Map<string | null, [SeriesMarkers, SeriesApi]>();
   private _table: ChartTable | null = null;
   private _tables = new Map<string, { table: ChartTable; overlay: boolean }>();
   private _draws: IndicatorDrawings | null = null;
@@ -762,7 +764,9 @@ export class IndicatorInstance implements IndicatorApi {
     for (const primitive of [this._legend, ...this._levels, this._markers, this._table, this._draws, this._background, ...this._attachedPrimitives]) {
       if (primitive !== null) primitives.push({ primitive, overlay: primitive === this._markers && (this._markerSeries === this._host.primarySeries?.() || series.some(item => item.api === this._markerSeries && item.overlay)) });
     }
-    for (const [key, primitive] of this._drawLayers) primitives.push({ primitive, overlay: this._overlayTarget(key) });
+    for (const [key, primitive] of [...this._drawLayers, ...[...this._markerLayers].map(([key, [layer]]) => [key, layer] as const)]) {
+      primitives.push({ primitive, overlay: this._overlayTarget(key) });
+    }
     return { series, primitives };
   }
 
@@ -875,9 +879,12 @@ export class IndicatorInstance implements IndicatorApi {
   private _syncMarkers(bars: readonly Bar[]): void {
     if (this._dependencyUnavailable) return;
     if (this._d.markers === undefined) return;
-    const markers = this._visible
+    const all = this._visible
       ? this._d.markers({ bars, values: this._values, settings: this._descriptorSettings() })
       : [];
+    const [markers, groups] = this._route(all);
+    // Check every mark before any layer changes, as the drawings do.
+    if (groups.size > 0) new SeriesMarkers(0).setMarkers(all);
     const primary = this._host.primarySeries?.() ?? undefined;
     const first = (this._d.markerAnchor === 'price' && this.paneIndex === 0 ? primary : undefined)
       ?? this._series.get(this._d.plots[0]?.key ?? '');
@@ -885,9 +892,7 @@ export class IndicatorInstance implements IndicatorApi {
       this._host.removeIndicatorMarkers(this._markers);
       this._markers = null;
     }
-    if (this._markers === null) {
-      if (markers.length === 0) return;
-      if (first === undefined) return;
+    if (this._markers === null && markers.length > 0 && first !== undefined) {
       this._markerSeries = first;
       // Only substitute instrument bars when both series share price units.
       // Resolve scales lazily so moving an axis keeps the same guarantee.
@@ -897,7 +902,32 @@ export class IndicatorInstance implements IndicatorApi {
           ? this._host.sourceBars() : [];
       });
     }
-    this._markers.setMarkers(markers);
+    this._markers?.setMarkers(markers);
+    // A group is anchored to the candles or to the plot it names. A hidden pass
+    // keeps its layer and clears it, so showing the study again refills the
+    // same layer rather than restacking a new one; a visible pass releases a
+    // vacated group, and a replaced series gets a layer of its own.
+    for (const [key, [layer, series]] of this._markerLayers) {
+      if (series !== (key === null ? primary : this._series.get(key)) || (this._visible && !groups.has(key))) {
+        this._host.removeIndicatorMarkers(layer);
+        this._markerLayers.delete(key);
+      } else if (!this._visible) layer.setMarkers([]);
+    }
+    for (const [key, list] of groups) {
+      let entry = this._markerLayers.get(key);
+      const series = key === null ? primary : this._series.get(key);
+      if (entry === undefined && series !== undefined) {
+        // The candles are their own bars and need no fallback; a plot takes
+        // them on the same terms as the default layer, judged by its own pane.
+        const plot = this._d.plots.find(item => item.key === key);
+        this._markerLayers.set(key, entry = [series.createMarkers(plot && (() => {
+          const current = this._host.primarySeries?.();
+          return this._plotPane(plot) === 0 && current != null && series.priceScale() === current.priceScale()
+            ? this._host.sourceBars() : [];
+        })), series]);
+      }
+      entry?.[0].setMarkers(list);
+    }
   }
 
   /**
@@ -1353,6 +1383,7 @@ export class IndicatorInstance implements IndicatorApi {
     for (const series of this._series.values()) series.setData([]);
     for (const fill of this._fills) fill.setPoints([]);
     this._markers?.setMarkers([]);
+    for (const [layer] of this._markerLayers.values()) layer.setMarkers([]);
     this._table?.setRows([]);
     for (const { table } of this._tables.values()) table.setRows([]);
     this._draws?.setItems([]);
@@ -1718,6 +1749,8 @@ export class IndicatorInstance implements IndicatorApi {
     for (const band of this._fills) this._host.removeIndicatorFill(band);
     this._fills.length = 0;
     if (this._markers !== null) { this._host.removeIndicatorMarkers(this._markers); this._markers = null; }
+    for (const [layer] of this._markerLayers.values()) this._host.removeIndicatorMarkers(layer);
+    this._markerLayers.clear();
     if (this._table !== null) { this._host.removeIndicatorTable(this._table); this._table = null; }
     for (const { table } of this._tables.values()) this._host.removeIndicatorTable(table);
     this._tables.clear();
