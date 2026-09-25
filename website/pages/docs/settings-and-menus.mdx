@@ -418,16 +418,17 @@ interface ContextMenuTarget {
 }
 ```
 
-`scaleId` is normally the side's own id, but it is `''` when the strip that was hit carries
-no series of its own and the pane's values sit on the hidden overlay scale: a volume pane,
-or an indicator that plots against nothing else. That is the scale a menu raised there has
-to act on, and it is exactly the argument the `priceAxis*` calls take. Taking `side` and
-passing it straight through would drive the wrong scale on those panes.
+`scaleId` identifies the column under the pointer. It can be `'right'`, `'left'`,
+`''` or a named overlay explicitly placed on a visible side. Pass that exact ID
+to the `priceAxis*` calls. Several columns may share a side, so `side` alone
+cannot identify the scale. Unused outer cells reserved to align another pane
+return an `'empty'` target; they do not fall back to a hidden scale.
 
 <Callout type="info">
 The **bottom-left corner** belongs to the time axis, not to a left price ladder. The time
 axis spans the full width including the left column, so a click down there is on the dates.
-The bottom-**right** corner stays the price axis', which is where its own labels run out.
+A populated bottom-**right** column retains its price-axis target. Blank aligned
+cells have no price-axis target.
 </Callout>
 
 ### Routing
@@ -470,14 +471,14 @@ const s = chart.priceAxisState(0, 'right');   // PriceAxisState | null
 | Field | Meaning |
 |---|---|
 | `paneIndex` / `scaleId` | Echoed back, so a menu can hold the state object and nothing else. |
-| `side` | `'right'` or `'left'`: the strip this scale is drawn in. The overlay scale reports `'right'` and draws none. |
-| `active` | Some series on the pane maps to this scale. |
+| `side` | `'right'` or `'left'` for a visible scale. Hidden placement reports `'right'` for compatibility; read `priceAxisPlacement` to distinguish it. |
+| `active` | An attached series or explicitly bound primitive uses this scale. |
 | `autoFit` | The range tracks the data rather than staying where it was put. |
 | `inverted` | Prices increase downward. |
 | `mode` | One of `PRICE_SCALE_MODES`: `'linear'`, `'logarithmic'`, `'percentage'`, `'indexed-to-100'`. |
 | `scaled` | False while the scale still sits on its `0..1` placeholder, meaning nothing has been measured on it yet. |
 | `lockRatio` | The price-per-bar ratio is pinned. |
-| `movable` | Whether moving the axis to the other strip would do anything: something to move, and a free side. |
+| `movable` | Whether legacy `movePriceAxis` can reassign this built-in side ID to the other ID. It does not govern column placement. |
 
 Null for a pane that does not exist. `active: false` is a real state, not an error: it is
 the ladder on an empty chart, or the side a menu was raised on before anything was plotted
@@ -490,26 +491,42 @@ there. That is a row to render **disabled with its state visible**, not one to l
 chart.setPriceAxisOptions(pane, scaleId, { mode: 'logarithmic', inverted: false });
 chart.setPriceAxisAutoFit(pane, scaleId, true);
 const locked = chart.setPriceAxisLockRatio(pane, scaleId, true);   // returns success
-const moved  = chart.movePriceAxis(pane, 'right', 'left');         // returns success
+const moved = chart.setPriceAxisPlacement(pane, scaleId, 'left'); // retains scaleId
+chart.setPriceAxisPlacement(pane, scaleId, 'left', 0);            // nearest the plot
+const placement = chart.priceAxisPlacement(pane, scaleId);       // { side, order } or null
+const columns = chart.priceAxisLayout(pane);                    // active column geometry
 ```
 
 The four modes are one field, so picking one drops the previous by construction. Turning
 auto-fit **on** releases any ratio lock on that axis, because re-fitting the data every
-frame is exactly what a held ratio is not.
+frame is exactly what a held ratio is not. Chart-wide `setAutoScale(on)` applies
+to all active visible axes; hidden scales and their ratio locks retain their
+state. `setPriceAxisAutoFit` can address a hidden scale explicitly, while
+`resetScale()` still resets every created scale.
 
 Two of the calls return a boolean, and both are worth showing the user:
 
 - **`setPriceAxisLockRatio`** fails on a scale nothing has measured. There is no ratio to
   hold on an empty pane, or on one whose series plot no values at all. Reporting that beats
   a row that flips back on the next repaint with no explanation.
-- **`movePriceAxis`** fails when the side carries nothing, or when the other side is
-  already occupied. One strip draws one axis, which is what `movable` reports up front.
+- **`setPriceAxisPlacement`** returns false for invalid or unchanged requests.
+  It can move a column onto a side already used by other scales. Order zero is
+  nearest the plot; omitting order appends on a new side and retains the current
+  rank on the same side.
 
-Moving an axis moves the scale *object*: its range, mode, margins and formatter travel with
-it, the vacated strip starts again from the chart-wide defaults the way a scale used for
-the first time does, and the pane's crosshair tag, last-price line, coordinate API and axis
-drag all follow the scale the prices are actually labelled in. The chart emits
-`priceAxisMoved` with `{ paneIndex, from, to }` when it succeeds.
+Placement keeps the same scale ID, object, range, formatter, sources and ratio
+lock. A menu keeps its target ID after a move. Success emits
+`priceAxisPlacementChanged` with `{ paneIndex, scaleId, side, order }`, followed
+by `objects:change`. See [multiple axes](/docs/scales-and-panes#multiple-axes-on-the-same-side)
+for column geometry and persistence.
+
+The legacy `movePriceAxis(pane, 'right', 'left')` instead swaps the built-in side
+scale objects and reassigns their resources to the destination ID. That ID must
+be unused; other named columns on its side do not prevent the move. Source and
+destination placements reset to their named sides, and the vacated scale resets
+to chart defaults. `PriceAxisState.movable` describes this operation, including
+its study-resource restrictions. Success emits `priceAxisMoved` with
+`{ paneIndex, from, to }`.
 
 <Callout type="warning">
 The four scale modes are one field, so a menu must render them as a **single choice** (a
@@ -538,6 +555,7 @@ const AX_MODES = PRICE_SCALE_MODES.map((value) => ({
 }));
 
 const menu = document.getElementById('axmenu');
+menu.addEventListener('pointerdown', event => event.stopPropagation());
 // Which axis the menu acts on. The main pane's price ladder until a right-click
 // names another, so the keyboard chords have a target with no pointer involved.
 let target = { paneIndex: 0, scaleId: 'right' };
@@ -545,8 +563,9 @@ const axisState = () => chart.priceAxisState(target.paneIndex, target.scaleId);
 
 function paintAxisMenu() {
   const s = axisState();
+  const placement = chart.priceAxisPlacement(target.paneIndex, target.scaleId);
   menu.innerHTML = '';
-  if (!s) return;
+  if (!s || !placement) return;
   const add = (o) => menu.appendChild(axRow(o));
 
   add({ label: 'Auto-fit to the data', on: s.autoFit, chord: 'Alt+A',
@@ -569,19 +588,38 @@ function paintAxisMenu() {
           onSelect: () => run(() => chart.setPriceAxisOptions(s.paneIndex, s.scaleId, { mode: m.value })) });
   }
 
-  menu.appendChild(separator());
-  add({
-    label: s.side === 'right' ? 'Move the scale to the left' : 'Move the scale to the right',
-    disabled: !s.movable,
-    // Why a row is dead is worth a word. An empty greyed row reads as a bug.
-    note: s.movable ? '' : (s.active ? 'other side taken' : 'nothing on this side'),
-    onSelect: () => run(() => {
-      const to = s.side === 'right' ? 'left' : 'right';
-      if (chart.movePriceAxis(s.paneIndex, s.side, to)) {
-        target = { paneIndex: s.paneIndex, scaleId: to };   // the menu follows the axis
-      }
-    }),
-  });
+  if (placement.side !== 'hidden') {
+    menu.appendChild(separator());
+    add({
+      label: placement.side === 'right' ? 'Move the scale to the left' : 'Move the scale to the right',
+      disabled: !s.active,
+      note: s.active ? '' : 'nothing on this scale',
+      onSelect: () => run(() => {
+        const now = chart.priceAxisPlacement(s.paneIndex, s.scaleId);
+        if (!now || now.side === 'hidden' || !chart.priceAxisState(s.paneIndex, s.scaleId)?.active) return;
+        chart.setPriceAxisPlacement(s.paneIndex, s.scaleId, now.side === 'right' ? 'left' : 'right');
+        // The menu target keeps the same scale ID.
+      }),
+    });
+    const columns = side => chart.priceAxisLayout(s.paneIndex)
+      .filter(column => column.side === side).sort((a, b) => a.order - b.order);
+    const peers = columns(placement.side);
+    const index = peers.findIndex(column => column.scaleId === s.scaleId);
+    if (index >= 0 && peers.length > 1) for (const delta of [-1, 1]) {
+      add({
+        label: delta < 0 ? 'Move closer to the plot' : 'Move further from the plot',
+        disabled: peers[index + delta] === undefined,
+        onSelect: () => run(() => {
+          const now = chart.priceAxisPlacement(s.paneIndex, s.scaleId);
+          if (!now || now.side === 'hidden') return;
+          const current = columns(now.side);
+          const at = current.findIndex(column => column.scaleId === s.scaleId);
+          const neighbor = at < 0 ? undefined : current[at + delta];
+          if (neighbor) chart.setPriceAxisPlacement(s.paneIndex, s.scaleId, now.side, neighbor.order);
+        }),
+      });
+    }
+  }
 
   menu.appendChild(separator());
   add({ label: 'Axis settings...', onSelect: () => openChartSettings('axes') });
@@ -598,9 +636,9 @@ Opening it from the event is then the target plumbing and nothing else:
 
 ```js
 function openAxisMenu(point, paneIndex, hit) {
-  // `??`, never `||`: the overlay scale's id is the empty string, and `||` would
-  // fall through it to the side and drive the wrong scale on a volume pane.
-  target = { paneIndex, scaleId: hit.scaleId ?? hit.side ?? 'right' };
+  if (hit.kind !== 'price-scale' || hit.scaleId === undefined) return;
+  // Empty-string IDs are valid when their column is explicitly exposed.
+  target = { paneIndex, scaleId: hit.scaleId };
   paintAxisMenu();
   menu.hidden = false;
   place(menu, point);

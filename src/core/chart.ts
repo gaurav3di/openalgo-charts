@@ -7,6 +7,7 @@
 import { InvalidateMask, InvalidationLevel } from './invalidate-mask';
 import { RenderLoop, type RafScheduler, type RafCanceller } from './render-loop';
 import { Pane, type PaneRenderContext } from './pane';
+import type { PriceAxisPlacement, PriceAxisSide, PriceAxisSlot } from '../model/price-axis-layout';
 import { type ChartTheme, DEFAULT_THEME } from '../theme';
 import { TimeScale, type TimeScaleOptions } from '../scale/time-scale';
 import type { LogicalRange } from '../scale/time-scale';
@@ -624,7 +625,7 @@ export const PRICE_SCALE_MODES: readonly PriceScaleMode[] =
 export interface PriceAxisState {
   paneIndex: number;
   scaleId: PriceScaleId;
-  /** Strip this scale is drawn in. The overlay scale reports 'right' and draws none. */
+  /** Current visible side; hidden scales report 'right'. Read priceAxisPlacement for hidden state. */
   side: 'right' | 'left';
   /** Some series on the pane maps to this scale. */
   active: boolean;
@@ -880,7 +881,7 @@ export class Chart {
   private _dragCb: ((externalId: string, price: number, time: number) => void) | null = null;
   private _dragEndCb: ((externalId: string, price: number, time: number) => void) | null = null;
   // axis-drag rescale (price axis = vertical, time axis = horizontal)
-  private _axisDrag: 'price' | 'time' | null = null;
+  private _axisDrag: 'price' | 'time' | 'empty' | null = null;
   /** The scale a price-axis drag is rescaling: either side's, whichever strip was grabbed. */
   private _axisDragScale: PriceScale | null = null;
   /** Active pane-divider drag: which boundary, and the weights/heights at grab time. */
@@ -912,6 +913,8 @@ export class Chart {
   private _timezone: string = DEFAULT_TIMEZONE;
   private _leftAxisWidth = 0; // chart-wide reserved left-axis column (0 = none)
   private _rightAxisWidth = 0; // chart-wide reserved right-axis column (0 = none)
+  private _axisColumnWidth = 0;
+  private _emptyPriceAxis = true;
   private _timeNav: TimeNavigator | null = null;
   /** Pane the navigator is currently attached to, so it can follow the bottom. */
   private _timeNavPane = -1;
@@ -2594,8 +2597,10 @@ export class Chart {
     for (const pane of this._panes) {
       // Auto-fit and a pinned price-per-bar ratio ask opposite things of the
       // same range, so the one just asked for wins.
-      if (on) pane.setRatioLock('right', false, 0, 0);
-      pane.priceScale.setAutoScale(on);
+      for (const { scaleId } of pane.visibleAxes(this._emptyPriceAxis)) {
+        if (on) pane.setRatioLock(scaleId, false, 0, 0);
+        pane.scaleFor(scaleId).setAutoScale(on);
+      }
     }
     this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
   }
@@ -2619,8 +2624,8 @@ export class Chart {
     const pane = this._panes[paneIndex];
     if (pane === undefined) return null;
     const scale = pane.scaleFor(scaleId);
-    const side: 'right' | 'left' = scaleId === 'left' ? 'left' : 'right';
-    const other: 'right' | 'left' = side === 'left' ? 'right' : 'left';
+    const side = pane.axisPlacement(scaleId).side === 'left' ? 'left' : 'right';
+    const other: 'right' | 'left' = scaleId === 'left' ? 'right' : 'left';
     return {
       paneIndex,
       scaleId,
@@ -2633,6 +2638,33 @@ export class Chart {
       lockRatio: pane.ratioLocked(scaleId),
       movable: (scaleId === 'right' || scaleId === 'left') && this._canMovePriceAxis(paneIndex, scaleId, other),
     };
+  }
+
+  /** Detached visible placement. Hidden named scales retain their independent range. */
+  public priceAxisPlacement(paneIndex: number, scaleId: PriceScaleId): PriceAxisPlacement | null {
+    if (!this._validPriceScaleId(scaleId)) return null;
+    return this._priceAxisPane(paneIndex)?.axisPlacement(scaleId) ?? null;
+  }
+
+  /** Move or reorder a scale without changing its ID, sources, formatter or range. */
+  public setPriceAxisPlacement(paneIndex: number, scaleId: PriceScaleId, side: PriceAxisSide, order?: number): boolean {
+    const pane = this._priceAxisPane(paneIndex);
+    if (!pane || !this._validPriceScaleId(scaleId) || !pane.setAxisPlacement(scaleId, side, order)) return false;
+    this._recomputeAxisColumns();
+    this.invalidate(m => m.invalidateGlobal(InvalidationLevel.Full));
+    this.emit('priceAxisPlacementChanged', { paneIndex, scaleId, ...pane.axisPlacement(scaleId) });
+    this.emit('objects:change', {});
+    return true;
+  }
+
+  /** Active price columns in pane CSS coordinates, ordered nearest the plot on each side. */
+  public priceAxisLayout(paneIndex = 0): readonly PriceAxisSlot[] {
+    return this._priceAxisPane(paneIndex)?.axisSlots(this._renderContext(paneIndex === this._bottomPaneIndex()))
+      .map(slot => ({ ...slot, x: slot.x + this._leftAxisWidth })) ?? [];
+  }
+
+  private _priceAxisPane(paneIndex: number): Pane | undefined {
+    return !this._destroyed && Number.isInteger(paneIndex) && paneIndex >= 0 ? this._panes[paneIndex] : undefined;
   }
 
   /**
@@ -3547,6 +3579,7 @@ export class Chart {
         const pane = this._panes[i];
         if (pane === undefined) return;
         const entries = [['right', ps.priceScale], ...Object.entries(ps.scales ?? {})] as [PriceScaleId, PriceScaleState][];
+        pane.restoreAxisPlacements(new Map(entries.flatMap(([id, saved]) => saved.placement ? [[id, saved.placement] as const] : [])));
         for (const [id, saved] of entries) {
           const scale = pane.scaleFor(id);
           const options: Partial<PriceScaleOptions> = {
@@ -3594,6 +3627,7 @@ export class Chart {
 
     this._drawingState = s.drawings;
     this._alertState = alerts;
+    this._recomputeAxisColumns();
     if (s.barSpacing !== undefined) this._timeScale.setBarSpacing(s.barSpacing);
     if (s.viewport && this._dataLayer.length > 0) this.setVisibleLogicalRange(s.viewport);
     // Lock references belong to the saved geometry. Applying them after pane pruning
@@ -3713,6 +3747,7 @@ export class Chart {
    * way through.
    */
   private _relayout(geometryOnly = false): void {
+    this._measureAxisColumns();
     if (geometryOnly) {
       const total = this._weightTotal();
       const bottomPane = this._bottomPaneIndex();
@@ -3767,16 +3802,25 @@ export class Chart {
    * have to start and end at the same x.
    */
   private _recomputeAxisColumns(): void {
-    const anyLeft = this._panes.some((p) => p.hasLeftScale());
-    const anyRight = this._panes.some((p) => p.usesScale('right'));
-    const anySeries = this._panes.some((p) => p.series().length > 0 || p.primitives().some(primitive => p.primitiveScaleId(primitive) !== null));
-    const left = anyLeft ? this._priceAxisWidth : 0;
-    const right = anyRight || !anySeries ? this._priceAxisWidth : 0;
-    if (left === this._leftAxisWidth && right === this._rightAxisWidth) return;
-    this._leftAxisWidth = left;
-    this._rightAxisWidth = right;
+    const before = [this._leftAxisWidth, this._rightAxisWidth, this._axisColumnWidth];
+    this._measureAxisColumns();
+    if (before[0] === this._leftAxisWidth && before[1] === this._rightAxisWidth && before[2] === this._axisColumnWidth) return;
     this._relayout();
     this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
+  }
+
+  private _measureAxisColumns(): void {
+    let left = 0, right = 0;
+    this._emptyPriceAxis = !this._panes.some(pane => pane.series().length > 0
+      || pane.primitives().some(primitive => pane.primitiveScaleId(primitive) !== null));
+    for (const pane of this._panes) {
+      const axes = pane.visibleAxes(this._emptyPriceAxis);
+      left = Math.max(left, axes.filter(axis => axis.side === 'left').length);
+      right = Math.max(right, axes.filter(axis => axis.side === 'right').length);
+    }
+    this._axisColumnWidth = Math.max(0, Math.min(this._priceAxisWidth, this._width / (left + right + 1)));
+    this._leftAxisWidth = left * this._axisColumnWidth;
+    this._rightAxisWidth = right * this._axisColumnWidth;
   }
 
   /**
@@ -4064,6 +4108,8 @@ export class Chart {
       dataLayer: this._dataLayer,
       dpr: this._pixelRatio(),
       priceAxisWidth: this._rightAxisWidth,
+      axisColumnWidth: this._axisColumnWidth,
+      emptyPriceAxis: this._emptyPriceAxis,
       timeAxisHeight: this._timeAxisHeight,
       showTimeAxis,
       conflate: this._conflate,
@@ -4294,8 +4340,8 @@ export class Chart {
     // where its own labels run out.
     if (onTimeAxis && !onRightAxis) return { kind: 'time-scale', id: null };
     if (!onPlot) {
-      const side: 'right' | 'left' = onRightAxis ? 'right' : 'left';
-      return { kind: 'price-scale', id: null, side, scaleId: this._axisScaleId(p.pane, side) };
+      const slot = this._axisAt(p.pane, p.x);
+      return slot ? { kind: 'price-scale', id: null, side: slot.side, scaleId: slot.scaleId } : { kind: 'empty', id: null };
     }
 
     const hit = this._panes[p.pane]?.hitTestPrimitives(plotX, p.localY, this._renderContext(isBottom));
@@ -4324,16 +4370,9 @@ export class Chart {
     return { kind: 'series', id: null, seriesType: record.type };
   }
 
-  /**
-   * Which of a pane's scales an axis strip acts on. Normally the side's own
-   * one, but a pane whose only values sit on the hidden overlay scale (a volume
-   * pane, an indicator that plots against nothing else) has no series on either
-   * side, and the overlay is the scale a menu raised there has to act on.
-   */
-  private _axisScaleId(paneIndex: number, side: 'right' | 'left'): PriceScaleId {
-    const pane = this._panes[paneIndex];
-    if (pane === undefined || pane.usesScale(side)) return side;
-    return pane.usesScale('') ? '' : side;
+  /** Vacant aligned cells have no scale target, even if a hidden scale exists. */
+  private _axisAt(paneIndex: number, x: number): PriceAxisSlot | undefined {
+    return this.priceAxisLayout(paneIndex).find(slot => x >= slot.x && x < slot.x + slot.width);
   }
 
   /**
@@ -4468,10 +4507,11 @@ export class Chart {
     const onPriceAxis = p.x >= plotWidth || onLeftAxis;
     const onTimeAxis = p.pane === this._bottomPaneIndex() && p.localY >= p.paneHeight - this._timeAxisHeight;
     if (onPriceAxis) {
+      const slot = this._axisAt(p.pane, p.x);
+      this._dragging = false;
+      if (!slot) { this._axisDrag = 'empty'; return; }
       this._axisDrag = 'price';
-      this._axisDragScale = onLeftAxis
-        ? this._panes[p.pane].scaleFor('left')
-        : this._panes[p.pane].priceScale;
+      this._axisDragScale = this._panes[p.pane].scaleFor(slot.scaleId);
       this._axisStartCoord = p.localY;
       const r = this._axisDragScale.priceRange();
       this._axisStartMin = r.min;
@@ -4567,6 +4607,7 @@ export class Chart {
     const p = this._localPoint(e);
     if (this._pointers.has(e.pointerId)) this._pointers.set(e.pointerId, { x: p.x, y: p.y, pane: p.pane });
     if (this._pinch !== null) { this._updatePinch(); return; }
+    if (this._axisDrag === 'empty') return;
     if (this._brandingPress !== null) {
       if (Math.abs(p.x - this._downX) > 3 || Math.abs(p.localY - this._downLocalY) > 3
         || p.pane !== this._downPane || (e.pointerType === 'mouse' && (e.buttons & 1) === 0)) {
@@ -4897,9 +4938,11 @@ export class Chart {
     const onRight = this._rightAxisWidth > 0 && p.x >= this._width - this._rightAxisWidth;
     if (onLeft || onRight) {
       if (delta.y === 0) return;
+      const slot = this._axisAt(p.pane, p.x);
+      if (!slot) return;
       this._stopZoomGlide();
       const pane = this._panes[p.pane];
-      const scale = pane.scaleFor(this._axisScaleId(p.pane, onLeft ? 'left' : 'right'));
+      const scale = pane.scaleFor(slot.scaleId);
       scale.scaleAtY(p.localY, Math.exp(-wheelLogFactor(delta.y)));
       this.invalidate(m => m.invalidateGlobal(InvalidationLevel.Full));
       return;

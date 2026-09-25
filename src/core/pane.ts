@@ -27,6 +27,7 @@ import { type TimeScale } from '../scale/time-scale';
 import { type DataLayer } from '../model/data-layer';
 import type { SeriesRecord, PriceScaleId } from '../model/series';
 import type { PriceScaleState } from '../model/chart-state';
+import { PriceAxisLayout, type PriceAxisPlacement, type PriceAxisSide, type PriceAxisSlot } from '../model/price-axis-layout';
 import { computeGridLines, drawGrid, resolveGridStyle, resolveScaleStyle, type CanvasOptions } from '../render/grid';
 import { getChartType, type DrawItem, type SeriesRenderContext } from '../model/chart-type-registry';
 import type { SeriesStyle } from '../render/series-style';
@@ -53,6 +54,10 @@ export interface PaneRenderContext {
   priceAxisWidth: number;
   /** Left inset (px) reserved chart-wide for a left price axis; 0/absent when none. */
   leftAxisWidth?: number;
+  /** Width of one price column; omitted preserves the legacy single-column layout. */
+  axisColumnWidth?: number;
+  /** Empty panes show the default column only when the whole chart has no scale users. */
+  emptyPriceAxis?: boolean;
   timeAxisHeight: number;
   /** Only the bottom pane draws the time axis. */
   showTimeAxis: boolean;
@@ -134,6 +139,7 @@ export class Pane {
   /** Extra scales created on demand: left axis and a hidden overlay (volume). */
   private _leftScale: PriceScale | null = null;
   private readonly _overlayScales = new Map<PriceScaleId, PriceScale>();
+  private readonly _axisLayout = new PriceAxisLayout();
   /**
    * Scales whose price-per-bar ratio is pinned, with the geometry the ratio was
    * last held against. A lock stores that geometry rather than a number,
@@ -227,6 +233,7 @@ export class Pane {
 
   /** The PriceScale for a scale id, creating the left/overlay scale on first use. */
   private _scaleFor(id: PriceScaleId): PriceScale {
+    this._axisLayout.register(id);
     if (id === 'left') return (this._leftScale ??= new PriceScale());
     if (id === '' || id.startsWith('overlay:')) {
       let scale = this._overlayScales.get(id);
@@ -253,6 +260,46 @@ export class Pane {
     return false;
   }
 
+  public axisPlacement(id: PriceScaleId): PriceAxisPlacement {
+    return this._axisLayout.get(id);
+  }
+
+  public setAxisPlacement(id: PriceScaleId, side: PriceAxisSide, order?: number): boolean {
+    if (!this._axisLayout.set(id, side, order)) return false;
+    this._retainPlacedScales();
+    return true;
+  }
+
+  public restoreAxisPlacements(saved: ReadonlyMap<PriceScaleId, PriceAxisPlacement>): void {
+    this._axisLayout.restore(saved);
+    this._retainPlacedScales();
+  }
+
+  private _retainPlacedScales(): void {
+    // Reordering a live column can also change a previously vacated peer's rank.
+    for (const { scaleId } of this._axisLayout.entries()) {
+      if (this._axisLayout.configured(scaleId)) this._scaleFor(scaleId);
+    }
+  }
+
+  /** Active columns, nearest the plot first on each side. Vacant scales keep their rank. */
+  public visibleAxes(emptyPriceAxis = true): readonly { scaleId: PriceScaleId; side: 'left' | 'right'; order: number }[] {
+    const empty = emptyPriceAxis && this._series.length === 0 && this._primitiveScales.size === 0;
+    return this._axisLayout.entries().filter((entry): entry is typeof entry & { side: 'left' | 'right' } =>
+      entry.side !== 'hidden' && (this.usesScale(entry.scaleId) || (empty && entry.scaleId === 'right')))
+      .sort((a, b) => a.side.localeCompare(b.side) || a.order - b.order);
+  }
+
+  /** Column x positions relative to the plot, shared by rendering and chart input. */
+  public axisSlots(ctx: PaneRenderContext): readonly PriceAxisSlot[] {
+    const layout = this._layout(ctx), counts = { left: 0, right: 0 };
+    return this.visibleAxes(ctx.emptyPriceAxis).map(entry => {
+      const width = ctx.axisColumnWidth ?? (entry.side === 'left' ? layout.plotLeft : layout.priceAxisWidth);
+      const index = counts[entry.side]++;
+      return { ...entry, width, x: entry.side === 'left' ? -(index + 1) * width : layout.plotWidth + index * width };
+    }).filter(slot => slot.width > 0);
+  }
+
   /**
    * Move every series and bound primitive on one side to the other, axis and all.
    *
@@ -272,6 +319,8 @@ export class Pane {
     if (from === to || !this.usesScale(from) || this.usesScale(to)) return false;
     const moving = this._scaleFor(from);
     const vacated = this._scaleFor(to);
+    this._axisLayout.set(to, to);
+    this._axisLayout.set(from, from);
     if (to === 'left') {
       this._leftScale = moving;
       this._rightScale = vacated;
@@ -356,6 +405,7 @@ export class Pane {
         marginTop: options.marginTop, marginBottom: options.marginBottom, minMove: options.minMove,
         minPrecision: options.minPrecision, mode: options.mode, inverted: options.inverted,
         autoScale: scale.autoScale, fixedRange: scale.fixedRange,
+        placement: this._axisLayout.get(id),
       };
       if (!scale.autoScale) state.range = scale.priceRange();
       const lock = this._ratioLocks.get(id);
@@ -365,8 +415,8 @@ export class Pane {
   }
 
   /**
-   * The scales that draw a ladder: the right one and, once something uses it,
-   * the left. The hidden overlay scale is deliberately not here.
+   * Scales configured with a visible column, including temporarily vacant ones.
+   * Hidden overlays are deliberately excluded from chart-wide axis settings.
    *
    * That scale is positioned by whoever created it and by nobody else. A volume
    * histogram sitting in the bottom fifth of the price pane is an overlay with
@@ -377,9 +427,7 @@ export class Pane {
    * from a control that only claims to move the plot inside its own axes.
    */
   public axisScales(): PriceScale[] {
-    const out: PriceScale[] = [this.priceScale];
-    if (this._leftScale !== null) out.push(this._leftScale);
-    return out;
+    return this._axisLayout.entries().filter(entry => entry.side !== 'hidden').map(entry => this._scaleFor(entry.scaleId));
   }
 
   /** True when a series or explicitly bound primitive uses the left axis. */
@@ -398,7 +446,9 @@ export class Pane {
     if (!this.usesScale(record.scaleId)) {
       const scale = this._scaleFor(record.scaleId);
       scale.reset();
-      if (record.scaleId !== '' && !scale.hasConfiguration() && !this._ratioLocks.has(record.scaleId)) this._overlayScales.delete(record.scaleId);
+      if (record.scaleId !== '' && this._axisLayout.get(record.scaleId).side === 'hidden'
+        && !this._axisLayout.configured(record.scaleId) && !scale.hasConfiguration()
+        && !this._ratioLocks.has(record.scaleId)) this._overlayScales.delete(record.scaleId);
     }
     return true;
   }
@@ -495,6 +545,7 @@ export class Pane {
 
   private _primitiveContext(ctx: PaneRenderContext): PrimitiveRenderContext {
     const layout = this._layout(ctx);
+    const slot = this.axisSlots(ctx).find(slot => slot.scaleId === 'right');
     return {
       timeScale: ctx.timeScale,
       priceScale: this.priceScale,
@@ -502,8 +553,9 @@ export class Pane {
       dataLayer: ctx.dataLayer,
       plotWidth: layout.plotWidth,
       plotHeight: layout.plotHeight,
-      priceAxisWidth: ctx.priceAxisWidth,
-      priceAxisSide: 'right',
+      priceAxisWidth: slot?.width ?? 0,
+      priceAxisSide: slot?.side ?? 'hidden',
+      priceAxisOffset: slot ? slot.x + (slot.side === 'left' ? slot.width : 0) : undefined,
       dpr: ctx.dpr,
       theme: ctx.theme,
       hoverId: ctx.hoverId ?? null,
@@ -517,12 +569,13 @@ export class Pane {
     };
   }
 
-  private _boundPrimitiveContext(primitive: IPrimitive, context: PrimitiveRenderContext, leftAxisWidth: number): PrimitiveRenderContext {
+  private _boundPrimitiveContext(primitive: IPrimitive, context: PrimitiveRenderContext, ctx: PaneRenderContext): PrimitiveRenderContext {
     const id = this._primitiveScales.get(primitive);
     if (id === undefined) return context;
-    const side = id === 'left' || id === 'right' ? id : 'hidden';
-    return { ...context, priceScale: this._scaleFor(id), priceAxisSide: side,
-      priceAxisWidth: side === 'left' ? leftAxisWidth : side === 'right' ? context.priceAxisWidth : 0 };
+    const slot = this.axisSlots(ctx).find(slot => slot.scaleId === id);
+    return { ...context, priceScale: this._scaleFor(id), priceAxisSide: slot?.side ?? 'hidden',
+      priceAxisWidth: slot?.width ?? 0,
+      priceAxisOffset: slot ? slot.x + (slot.side === 'left' ? slot.width : 0) : undefined };
   }
 
   /** Topmost primitive hit at media-px (x,y) relative to this pane's plot. */
@@ -530,7 +583,7 @@ export class Pane {
     const prc = this._primitiveContext(ctx);
     return bestHit(this._primitives.map((p) => {
       if (!p.hitTest) return null;
-      const context = this._boundPrimitiveContext(p, prc, ctx.leftAxisWidth ?? 0);
+      const context = this._boundPrimitiveContext(p, prc, ctx);
       const hit = p.hitTest(x, y, context);
       return hit !== null && this._primitiveScales.has(p) ? { ...hit, priceScale: context.priceScale } : hit;
     }));
@@ -754,7 +807,7 @@ export class Pane {
 
     // bottom-layer primitives (background zones) draw behind series
     const prc = this._primitiveContext(ctx);
-    for (const p of this._primitives) if (p.zOrder() === 'bottom') p.draw(g, this._boundPrimitiveContext(p, prc, layout.plotLeft));
+    for (const p of this._primitives) if (p.zOrder() === 'bottom') p.draw(g, this._boundPrimitiveContext(p, prc, ctx));
 
     // series (registry-driven — the core never switches on type)
     const range = ctx.timeScale.visibleRange();
@@ -764,7 +817,7 @@ export class Pane {
     let lastEntry: { close: number; up: boolean; showLine: boolean; showTag: boolean } | null = null;
     // Every visible axis describes its own sources, even when the pane's main
     // readout belongs to the other side or a hidden scale.
-    const valueTags: { price: number; color: string; side: 'left' | 'right' }[] = [];
+    const valueTags: { price: number; color: string; scaleId: PriceScaleId }[] = [];
     const groupSize = ctx.conflate
       ? conflationGroupSize(ctx.timeScale.barSpacing, dpr, 0.5, ctx.conflationFactor)
       : 1;
@@ -803,13 +856,13 @@ export class Pane {
             showLine: s.style.priceLineVisible !== false,
             showTag: s.style.lastValueVisible !== false && (color === undefined || !isInvisible(color)),
           };
-        } else if ((s.scaleId === 'left' || s.scaleId === 'right') && s.style.lastValueVisible !== false) {
+        } else if (s.style.lastValueVisible !== false) {
           // A plot that is currently `na` writes NaN rather than dropping the
           // point, and a tag for it would either be blank or, worse, the stale
           // value from whenever the line last had one. A flipped Supertrend's
           // dormant half shows no tag, which is the honest answer.
           if (color !== undefined && !isInvisible(color) && Number.isFinite(last.bar.close)) {
-            valueTags.push({ price: last.bar.close, color, side: s.scaleId });
+            valueTags.push({ price: last.bar.close, color, scaleId: s.scaleId });
           }
         }
       }
@@ -824,13 +877,24 @@ export class Pane {
     // and not at the end of the frame is the whole point.
     g.restore();
 
-    const readoutSide = readout === this._leftScale ? 'left' : readout === this._rightScale ? 'right' : null;
-    const showLastTag = lastEntry !== null && lastEntry.showTag && readoutSide !== null
-      && (readoutSide === 'left' ? layout.plotLeft > 0 : layout.priceAxisWidth > 0);
+    const slots = this.axisSlots(ctx);
+    const colors = { up: ctx.theme.lastPriceUp, down: ctx.theme.lastPriceDown, text: ctx.theme.lastPriceText };
+    if (lastEntry !== null) {
+      drawLastPriceLabel(g, readout, lastEntry.close, lastEntry.up, layout, dpr, axisStyle,
+        colors, lastEntry.showLine, false, ctx.barCountdown);
+    }
     // Resolve each strip independently: equal prices on opposite scales do not
     // overlap. The readout tag outranks series tags, which outrank axis ticks.
-    const paintAxis = (scale: PriceScale, side: 'left' | 'right'): void => {
-      const tags = valueTags.filter(tag => tag.side === side);
+    const paintAxis = (slot: PriceAxisSlot): void => {
+      const { side, width, scaleId } = slot, scale = this._scaleFor(scaleId);
+      if (!scale.scaled) return;
+      const showLastTag = lastEntry !== null && lastEntry.showTag && readout === scale;
+      const tags = valueTags.filter(tag => tag.scaleId === scaleId);
+      const columnLayout = { ...layout, priceAxisWidth: width, plotLeft: width };
+      g.save();
+      const outer = Math.round(slot.x * dpr), end = Math.round((slot.x + width) * dpr);
+      g.beginPath(); g.rect(outer, 0, end - outer, Math.round(layout.plotHeight * dpr)); g.clip();
+      g.translate(side === 'left' ? end : outer - Math.round(layout.plotWidth * dpr), 0);
       const bands: AxisLabelBand[] = [];
       if (lastEntry !== null && showLastTag && readout === scale) {
         const height = lastPriceTagHeight(dpr, ctx.barCountdown?.visible === true);
@@ -849,26 +913,23 @@ export class Pane {
         // The left tick renderer uses absolute pane coordinates; tags use the
         // same plot-relative coordinates as their source series.
         g.save();
-        g.translate(-Math.round(layout.plotLeft * dpr), 0);
-        drawLeftPriceAxis(g, scale, layout.plotLeft, layout.plotHeight, dpr, axisStyle, reserved);
+        g.translate(-Math.round(width * dpr), 0);
+        drawLeftPriceAxis(g, scale, width, layout.plotHeight, dpr, axisStyle, reserved);
         g.restore();
-      } else drawPriceAxis(g, scale, layout, dpr, axisStyle, reserved);
+      } else drawPriceAxis(g, scale, columnLayout, dpr, axisStyle, reserved);
       for (let i = 0; i < tags.length; i++) {
-        if (allowed[tagBase + i]) drawSeriesValueTag(g, scale, tags[i].price, tags[i].color, layout, dpr, axisStyle, side);
+        if (allowed[tagBase + i]) drawSeriesValueTag(g, scale, tags[i].price, tags[i].color, columnLayout, dpr, axisStyle, side);
       }
+      if (lastEntry !== null && showLastTag) {
+        drawLastPriceLabel(g, scale, lastEntry.close, lastEntry.up, columnLayout, dpr, axisStyle,
+          colors, false, true, ctx.barCountdown, side);
+      }
+      g.restore();
     };
-    if (this._leftScale?.scaled && this.usesScale('left') && layout.plotLeft > 0) paintAxis(this._leftScale, 'left');
-    if (layout.priceAxisWidth > 0 && this.priceScale.scaled && (this.usesScale('right') || this._series.length === 0)) {
-      paintAxis(this.priceScale, 'right');
-    }
-    if (lastEntry !== null) {
-      drawLastPriceLabel(g, readout, lastEntry.close, lastEntry.up, layout, dpr, axisStyle, {
-        up: ctx.theme.lastPriceUp, down: ctx.theme.lastPriceDown, text: ctx.theme.lastPriceText,
-      }, lastEntry.showLine, showLastTag, ctx.barCountdown, readoutSide ?? 'right');
-    }
+    for (const slot of slots) paintAxis(slot);
 
     // normal-layer primitives (price lines, markers, events) draw over series
-    for (const p of this._primitives) if (p.zOrder() === 'normal') p.draw(g, this._boundPrimitiveContext(p, prc, layout.plotLeft));
+    for (const p of this._primitives) if (p.zOrder() === 'normal') p.draw(g, this._boundPrimitiveContext(p, prc, ctx));
 
     if (ctx.showTimeAxis) {
       // The zone goes to the axis rather than being pre-baked into a formatter
@@ -878,7 +939,9 @@ export class Pane {
       drawTimeAxis(g, ctx.timeScale, ctx.dataLayer, layout, dpr, axisStyle, ctx.timeFormatter, ctx.timezone);
       // The corner the two strips meet in, which no tick, tag or series ever
       // occupies. Drawn last so it sits over the time axis's own row.
-      if (ctx.sessionClock !== undefined) drawSessionClock(g, layout, dpr, ctx.sessionClock, axisStyle);
+      if (ctx.sessionClock !== undefined) drawSessionClock(g,
+        { ...layout, priceAxisWidth: Math.min(layout.priceAxisWidth, ctx.axisColumnWidth ?? layout.priceAxisWidth) },
+        dpr, ctx.sessionClock, axisStyle);
     }
     g.restore(); // end plot shift
   }
@@ -903,7 +966,7 @@ export class Pane {
     g.save();
     if (layout.plotLeft > 0) g.translate(Math.round(layout.plotLeft * dpr), 0);
     const prc = this._primitiveContext(ctx);
-    for (const p of this._primitives) if (p.zOrder() === 'top') p.draw(g, this._boundPrimitiveContext(p, prc, layout.plotLeft));
+    for (const p of this._primitives) if (p.zOrder() === 'top') p.draw(g, this._boundPrimitiveContext(p, prc, ctx));
     if (cross !== null) {
       const style = resolveCrosshairStyle(ctx.theme, ctx.canvasOptions?.crosshair, dpr);
       drawCrosshair(g, cross.x, cross.yLocal, layout.plotWidth, layout.plotHeight, dpr,
@@ -917,13 +980,14 @@ export class Pane {
       // (hovered pane only)
       if (showTags && cross.yLocal !== null) {
         const scale = this._readoutScale();
-        const onLeft = scale === this._leftScale && layout.plotLeft > 0;
-        const onRight = scale === this._rightScale && layout.priceAxisWidth > 0 && (this.usesScale('right') || this._series.length === 0);
-        if (onLeft || onRight) {
+        const slot = this.axisSlots(ctx).find(slot => this._scaleFor(slot.scaleId) === scale);
+        if (slot) {
           const text = scale.format(scale.yToPrice(cross.yLocal));
-          // A left tag starts one tag-width before the plot because it draws rightward.
-          const x = onLeft ? -this._tagWidth(g, text, dpr) : layout.plotWidth * dpr;
+          const start = Math.round(slot.x * dpr), end = Math.round((slot.x + slot.width) * dpr);
+          const x = slot.side === 'left' ? end - this._tagWidth(g, text, dpr) : start;
+          g.save(); g.beginPath(); g.rect(start, 0, end - start, Math.round(layout.plotHeight * dpr)); g.clip();
           drawCrosshairTag(g, text, x, cross.yLocal * dpr, dpr, tagBg, ctx.theme.lastPriceText, 'right');
+          g.restore();
         }
       }
       // date/time tag on the bottom pane's axis strip (cross.x is plot-relative)

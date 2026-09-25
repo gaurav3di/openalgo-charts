@@ -76,7 +76,8 @@ configured empty targets, settings recreation, pane moves, hiding, source update
 removal, state/workspace/template restoration, invalid requests and synchronous
 notification reentry. Verify actual browser pixels and SVG clipping.
 
-Multiple visible scales on one side remain separate work. They need ordered axis
-slots, per-slot geometry and input routing, per-scale label collision resolution,
-and persisted placement/order. Fixing left-side value labels alone does not satisfy
-that requirement.
+[Multiple visible scales](multiple-price-axes.md) now use ordered columns, shared
+rendering and input geometry, independent label collision resolution, and saved
+placement. Scale IDs remain stable when an axis moves. Indicator templates still
+need axis metadata and an explicit copy-versus-sharing policy; their saved scale
+IDs alone cannot preserve column placement.

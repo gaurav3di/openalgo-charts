@@ -200,7 +200,7 @@ requests or discard data. See [Interactions](/docs/interactions).
 interface AddSeriesOptions {
   paneIndex?: number;
   style?: SeriesStyle;
-  priceScaleId?: 'right' | 'left' | '';
+  priceScaleId?: PriceScaleId;
   priceFormat?:
     | { type: 'price'; precision?: number; minMove?: number }
     | { type: 'volume' }
@@ -208,7 +208,7 @@ interface AddSeriesOptions {
 }
 ```
 
-Options passed to `chart.addSeries(type, options)`. `paneIndex` defaults to `0` (price pane); higher indices create sub-panes on demand. `priceScaleId` picks the axis: `'right'` (default) and `'left'` autoscale independently and each draw an axis; `''` is a hidden overlay scale (volume-in-price-pane). `priceFormat` sets that series' axis and crosshair-tag formatting. See [Scales & panes](/docs/scales-and-panes#left-right--overlay-price-scales).
+Options passed to `chart.addSeries(type, options)`. `paneIndex` defaults to `0` (price pane); higher indices create sub-panes on demand. `priceScaleId` is `'right'`, `'left'`, `''` or a named `overlay:name` scale. Each ID has an independent range; the built-in side IDs default to that side and overlays default to hidden. `setPriceAxisPlacement` changes visible placement without changing identity. `priceFormat` sets that scale's axis and crosshair-tag formatting. See [Scales & panes](/docs/scales-and-panes#multiple-axes-on-the-same-side).
 
 ### `CrosshairMoveEvent`
 
@@ -274,7 +274,7 @@ interface ContextMenuTarget {
 }
 ```
 
-Payload of `chart.on('contextmenu', ...)`. `target` is the part a canvas cannot work out for itself: it hands your app an object rather than a pixel. On a `'price-scale'` hit, `scaleId` is the scale that strip actually draws, which is `''` when the pane's values all live on the hidden overlay scale, and it is the argument the `priceAxis*` calls take. See [Settings & Menus](/docs/settings-and-menus#the-right-click-menu).
+Payload of `chart.on('contextmenu', ...)`. `target` is the part a canvas cannot work out for itself: it hands your app an object rather than a pixel. On a `'price-scale'` hit, `scaleId` identifies the column under the pointer, including a named overlay exposed on either side. Pass it to the `priceAxis*` calls. Unused outer cells reserved for another pane do not target a price scale. See [Settings & Menus](/docs/settings-and-menus#the-right-click-menu).
 
 ### `PriceAxisState`
 
@@ -283,7 +283,7 @@ interface PriceAxisState {
   paneIndex: number;
   scaleId: PriceScaleId;
   side: 'right' | 'left';
-  active: boolean;      // some series on the pane maps to this scale
+  active: boolean;      // attached series or an explicitly bound primitive uses this scale
   autoFit: boolean;
   inverted: boolean;
   mode: PriceScaleMode;
@@ -321,6 +321,33 @@ The slice of a chart the standalone `beginPick(host, kind, cb)` needs. Structura
 ---
 
 ## Scales
+
+### `PriceAxisSide`, `PriceAxisPlacement`, `PriceAxisSlot`
+
+```ts
+type PriceAxisSide = 'left' | 'right' | 'hidden';
+
+interface PriceAxisPlacement {
+  side: PriceAxisSide;
+  order: number;       // zero is nearest the plot
+}
+
+interface PriceAxisSlot {
+  scaleId: PriceScaleId;
+  side: 'left' | 'right';
+  order: number;
+  x: number;           // left edge in absolute pane CSS pixels from Chart.priceAxisLayout
+  width: number;       // width of this column in CSS pixels
+}
+```
+
+These types are exported from `openalgo-charts`. `priceAxisPlacement(pane, id)`
+returns a detached placement or `null`; `setPriceAxisPlacement(pane, id, side,
+order?)` returns whether placement changed. `priceAxisLayout(pane = 0)` returns
+the active columns. Placement can remain configured when a scale has no column.
+The optional `PriceScaleState.placement` field saves it in full chart and
+workspace state; indicator templates do not yet preserve column placement.
+See [multiple axes](/docs/scales-and-panes#multiple-axes-on-the-same-side).
 
 ### `PriceRange`
 

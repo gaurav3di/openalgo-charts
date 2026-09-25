@@ -135,6 +135,102 @@ return chart;`} />
 
 </div>
 
+## Multiple price axes
+
+Three simulated series use independent ranges: blue near 100, green near 1,200,
+and amber near 5. Start with two columns on the right and one on the left. Move
+the green column, change its order, or narrow the chart. Drag or scroll over a
+column to adjust only its scale. See the [axis placement API](/docs/scales-and-panes#multiple-axes-on-the-same-side).
+
+<RunnableExample height={470} caption="Placement changes keep each series on its original scale, with its own range and formatting." code={`el.style.display = 'flex';
+el.style.flexDirection = 'column';
+const controls = document.createElement('div');
+controls.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;padding:8px 64px 8px 8px';
+controls.addEventListener('pointerdown', event => event.stopPropagation());
+el.appendChild(controls);
+const status = document.createElement('div');
+status.style.cssText = 'padding:0 8px 8px;font:12px sans-serif';
+status.setAttribute('role', 'status');
+el.appendChild(status);
+const host = document.createElement('div');
+host.style.cssText = 'flex:1;min-height:0;width:100%;align-self:center';
+el.appendChild(host);
+const chart = lib.createChart(host, { priceAxisWidth: 64 });
+const palette = chart.theme();
+status.style.color = palette.axisText;
+const points = value => Array.from({ length: 96 }, (_, i) => ({
+  time: 1700000000 + i * 60, value: value(i),
+}));
+chart.addSeries('line', {
+  priceScaleId: 'right', style: { color: '#4385ef', lineWidth: 2 },
+  priceFormat: { type: 'price', precision: 1 },
+}).setData(points(i => 100 + Math.sin(i / 9) * 7 + i * 0.05));
+chart.addSeries('line', {
+  priceScaleId: 'overlay:large', style: { color: '#26a69a', lineWidth: 2 },
+  priceFormat: { type: 'price', precision: 0 },
+}).setData(points(i => 1200 + Math.cos(i / 11) * 100 + i * 0.5));
+chart.addSeries('line', {
+  priceScaleId: 'overlay:small', style: { color: '#d99126', lineWidth: 2 },
+  priceFormat: { type: 'price', precision: 2 },
+}).setData(points(i => 5 + Math.sin(i / 6) * 1.5));
+chart.setPriceAxisPlacement(0, 'overlay:large', 'right');
+chart.setPriceAxisPlacement(0, 'overlay:small', 'left');
+chart.fitContent();
+const names = { right: 'Blue', 'overlay:large': 'Green', 'overlay:small': 'Amber' };
+let compact = false;
+const buttons = new Map();
+function render() {
+  const slots = chart.priceAxisLayout();
+  const selected = chart.priceAxisPlacement(0, 'overlay:large');
+  const side = slots.filter(slot => slot.side === selected.side);
+  const rank = side.findIndex(slot => slot.scaleId === 'overlay:large');
+  for (const [label, button] of buttons) {
+    button.disabled = label === 'Green inward' ? rank === 0
+      : label === 'Green outward' ? rank === side.length - 1 : false;
+    button.style.opacity = button.disabled ? '0.45' : '1';
+    button.style.cursor = button.disabled ? 'default' : 'pointer';
+    if (label === 'Compact width') {
+      button.textContent = compact ? 'Full width' : 'Compact width';
+      button.setAttribute('aria-pressed', String(compact));
+    }
+  }
+  status.textContent = ['left', 'right'].map(side => {
+    const labels = slots.filter(slot => slot.side === side).map(slot => names[slot.scaleId]);
+    return side + ' from plot: ' + labels.join(', ');
+  }).join(' | ');
+}
+for (const [label, action] of [
+  ['Switch green side', () => {
+    const { side } = chart.priceAxisPlacement(0, 'overlay:large');
+    chart.setPriceAxisPlacement(0, 'overlay:large', side === 'right' ? 'left' : 'right');
+  }],
+  ['Green inward', () => {
+    const { side } = chart.priceAxisPlacement(0, 'overlay:large');
+    chart.setPriceAxisPlacement(0, 'overlay:large', side, 0);
+  }],
+  ['Green outward', () => {
+    const { side } = chart.priceAxisPlacement(0, 'overlay:large');
+    chart.setPriceAxisPlacement(0, 'overlay:large', side,
+      chart.priceAxisLayout().filter(slot => slot.side === side).length - 1);
+  }],
+  ['Compact width', () => {
+    compact = !compact;
+    host.style.width = compact ? 'min(100%, 420px)' : '100%';
+    chart.applySize(host.clientWidth, host.clientHeight);
+  }],
+]) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = label;
+  button.style.cssText = 'padding:5px 9px;border:1px solid ' + palette.axisLine
+    + ';border-radius:4px;background:' + palette.background + ';color:' + palette.axisText + ';font:12px sans-serif';
+  button.onclick = () => { action(); render(); };
+  buttons.set(label, button);
+  controls.appendChild(button);
+}
+render();
+return chart;`} />
+
 ## Drawing tools
 
 Choose a tool, draw on the chart, then select it to move or delete it. Try undo

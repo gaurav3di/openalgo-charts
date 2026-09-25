@@ -27,6 +27,8 @@ The implemented whole-study transaction follows [scale ownership](scale-ownershi
 
 [Study dependencies](study-dependencies.md) now add opted-in scalar sources, ordered calculation, unavailable-state propagation, UI selection and graph persistence. The first built-in consumers are SMA, EMA and WMA. The existing script adapter can produce these sources without an upgrade; consuming them inside compiled programs requires explicit adapter support.
 
+[Multiple price axes](multiple-price-axes.md) separates stable scale IDs from visible columns. It covers native placement, rendering, exact input routing, host menus and full-layout persistence. Axis metadata in indicator templates remains a separate task.
+
 ## Authorized release sequence
 
 The reported right-axis autoscale issue is fixed and verified on the example host in three browser engines. Retain that regression check for the final candidate. After completing the native capability work, validate the package, bump it to 2.5.4, update the example host, website, API documentation and changelog, commit and push, publish the package and website, and create the matching release. Verify the published artifacts against the tested build. Publication is authorized by the user; incomplete capability work is not a release candidate.

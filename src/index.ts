@@ -41,6 +41,7 @@ export type { LogicalRange, TimeScaleOptions } from './scale/time-scale';
 export { niceTicks, precisionForStep } from './scale/ticks';
 // `AxisStyle` is what `resolveScaleStyle` returns, so it belongs with it.
 export type { TickMarkType, AxisStyle } from './render/axis';
+export type { PriceAxisSide, PriceAxisPlacement, PriceAxisSlot } from './model/price-axis-layout';
 
 // canvas option block (grid, crosshair, scales, margins). The resolvers are
 // values because a host building its own settings dialog previews with them.

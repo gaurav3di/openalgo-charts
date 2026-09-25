@@ -77,7 +77,7 @@ ps.setAutoScale(true);                     // hand it back to the data
 
 `chart.resetScale()` (also the navigator reset button and the default double-click action) re-enables autoscale and releases ratio locks on every created right, left and overlay scale, then restores the configured default view. `navigation.defaultVisibleBars: 0` fits all loaded bars; a positive count targets the newest N loaded bars plus four right-padding slots, within data and spacing limits.
 
-Chart-wide equivalents, for a settings dialog: `chart.setPriceScaleOptions(patch, allScales = false)` writes each pane's right scale (`allScales` includes left and overlay), `chart.priceScaleOptions()` reads pane 0's, and `chart.setAutoScale(on)` flips every pane at once. See [settings-and-menus](settings-and-menus.md).
+Chart-wide equivalents, for a settings dialog: `chart.setPriceScaleOptions(patch, scope = 'primary')` writes each pane's right scale; scope `'axes'` selects scales configured on a visible side, and `'all'` includes hidden scales. `chart.priceScaleOptions()` reads pane 0's right scale. `chart.setAutoScale(on)` updates every active visible axis across panes and releases those axes' ratio locks when enabled. It leaves hidden scales and their locks unchanged; `resetScale()` still resets every created scale. See [settings-and-menus](settings-and-menus.md).
 
 ### Conversion and formatting
 
@@ -128,29 +128,37 @@ Per frame, for each active scale on a pane: skip if `autoScale` is false; scan o
 
 `PriceScaleId` accepts `'right'`, `'left'`, `''` and names beginning with `overlay:`.
 
-| Id | Axis drawn | Autoscales | Typical use |
+| Id | Default placement | Autoscales | Typical use |
 |---|---|---|---|
 | `'right'` | Right strip | Independently | Default for every series. |
 | `'left'` | Left strip | Independently | A second instrument or spread at a different magnitude. |
 | `''` | None (hidden) | Independently | Volume pinned inside the price pane. |
 | `'overlay:name'` | None (hidden) | Independently per name | Multiple comparison instruments without sharing price units. |
 
-A pane creates the left and overlay scales lazily when first requested. When any
-pane has a series or explicitly bound primitive on the left scale, the chart reserves a chart-wide left column
-of `priceAxisWidth` px and shifts every plot right by it. A right column is
-reserved while a series or explicitly bound primitive uses it. Hidden-scale
-resources reserve neither column; an empty chart keeps its default right column.
+A pane creates the left and overlay scales lazily when first requested. Scale
+identity does not dictate placement: `setPriceAxisPlacement` can expose any scale
+on either side, with one column per active scale. Attached series, including
+hidden series, and explicitly bound primitives occupy columns. A configured
+unused scale retains placement without reserving a column. Hidden placement
+reserves no column; an empty chart keeps its default right column.
+
+Panes share the maximum active column count on each side, keeping their plots
+aligned in time. Each pane packs its columns nearest the plot. Unused outer
+cells have no price-axis input target. Columns use `priceAxisWidth`, reduced
+equally on narrow charts to leave at least one column-width for the plot.
 
 Series using the same named overlay on the same pane share its scale. Named
-overlays add no axis column and remain available while a bound primitive uses them.
+overlays default to hidden placement and remain available while a bound primitive uses them.
 Configured named scales also survive their last series being removed, so later
 assignments recover their range, options and formatting. Unconfigured temporary
 named scales can be released. `PriceScale.hasConfiguration()` distinguishes
 configuration from a range that was only measured automatically.
 `PriceScale.setComputedRange(range)` writes a derived projection while preserving
 existing view ownership; host range changes continue to use `setPriceRange`.
-They participate in `pane.scales()` and scale options with scope `'all'`, while
-`pane.axisScales()` excludes them. Existing empty-overlay behaviour is unchanged.
+All created scales participate in `pane.scales()` and scope `'all'`.
+`pane.axisScales()` includes scales configured on either visible side and excludes
+hidden placements. Exposing a named overlay therefore includes it in axis-only
+settings. The empty overlay retains its hidden default.
 
 ```ts
 const vol = chart.addSeries('histogram', {
@@ -162,6 +170,35 @@ vol.priceScale().setOptions({ marginTop: 0.82, marginBottom: 0 });  // bottom ~1
 
 **`pane.priceScale` is the `'right'` scale only.** Reach other scales with
 `series.priceScale()`, `pane.scaleOf(record)` or `pane.scaleFor(scaleId)`.
+
+### Place and reorder columns without changing IDs
+
+```ts
+chart.setPriceAxisPlacement(0, 'overlay:spread', 'right');
+chart.setPriceAxisPlacement(0, 'overlay:spread', 'right', 0);
+chart.setPriceAxisPlacement(0, 'overlay:spread', 'left');
+chart.setPriceAxisPlacement(0, 'overlay:spread', 'hidden');
+const placement = chart.priceAxisPlacement(0, 'overlay:spread');
+const slots = chart.priceAxisLayout(0);
+```
+
+`PriceAxisSide` is `'left' | 'right' | 'hidden'`. `PriceAxisPlacement` contains
+`{ side, order }`, with zero nearest the plot. An explicit order must be a
+nonnegative safe integer and is clamped to available ranks. Omitting it keeps
+the rank on the same side and appends when changing sides. The setter returns
+false for invalid or unchanged requests. The getter returns a detached placement
+or null for an invalid ID, missing pane or destroyed chart.
+
+`PriceAxisSlot` contains `{ scaleId, side, order, x, width }`. The chart's layout
+getter returns active columns, with `x` at the column's left edge in absolute
+pane CSS pixels and `width` for one column. The three types are base exports.
+Do not cache geometry across source changes, placement changes or resizing.
+
+Placement keeps scale and source IDs, ranges, formatters, locks, markers and
+alert anchors. It emits `priceAxisPlacementChanged` with
+`{ paneIndex, scaleId, side, order }` and `objects:change`. Full chart/workspace
+state saves optional `PriceScaleState.placement`; omission restores defaults.
+Indicator templates retain scale IDs but do not yet save pane column placement.
 
 ### Reassign a live series
 
@@ -175,13 +212,13 @@ chart.setSeriesPriceScale(series, 'right');
 on its current pane. Its handle, data, styles, primary role and marker bindings
 survive. Source and target scales retain their settings, manual ranges and ratio
 locks. Vacated scales remain available for reuse without drawing unused labels;
-the chart releases an axis column when no series or bound primitive uses that
-side on any pane.
+the pane releases a column when no series or bound primitive uses that scale.
+Chart-wide insets shrink when the maximum column count across panes shrinks.
 Crosshair price tags are omitted when the readout scale is hidden.
 Last-price and series-value tags follow their source's left or right scale.
 The readout series alone carries the countdown; other visible sources use their
 plot colors, including sources on the opposite axis. Collisions are resolved
-independently per side. Hidden-scale sources draw no axis tags.
+independently per column. Hidden-scale sources draw no axis tags.
 
 Left tags fit their text within the reserved column and stay vertically inside
 the pane at its edges. A tag is omitted when the column is absent or the pane is
@@ -199,10 +236,13 @@ It returns false before mutation for an invalid ID, unchanged assignment,
 foreign or removed handle, destroyed chart, or indicator-owned plot. A study's
 plots, fills, levels and other scale-bound visuals move together through its
 `setPriceScale` method; independent plot reassignment is unsupported.
-`movePriceAxis` moves all series and explicitly bound primitives on one visible
-side together with that scale's configuration.
+The legacy `movePriceAxis` reassigns every series and explicitly bound primitive
+on the source `'left'` or `'right'` ID to the other ID, carrying its scale object
+and configuration. The destination ID must be unused; other named columns on
+that side do not prevent the move. Source and destination placements reset to
+their named sides. Use `setPriceAxisPlacement` to retain source identities.
 
-**Prices quoted for a pane follow its readout scale**, which is the scale its first visible price series maps to and falls back to the right one. That covers the crosshair price tag, last-price line and tag, `chart.priceToCoordinate` / `coordinateToPrice`, and the axis drag, so a pane whose series were moved to the left strip is labelled and read in the same scale rather than tagging the cursor with the right scale's untouched `0..1` placeholder. `pane.readoutScale()` returns it.
+**Prices quoted for a pane follow its readout scale**, which is the scale its first visible price series maps to and falls back to the right one. That covers the crosshair price tag, last-price line and tag, and `chart.priceToCoordinate` / `coordinateToPrice`. `pane.readoutScale()` returns it. Axis dragging and wheel input instead act on the particular column under the pointer.
 
 **`PrimitiveRenderContext.priceScale` reads the explicit primitive binding, or the
 right scale when unbound.** `pane.bindPrimitiveScale(primitive, id)` binds an
@@ -210,6 +250,14 @@ attached primitive; `null` removes the binding. `pane.primitiveScaleId(primitive
 returns the explicit ID or null. The owner schedules layout/repaint after its
 transaction. Series-bound markers follow their series automatically.
 State snapshots include the right scale and all configured secondary scales.
+
+Primitive labels use `PrimitiveRenderContext.priceAxisSide` (`'left'`, `'right'`
+or `'hidden'`), `priceAxisWidth` (one column, zero when hidden), and optional
+`priceAxisOffset` (plot-relative CSS x of the column's inner edge). Native
+contexts supply the offset; synthetic contexts may omit it to use zero on the
+left or `plotWidth` on the right. `PriceLine` and `PriceLevels` fit their axis
+labels to that column while keeping line, plot-label and hit coordinates
+plot-relative. Bound `PrimitiveHit.priceScale` supplies drag prices.
 
 ### Reassign a whole study
 
@@ -327,17 +375,17 @@ Details in [interactions](interactions.md); what matters here is which gesture l
 |---|---|---|
 | Vertical wheel over the plot | proportional `timeScale.zoomAtX`, eased by default; `zoomAnchor` selects cursor or right edge, except Ctrl/Meta pinch-style wheel always uses the pointer | no |
 | Horizontal wheel or Shift-wheel over the plot | time `scrollByPixels` | no |
-| Wheel over a visible price axis | scale that left or right range at the pointer price | **yes**, for that scale |
+| Wheel over a visible price axis | scale that column's range at the pointer price | **yes**, for that scale |
 | Drag inside the plot | time `setRightOffset` and vertical `panByPixels` on the pressed pane by default; `navigation.mousePan: 'horizontal'` limits mouse and pen to time | only when panning price; horizontal-only mouse/pen panning preserves autoscale |
-| Drag either price axis strip (right, or the reserved left column) | `setPriceRange` around the centre by `exp(dy * 0.005)` on **that strip's** scale, then `setAutoScale(false)` | **yes** |
+| Drag a visible price-axis column | `setPriceRange` around the centre by `exp(dy * 0.005)` on **that column's** scale, then `setAutoScale(false)` | **yes** |
 | Drag the time axis strip (bottom pane, last `timeAxisHeight` px) | `setBarSpacing(start * exp(-dx * 0.005))`: left expands, right compresses; preserves the logical right edge | no |
 | Two-finger pinch | zoom time, pan time, `panByPixels` on the pinched pane | **yes** (price scale) |
 | Double-click | `chart.resetScale()` | no, restores autoscale everywhere |
 | `panUp` / `panDown` shortcuts | `panByPixels(±20)` on **pane 0 only** | **yes** |
 
-**Once a pane goes manual it stops tracking new data.** A live feed that keeps printing highs will run off the top of a pane whose axis the user dragged. Call `pane.priceScale.setAutoScale(true)` or `chart.resetScale()` to recover.
+**Once a scale goes manual it stops tracking new data.** A live feed that keeps printing highs can run off the plot on that scale. Call `chart.setPriceAxisAutoFit(paneIndex, scaleId, true)` for the affected column or `chart.resetScale()` for all scales.
 
-**Both strips are draggable.** The gesture reads and writes the scale the strip actually draws, so dragging a left axis rescales the prices labelled there.
+**Each visible column is draggable.** The gesture reads and writes that column's scale. Blank aligned cells do not target another column or a hidden scale.
 
 `ChartOptions.animAutoscale` eases automatic price-range changes while navigation reveals
 new extrema. It defaults to `animZoom`. Manual and fixed scales bypass the transition.
@@ -353,12 +401,12 @@ const st = chart.priceAxisState(paneIndex, scaleId);   // PriceAxisState | null
 chart.setPriceAxisOptions(paneIndex, scaleId, { mode: 'logarithmic' });
 chart.setPriceAxisAutoFit(paneIndex, scaleId, true);   // also releases the ratio lock
 chart.setPriceAxisLockRatio(paneIndex, scaleId, true); // false when it could not be taken
-chart.movePriceAxis(paneIndex, 'right', 'left');       // false when the move is impossible
+chart.setPriceAxisPlacement(paneIndex, scaleId, 'left'); // retains the scale ID
 ```
 
-`PriceAxisState` is `{ paneIndex, scaleId, side, active, autoFit, inverted, mode, scaled, lockRatio, movable }`, and `PRICE_SCALE_MODES` lists the four modes in menu order. `scaleId` comes straight off a `contextmenu` target, including the `''` overlay case.
+`PriceAxisState` is `{ paneIndex, scaleId, side, active, autoFit, inverted, mode, scaled, lockRatio, movable }`, and `PRICE_SCALE_MODES` lists the four modes in menu order. Use the exact `scaleId` from a `contextmenu` target, including named or empty overlays explicitly exposed as columns. `side` reports right for hidden placement for compatibility; use `priceAxisPlacement` to distinguish hidden state. `movable` describes only the legacy reassignment method.
 
-- **Moving an axis swaps the two side scales** rather than copying their state, so range, mode, margins and formatter travel with it. The vacated strip restarts from the chart-wide defaults, the axis columns are recomputed so a strip no pane uses any more is released and the plot reclaims its width, a `priceAxisMoved` event is emitted, and a move onto an occupied side is refused: one strip draws one axis.
+- **Placement preserves identity.** `setPriceAxisPlacement` moves or reorders a column even when other scales use that side. The legacy `movePriceAxis(pane, from, to)` instead swaps the built-in side scale objects and reassigns their resources to the destination ID. It requires an unused destination ID and resets both placements to their named sides. A `priceAxisMoved` event follows a successful legacy move.
 - **Whole-axis study moves require one local assignment.** `movePriceAxis` refuses a study with mixed local scale assignments or explicit price overlays, since one saved override cannot represent a partial study move. `priceAxisState().movable` reports that restriction. Uniform local studies and primitive-only studies adopt the moved side. Use `study.setPriceScale` to move all local resources while leaving explicit overlays untouched.
 - **The ratio lock pins price-per-bar.** The pane remembers the geometry the lock was taken at and rescales the visible span by height over bar spacing each frame, in transformed space, so a logarithmic axis keeps its angle too. Auto-fit and `resetScale` release it, and it is refused on a scale nothing has measured (`scaled: false`), because there is no ratio to hold.
 - **`active: false`** means no series or explicitly bound primitive maps to that scale. It is a row to render disabled with its state showing, not one to leave out.

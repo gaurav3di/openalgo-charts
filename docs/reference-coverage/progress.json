@@ -171,7 +171,7 @@
       "id": "native-chart-apis",
       "status": "partial",
       "remaining": [
-        "Multiple visible axes on the same side",
+        "Axis placement metadata and explicit copy-versus-sharing policy in indicator templates",
         "Per-plot persistence for mixed and explicit-overlay whole-axis moves",
         "Pane placement and collapse",
         "History beyond drawing edits",
@@ -193,7 +193,12 @@
         "Whole-study scale reassignment with stable resources and overlay exceptions",
         "Primitive scale binding for rendering, measurement, hit-testing, drag and vector export",
         "Scale-specific owned study defaults with manual and shared range preservation",
-        "Study scale overrides and owned defaults in chart, workspace and template state"
+        "Study scale overrides and owned defaults in chart, workspace and template state",
+        "Stable scale placement and ordered visible columns on either side",
+        "Shared column geometry for labels, bound primitives, context menus, wheel and drag input",
+        "Full chart and workspace axis-placement persistence with legacy defaults",
+        "Packaged and example-host axis movement and ordering controls",
+        "Chart-wide autofit on every visible scale without changing hidden-scale policy"
       ],
       "evidence": [
         "tests/navigation-settings.test.ts",
@@ -216,7 +221,14 @@
         "tests/primitive-scale-binding.test.ts",
         "tests/primitive-scaled-drag.test.ts",
         "tests/workspace-indicator-scales.test.ts",
-        "tests/e2e/native-study-scale-assignment.spec.ts"
+        "tests/e2e/native-study-scale-assignment.spec.ts",
+        "tests/price-axis-layout.test.ts",
+        "tests/price-axis-placement-state.test.ts",
+        "tests/primitive-axis-columns.test.ts",
+        "tests/multiple-price-axes.test.ts",
+        "tests/widget-axis-placement-menu.test.ts",
+        "examples/yfinance/tests/axis-placement-menu.test.js",
+        "tests/e2e/native-multiple-price-axes.spec.ts"
       ]
     },
     {
@@ -234,7 +246,8 @@
         "Compiled managed expression confirmation and provider replacement through the unchanged adapter",
         "Compiled external rolling mean refresh on fixed-time source changes and provider replacement",
         "Native close alerts using compiled output and explicit provider confirmation through the unchanged adapter",
-        "Compiled scalar output consumed by a native study across same-time updates and reverse-order restoration"
+        "Compiled scalar output consumed by a native study across same-time updates and reverse-order restoration",
+        "Compiled output on independent visible axes through movement, ordering, viewport changes, full restoration and live tail updates"
       ],
       "remaining": [
         "Wider output and request fixtures",
@@ -265,21 +278,21 @@
     ]
   },
   "validation": {
-    "chartTests": 7037,
-    "chartTestFiles": 305,
-    "compiledProgramTests": 15,
-    "demoTests": 432,
-    "demoTestFiles": 37,
-    "browserEvidence": "This batch passed 18 browser cases across all three engines: nine connected-study cases, six widget/example source-selector cases and three original example autofit regressions. Pixels and SVG text verify plotted values, readable legends, cycle rejection, removal and explicit rebinding. The right axis expands when an extreme enters view and contracts when it leaves. The actual built website passed 42 desktop states and three mobile checks at 390 pixels, with no page or example errors. All controls avoid the example badge, and the mobile chart retains at least 278 pixels of height. Final graph, selector, autofit and built-site screenshots were inspected. Traffic uses fixtures rather than live brokers.",
-    "website": "63 static pages built successfully; dependent-study example verified on the built site at desktop and mobile widths in all three engines",
-    "chartOnlyBrotliKiB": 66.13,
-    "chartOnlyBudgetKiB": 66.25,
-    "baseBrotliKB": 106.87,
+    "chartTests": 7131,
+    "chartTestFiles": 310,
+    "compiledProgramTests": 16,
+    "demoTests": 436,
+    "demoTestFiles": 38,
+    "browserEvidence": "This batch passed 12 browser cases across all three engines: nine multiple-axis cases and three original example autofit regressions. Real pixels and SVG verify distinct ranges, exact context and pointer targets, byte-identical full-state restoration, bound primitive tags at fractional pixel ratios, and hidden columns. The right axis expands when an extreme enters view and contracts when it leaves. The actual built website passed 42 states across desktop and 390-pixel mobile layouts, with no page or example errors. A demonstrated badge overlap was fixed and its regression check passes. Final engine, autofit and built-site screenshots were inspected. Traffic uses fixtures rather than live brokers.",
+    "website": "63 static pages built successfully; multiple-axis example verified through all seven control states at desktop and mobile widths in all three engines",
+    "chartOnlyBrotliKiB": 67.31,
+    "chartOnlyBudgetKiB": 67.5,
+    "baseBrotliKB": 108.12,
     "indicatorBrotliKB": 35.97,
-    "allTiersBrotliKB": 284.31,
-    "budgetChange": "Native dependency scheduling, committed snapshots, graph restore and identity protection add 2.79 kB to the base bundle (104.08 to 106.87) and 2.61 KiB to chart-only imports (63.52 to 66.13). Limits are now 107 kB base, 115 kB base plus trade, 244.5 kB terminal, 284.5 kB all tiers, 6.25 kB workspace and 66.25 KiB chart-only. Selector and template-copy implementations remain in optional tiers; removal checks pass.",
-    "review": "Review closed stale grandchild output after a reentrant producer change, copied graph identity reuse, saved alert anchor collisions, restore-start callback allocation and object stringification in legends. Numerical source, graph and browser regressions demonstrated wrong price fallback before implementation. Template reuse and nine native identity cases demonstrated failures before their fixes; the legend regression failed before formatting was added. Existing calculation-guard and alert-reentry suites remain green.",
-    "packageVerification": "Full verify passed lint, typecheck, 7037 unit tests, seven endurance-harness checks, build, 432 example tests, declaration identity, measured size limits and tree-shake checks. Fifteen compiled-program checks and public adapter typechecking passed with the unchanged engine adapter.",
+    "allTiersBrotliKB": 285.7,
+    "budgetChange": "Native placement, visible column geometry, pointer routing and snapshot parsing add 1.25 kB to the base bundle (106.87 to 108.12) and 1.18 KiB to chart-only imports (66.13 to 67.31). Limits are now 108.25 kB base, 116.25 kB base plus trade, 246 kB terminal, 286 kB all tiers and 67.5 KiB chart-only. Axis menus remain in the optional widget; all optional-tier removal checks pass.",
+    "review": "Review closed an extra column from an empty secondary pane, legacy reassignment after a placement override, blank-cell drawing gestures and invalid untyped pane indices. Three additional failing regressions exposed lost hidden placement after removing reordered or already-vacant peers; configured ranks are now retained through restoration. Actual geometry, autofit, primitive placement, validation and host menu regressions demonstrated failures before their fixes. Full-state screenshots are byte-identical after placement restoration in all three engines. Axis metadata in indicator templates remains explicitly tracked.",
+    "packageVerification": "Full verify passed lint, typecheck, 7131 unit tests, seven endurance-harness checks, build, 436 example tests, declaration identity, measured size limits and tree-shake checks. Sixteen compiled-program checks and public adapter typechecking passed with the unchanged engine adapter.",
     "latestEngineSourceReview": "d95bd70daf598892d40a9265607537b86ce712dd has no source changes relative to the pinned tested engine revision.",
     "apiDocumentation": "Generated with warnings treated as errors",
     "skillsCoverage": "975 of 975 named exports and registry entries; not functional coverage"

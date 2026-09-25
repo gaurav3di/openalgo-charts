@@ -14,6 +14,7 @@ import type { PriceScaleId } from './series';
 import type { IndicatorSettings } from './indicator-registry';
 import type { PriceScaleMode } from '../scale/price-scale';
 import type { AlertsDocument } from '../alerts/types';
+import type { PriceAxisPlacement } from './price-axis-layout';
 
 /** Bumped when the shape changes incompatibly; `restoreState` ignores unknown versions. */
 export const CHART_STATE_VERSION = 1;
@@ -36,6 +37,8 @@ export interface PriceScaleState {
   indicatorRange?: { instanceId: string; manual: boolean };
   /** Geometry paired with the saved range, so reopening at another size preserves its proportion. */
   ratioLock?: { barSpacing: number; height: number };
+  /** Independent axis side and order. Omission restores the scale identity's default placement. */
+  placement?: PriceAxisPlacement;
 }
 
 export interface PaneState {
@@ -97,6 +100,15 @@ function scaleState(input: unknown, legacy: boolean): PriceScaleState {
     if (autoScale || !result.range) throw new Error('A scale ratio lock requires a manual range');
     result.ratioLock = { barSpacing: stateNumber(lock.barSpacing, 'ratio bar spacing', Number.MIN_VALUE),
       height: stateNumber(lock.height, 'ratio height', Number.MIN_VALUE) };
+  }
+  if (value.placement !== undefined) {
+    const placement = stateRecord(value.placement);
+    if (!Object.prototype.hasOwnProperty.call(placement, 'side') || !Object.prototype.hasOwnProperty.call(placement, 'order')
+      || !['left', 'right', 'hidden'].includes(placement.side as string)
+      || typeof placement.order !== 'number' || !Number.isSafeInteger(placement.order) || placement.order < 0) {
+      throw new Error('Invalid price axis placement side or order');
+    }
+    result.placement = { side: placement.side as PriceAxisPlacement['side'], order: placement.order };
   }
   return result;
 }

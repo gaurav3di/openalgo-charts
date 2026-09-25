@@ -25,6 +25,12 @@ export interface PrimitiveRenderContext {
   priceAxisWidth: number;
   /** Axis placement for price labels. Absent retains the default right axis. */
   priceAxisSide?: 'left' | 'right' | 'hidden';
+  /**
+   * Plot-relative media-px x of the bound column's inner edge. Defaults to 0 on
+   * the left and plotWidth on the right. An explicit offset confines axis tags
+   * to this column without shifting the primitive's plot coordinates.
+   */
+  priceAxisOffset?: number;
   dpr: number;
   theme: ChartTheme;
   /**

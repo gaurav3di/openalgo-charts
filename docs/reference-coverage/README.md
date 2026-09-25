@@ -30,6 +30,7 @@ The [design](design.md) sets the boundaries and the [plan](plan.md) lists the re
 - Bound primitives use their assigned scale for painting, hit-testing, dragging, measurement and vector export. Left-side reference labels stay within the axis; hidden scales omit axis labels.
 - Left axes display primary price and countdown labels plus independent secondary-series tags. Hidden axes omit those labels, and label placement is bounded to the price-axis area.
 - Chart and workspace snapshots preserve existing secondary scales, precision, fixed/manual ranges and ratio locks. Symbol changes clear view ranges from every scale.
+- Multiple axes can share either side. Stable scale IDs preserve resources and state through moves and reordering; painting, primitive tags and pointer input use the same columns. Full chart and workspace snapshots retain placement, and host menus expose side and order controls.
 - Known fixed intervals confirm the newest bar at its recorded opening plus its duration, including sparse data and weekend gaps.
 - Registered calendar intervals use the next boundary in their configured timezone.
 - A single forming bar remains unconfirmed until its interval closes.
@@ -40,7 +41,7 @@ The [design](design.md) sets the boundaries and the [plan](plan.md) lists the re
 
 ## Verification
 
-The confirmation regression suite has 12 cases; nine reproduced failures before the fix. A further 23 provenance cases cover native source lifecycle. Fifteen compiled-program integration cases passed against the pinned engine revision `833ce15f7ec1bb0ab8ae203b800c8858ce3b4339`, including native timeframe composition, persistent calculations, forming-bar rollback, provider confirmation, managed requested observations, same-time external refresh, native close alerts and connected scalar outputs through updates and restoration. These checks cover specific behaviors, not every capability.
+The confirmation regression suite has 12 cases; nine reproduced failures before the fix. A further 23 provenance cases cover native source lifecycle. Sixteen compiled-program integration cases passed against the pinned engine revision `833ce15f7ec1bb0ab8ae203b800c8858ce3b4339`, including native timeframe composition, persistent calculations, forming-bar rollback, provider confirmation, managed requested observations, same-time external refresh, native close alerts, connected scalar outputs and independent axis placement through updates and restoration. These checks cover specific behaviors, not every capability.
 
 Run against a built script-engine checkout:
 

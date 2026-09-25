@@ -53,6 +53,76 @@ function makeChart(data: Bar[], now: number, updatesOnly = false) {
 const bar = (time: number, close: number): Bar => ({ time, open: 1, high: close + 1, low: 0, close });
 
 describe('compiled script engine on an actual Chart', () => {
+  it('keeps compiled study outputs and scale identity through native axis placement and restoration', () => {
+    const compiled = compile(`version 1
+study("Independent output", overlay = true)
+factor = input(2, "Factor", min = 1, max = 20)
+plot(close * factor, "Scaled")
+`);
+    registerIndicator(compiled);
+    const { chart, series } = makeChart([1, 3, 5, 7].map((close, index) => bar(index * 60, close)), 190);
+    const scaleId = 'overlay:compiled';
+    const setting = compiled.inputs[0].key, key = compiled.plots[0].key;
+    const study = chart.addIndicator(compiled.id, { [setting]: 10 }, { priceScaleId: scaleId });
+    const plot = study.series(key)!, scale = plot.priceScale(), primaryScale = series.priceScale();
+    const values = study.values(), data = plot.getData();
+    expect(values[key]).toEqual([10, 30, 50, 70]);
+    expect(data.map(point => point.close)).toEqual(values[key]);
+    expect(scale).not.toBe(primaryScale);
+    expect(chart.priceAxisLayout().map(slot => slot.scaleId)).toEqual(['right']);
+    scale.setAutoScale(false);
+    scale.setPriceRange({ min: 0, max: 100 });
+    scale.setPriceFormatter(value => `C${value}`);
+
+    expect(chart.setPriceAxisPlacement(0, scaleId, 'right')).toBe(true);
+    expect(chart.priceAxisLayout()).toEqual([
+      { scaleId: 'right', side: 'right', order: 0, x: 688, width: 56 },
+      { scaleId, side: 'right', order: 1, x: 744, width: 56 },
+    ]);
+    expect(chart.exportSVG()).toContain('>C20</text>');
+    expect(chart.setPriceAxisPlacement(0, scaleId, 'right', 0)).toBe(true);
+    expect(chart.priceAxisLayout().map(slot => slot.scaleId)).toEqual([scaleId, 'right']);
+    expect(chart.setPriceAxisPlacement(0, scaleId, 'left')).toBe(true);
+    expect(chart.setPriceAxisPlacement(0, 'right', 'left', 0)).toBe(true);
+    expect(chart.priceAxisLayout()).toEqual([
+      { scaleId: 'right', side: 'left', order: 0, x: 56, width: 56 },
+      { scaleId, side: 'left', order: 1, x: 0, width: 56 },
+    ]);
+    chart.setVisibleLogicalRange({ from: 0, to: 3 });
+    expect(chart.indicators()[0]).toBe(study);
+    expect(study.series(key)).toBe(plot);
+    expect(plot.priceScale()).toBe(scale);
+    expect(series.priceScale()).toBe(primaryScale);
+    expect(study.values()).toBe(values);
+    expect(plot.getData()).toEqual(data);
+    expect(scale.priceRange()).toEqual({ min: 0, max: 100 });
+
+    const saved = chart.getState(), layout = chart.priceAxisLayout();
+    expect(saved.indicators?.[0]).toMatchObject({ instanceId: study.id, priceScaleId: scaleId, settings: { [setting]: 10 } });
+    expect(saved.panes?.[0].scales?.[scaleId]?.placement).toEqual({ side: 'left', order: 1 });
+    chart.setVisibleLogicalRange({ from: 1, to: 3 });
+    chart.setPriceAxisPlacement(0, scaleId, 'hidden');
+    expect(study.values()).toBe(values);
+    expect(plot.getData()).toEqual(data);
+    expect(chart.restoreState(saved).applied).toBe(true);
+    const restored = chart.indicators().find(item => item.id === study.id)!;
+    expect(restored.settings()[setting]).toBe(10);
+    expect(restored.priceScaleId()).toBe(scaleId);
+    expect(restored.series(key)?.priceScale()).toBe(scale);
+    expect(series.priceScale()).toBe(primaryScale);
+    expect(restored.values()[key]).toEqual([10, 30, 50, 70]);
+    expect(restored.series(key)?.getData()).toEqual(data);
+    expect(chart.priceAxisLayout()).toEqual(layout);
+    expect(scale.priceRange()).toEqual({ min: 0, max: 100 });
+    expect(scale.format(20)).toBe('C20');
+    expect(chart.exportSVG()).toContain('>C20</text>');
+
+    series.update(bar(180, 9));
+    expect(restored.values()[key]).toEqual([10, 30, 50, 90]);
+    expect(restored.series(key)?.getData()[3].close).toBe(90);
+    expect(restored.series(key)?.priceScale()).toBe(scale);
+  });
+
   it('uses compiled scalar outputs as native study inputs through updates and restoration', () => {
     const compiled = compile(`version 1
 study("Connected output")

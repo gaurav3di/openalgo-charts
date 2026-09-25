@@ -99,7 +99,7 @@ const vol = chart.addSeries('histogram', {
 |---|---|---|---|
 | `paneIndex` | `number` | `0` | Panes are created on demand; pane 0 gets weight 1, later panes 0.32. |
 | `style` | `SeriesStyle` | `{}` | Merged over the chart type's `defaultStyle`. See [chart-types](chart-types.md). |
-| `priceScaleId` | `PriceScaleId` | `'right'` | `'right'` and `'left'` draw axes. `''` is the legacy hidden overlay; `overlay:name` names an independent hidden scale. |
+| `priceScaleId` | `PriceScaleId` | `'right'` | Selects scale identity. `'right'` and `'left'` default to their named side; `''` and `overlay:name` default to hidden. `setPriceAxisPlacement` can expose or move any scale's column. |
 | `priceFormat` | `PriceFormat`: `{ type: 'price', precision?, minMove? } \| { type: 'volume' } \| { type: 'percent', precision? } \| { type: 'custom', formatter }` | none | Applied to the series' *price scale*, not the series. `percent` suffixes the value at `precision` decimals (default 2) and does **not** scale it, so 0.62 reads `0.62%`. The type is exported as `PriceFormat`, and `IndicatorPlot.priceFormat` takes the same union. |
 
 The first `addSeries` call whose type has `isPriceSeries: true` becomes the primary series: it drives the magnet crosshair, `CrosshairMoveEvent.bar`, the last-price line/tag, and the bars indicators compute from. Indicator-created series never claim it.
@@ -465,9 +465,51 @@ request checks; see [host-integration](host-integration.md).
 
 `chart.getState()` / `chart.restoreState(state)` serialise viewport, grid, crosshair mode, timezone, pane weights and price scales, indicators, the settings block (canvas, navigation, status line, trading colours, event filters), and an opaque `drawings` slot. **Series data is never captured**: `restoreState` returns a `RestoreReport` listing series descriptors for the host to rebuild. Navigation options restore before the saved viewport, so its explicit range wins; an older state without `navigation` keeps the chart's current navigation options.
 
+### Multiple price-axis columns
+
+Scale identity and placement are independent. Keep a source on `overlay:spread`
+while exposing its axis beside the main price axis:
+
+```ts
+const spread = chart.addSeries('line', { priceScaleId: 'overlay:spread' });
+spread.setData(spreadPoints);
+chart.setPriceAxisPlacement(0, 'overlay:spread', 'right');
+chart.setPriceAxisPlacement(0, 'overlay:spread', 'left', 0);
+chart.setPriceAxisPlacement(0, 'overlay:spread', 'hidden');
+```
+
+| Method | Result | Contract |
+|---|---|---|
+| `priceAxisPlacement(paneIndex, scaleId)` | `PriceAxisPlacement \| null` | Detached `{ side, order }`; reads placement even when the scale has no active column. |
+| `setPriceAxisPlacement(paneIndex, scaleId, side, order?)` | `boolean` | Places an axis on `'left'`, `'right'` or `'hidden'`. Invalid and unchanged requests return false before mutation. |
+| `priceAxisLayout(paneIndex = 0)` | `readonly PriceAxisSlot[]` | Active columns with `{ scaleId, side, order, x, width }`. `x` is the column's left edge in absolute pane CSS pixels; width is one column. |
+
+Order zero is nearest the plot. An explicit order is a nonnegative safe integer,
+clamped to the side's available ranks. Omitting it retains the rank on the same
+side and appends when changing sides. Placement preserves the scale object,
+range, formatter, ratio lock, series and study IDs, markers and alert anchors.
+The getter returns null for an invalid ID, missing pane or destroyed chart;
+layout returns an empty array for a missing pane or destroyed chart. Successful
+changes emit `priceAxisPlacementChanged` with `{ paneIndex, scaleId, side, order }`
+and `objects:change`.
+`movePriceAxis` retains its legacy resource reassignment behavior; use placement
+to move a column while preserving IDs.
+
+Attached series, including hidden series, and explicitly bound primitives occupy
+columns. An unused configured scale retains placement but reserves no width.
+Hidden scales draw no column or axis tags. Panes share the maximum column count
+on each side, pack their own columns inward, and leave unused outer cells without
+price input targets. Narrow charts reduce column widths equally to retain plot
+space. The primary crosshair price remains on the primary source's scale.
+
+`PriceAxisSide`, `PriceAxisPlacement` and `PriceAxisSlot` are base exports.
+Full chart/workspace snapshots retain optional `PriceScaleState.placement`;
+omission restores default placement. Indicator templates retain scale IDs but
+do not yet preserve pane column placement.
+
 ## Option accessors
 
-Beyond `applyOptions`, the chart reads and writes its own option blocks so a settings dialog has something to bind to: `setCanvasOptions` / `canvasOptions`, `setNavigationOptions` / `navigationOptions`, `setGridOptions` / `gridOptions`, `setStatusLineOptions` / `statusLineOptions`, `setPriceScaleOptions` / `priceScaleOptions`, `setAutoScale`, `setAxisChromeOptions` / `axisChromeOptions`, `setEvents` / `setEventOptions` / `eventOptions`, `tradingSettings` / `setTradingSettings`, `primarySeries` / `primarySeriesInfo`, `theme`, `crosshairMode`, `setTimezone` / `timezone`. One axis at a time there is `priceAxisState`, `setPriceAxisOptions`, `setPriceAxisAutoFit`, `setPriceAxisLockRatio` and `movePriceAxis`. The declarative schema over all of them is in [settings-and-menus](settings-and-menus.md).
+Beyond `applyOptions`, the chart reads and writes its own option blocks so a settings dialog has something to bind to: `setCanvasOptions` / `canvasOptions`, `setNavigationOptions` / `navigationOptions`, `setGridOptions` / `gridOptions`, `setStatusLineOptions` / `statusLineOptions`, `setPriceScaleOptions` / `priceScaleOptions`, `setAutoScale`, `setAxisChromeOptions` / `axisChromeOptions`, `setEvents` / `setEventOptions` / `eventOptions`, `tradingSettings` / `setTradingSettings`, `primarySeries` / `primarySeriesInfo`, `theme`, `crosshairMode`, `setTimezone` / `timezone`. One axis at a time there is `priceAxisState`, `setPriceAxisOptions`, `setPriceAxisAutoFit`, `setPriceAxisLockRatio`, `priceAxisPlacement`, `setPriceAxisPlacement`, `priceAxisLayout` and the legacy `movePriceAxis`. The declarative schema over the settings is in [settings-and-menus](settings-and-menus.md).
 
 ## Render model
 

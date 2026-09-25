@@ -173,6 +173,10 @@ export const axisState = () => (app.chart && typeof app.chart.priceAxisState ===
   ? app.chart.priceAxisState(axTarget.paneIndex, axTarget.scaleId)
   : null;
 
+const axisPlacement = () => app.chart?.priceAxisPlacement?.(axTarget.paneIndex, axTarget.scaleId) ?? null;
+const axisColumns = side => (app.chart?.priceAxisLayout?.(axTarget.paneIndex) ?? [])
+  .filter(column => column.side === side).sort((a, b) => a.order - b.order);
+
 /**
  * One menu row. `mark` picks the marker column: a tick for a switch, a dot
  * for one option of a choice. The column is drawn either way, so the labels
@@ -271,13 +275,22 @@ function paintAxisMenu() {
     });
   }
 
-  axMenu.appendChild(axSeparator());
-  add({
-    label: s.side === 'right' ? 'Move the scale to the left' : 'Move the scale to the right',
-    disabled: !s.movable,
-    note: s.movable ? '' : (s.active ? 'other side taken' : 'nothing on this side'),
-    onSelect: () => runAxis(moveAxisToOtherSide),
-  });
+  const placement = axisPlacement();
+  if (placement && placement.side !== 'hidden') {
+    axMenu.appendChild(axSeparator());
+    add({
+      label: placement.side === 'right' ? 'Move the scale to the left' : 'Move the scale to the right',
+      disabled: !s.active, note: s.active ? '' : 'nothing on this side',
+      onSelect: () => runAxis(moveAxisToOtherSide),
+    });
+    const peers = axisColumns(placement.side), index = peers.findIndex(column => column.scaleId === s.scaleId);
+    if (index >= 0 && peers.length > 1) for (const delta of [-1, 1]) {
+      add({ label: delta < 0 ? 'Move the scale closer to the plot' : 'Move the scale further from the plot',
+        disabled: peers[index + delta] === undefined,
+        onSelect: () => runAxis(() => moveAxisBy(delta)),
+      });
+    }
+  }
 
   axMenu.appendChild(axSeparator());
   axMenu.appendChild(axHead('Price levels'));
@@ -342,15 +355,27 @@ export function setAxisLockRatio(on) {
 }
 
 export function moveAxisToOtherSide() {
-  const s = axisState();
-  if (!s) return;
-  const to = s.side === 'right' ? 'left' : 'right';
-  if (!app.chart.movePriceAxis(s.paneIndex, s.side, to)) {
-    el('status').textContent = 'that side is already in use';
+  const s = axisState(), placement = axisPlacement();
+  if (!s?.active || !placement || placement.side === 'hidden') return;
+  const to = placement.side === 'right' ? 'left' : 'right';
+  if (!app.chart.setPriceAxisPlacement(s.paneIndex, s.scaleId, to)) {
+    el('status').textContent = 'the scale could not be moved';
     return;
   }
-  axTarget = { paneIndex: s.paneIndex, scaleId: to };  // the menu follows the axis
+  // Placement changes leave the ID intact, including for subsequent shortcuts.
   el('status').textContent = 'price scale moved to the ' + to;
+}
+
+function moveAxisBy(delta) {
+  const s = axisState(), placement = axisPlacement();
+  if (!s?.active || !placement || placement.side === 'hidden') return;
+  const peers = axisColumns(placement.side), index = peers.findIndex(column => column.scaleId === s.scaleId);
+  const neighbor = index < 0 ? undefined : peers[index + delta];
+  if (!neighbor) return;
+  const moved = app.chart.setPriceAxisPlacement(s.paneIndex, s.scaleId, placement.side, neighbor.order);
+  el('status').textContent = moved
+    ? (delta < 0 ? 'price scale moved closer to the plot' : 'price scale moved further from the plot')
+    : 'the scale could not be moved';
 }
 
 // ── price levels ───────────────────────────────────────────────────────

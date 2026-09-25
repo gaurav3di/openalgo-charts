@@ -186,27 +186,43 @@ export class PriceLine implements IPrimitive {
     const padX = 6 * dpr;
     const r = 3 * dpr;
 
-    // Keep the legacy right geometry; a bound left tag must fit its own column.
+    // Explicit columns confine only the axis tag; plot furniture stays put.
     const axisFill = dragging || hovered ? shade(color, 0.12) : color;
     const label = this._opts.label ?? rc.priceScale.format(this._opts.price);
-    if (rc.priceAxisSide === 'left') {
-      const available = Math.round(rc.priceAxisWidth * dpr) - 1;
-      if (available > 0 && rc.plotHeight * dpr >= boxH) {
-        const padding = Math.min(padX, available / 4), textWidth = ctx.measureText(label).width;
-        const width = Math.min(available, textWidth + padding * 2), x = -1 - width;
-        const tagY = Math.max(boxH / 2, Math.min(rc.plotHeight * dpr - boxH / 2, y));
+    if (rc.priceAxisSide !== 'hidden' && rc.priceAxisWidth > 0) {
+      const left = rc.priceAxisSide === 'left';
+      if (left || rc.priceAxisOffset !== undefined) {
+        const offset = rc.priceAxisOffset ?? 0;
+        const edge = Math.round(offset * dpr);
+        const outer = Math.round((offset + (left ? -rc.priceAxisWidth : rc.priceAxisWidth)) * dpr);
+        const available = (rc.priceAxisOffset === undefined
+          ? Math.round(rc.priceAxisWidth * dpr) : Math.abs(outer - edge)) - 1;
+        if (Number.isFinite(edge) && Number.isFinite(outer) && available > 0 && rc.plotHeight * dpr >= boxH) {
+          ctx.save();
+          if (rc.priceAxisOffset !== undefined) {
+            ctx.beginPath();
+            ctx.rect(Math.min(edge, outer), 0, available + 1, rc.plotHeight * dpr);
+            ctx.clip();
+          }
+          const padding = Math.min(padX, available / 4), textWidth = ctx.measureText(label).width;
+          const width = Math.min(available, textWidth + padding * 2);
+          const x = left ? edge - 1 - width : edge + 1;
+          const tagY = Math.max(boxH / 2, Math.min(rc.plotHeight * dpr - boxH / 2, y));
+          ctx.fillStyle = axisFill;
+          ctx.fillRect(x, tagY - boxH / 2, width, boxH);
+          ctx.fillStyle = contrastText(color);
+          ctx.font = `500 ${11 * dpr * (textWidth > 0 ? Math.min(1, (width - padding * 2) / textWidth) : 1)}px system-ui, sans-serif`;
+          ctx.fillText(label, x + padding, tagY);
+          ctx.restore();
+          ctx.font = `500 ${11 * dpr}px system-ui, sans-serif`;
+        }
+      } else {
+        // Omitted placement retains the original synthetic-context geometry.
         ctx.fillStyle = axisFill;
-        ctx.fillRect(x, tagY - boxH / 2, width, boxH);
+        ctx.fillRect(xEnd + 1, y - boxH / 2, ctx.measureText(label).width + padX * 2, boxH);
         ctx.fillStyle = contrastText(color);
-        ctx.font = `500 ${11 * dpr * (textWidth > 0 ? Math.min(1, (width - padding * 2) / textWidth) : 1)}px system-ui, sans-serif`;
-        ctx.fillText(label, x + padding, tagY);
-        ctx.font = `500 ${11 * dpr}px system-ui, sans-serif`;
+        ctx.fillText(label, xEnd + 1 + padX, y);
       }
-    } else if (rc.priceAxisSide !== 'hidden') {
-      ctx.fillStyle = axisFill;
-      ctx.fillRect(xEnd + 1, y - boxH / 2, ctx.measureText(label).width + padX * 2, boxH);
-      ctx.fillStyle = contrastText(color);
-      ctx.fillText(label, xEnd + 1 + padX, y);
     }
 
     // segmented pill group on the line: [badge][qty][label][✕]

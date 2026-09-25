@@ -467,14 +467,39 @@ export class PriceLevels implements IPrimitive {
         ctx.setLineDash([]);
       }
 
-      if (style.label) {
+      if (style.label && rc.priceAxisSide !== 'hidden' && rc.priceAxisWidth > 0) {
         const text = style.text ?? rc.priceScale.format(price);
         const padX = 6 * dpr;
         const boxH = TAG_H * dpr;
-        ctx.fillStyle = color;
-        ctx.fillRect(xEnd + 1, y - boxH / 2, ctx.measureText(text).width + padX * 2, boxH);
-        ctx.fillStyle = contrastText(color);
-        ctx.fillText(text, xEnd + 1 + padX, y);
+        const left = rc.priceAxisSide === 'left';
+        if (left || rc.priceAxisOffset !== undefined) {
+          const offset = rc.priceAxisOffset ?? 0;
+          const edge = Math.round(offset * dpr);
+          const outer = Math.round((offset + (left ? -rc.priceAxisWidth : rc.priceAxisWidth)) * dpr);
+          const available = Math.abs(outer - edge) - 1;
+          if (Number.isFinite(edge) && Number.isFinite(outer) && available > 0 && maxY >= boxH) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(Math.min(edge, outer), 0, available + 1, maxY);
+            ctx.clip();
+            const padding = Math.min(padX, available / 4), textWidth = ctx.measureText(text).width;
+            const width = Math.min(available, textWidth + padding * 2);
+            const x = left ? edge - 1 - width : edge + 1;
+            const tagY = Math.max(boxH / 2, Math.min(maxY - boxH / 2, y));
+            ctx.fillStyle = color;
+            ctx.fillRect(x, tagY - boxH / 2, width, boxH);
+            ctx.fillStyle = contrastText(color);
+            ctx.font = `500 ${11 * dpr * (textWidth > 0 ? Math.min(1, (width - padding * 2) / textWidth) : 1)}px system-ui, sans-serif`;
+            ctx.fillText(text, x + padding, tagY);
+            ctx.restore();
+            ctx.font = `500 ${11 * dpr}px system-ui, sans-serif`;
+          }
+        } else {
+          ctx.fillStyle = color;
+          ctx.fillRect(xEnd + 1, y - boxH / 2, ctx.measureText(text).width + padX * 2, boxH);
+          ctx.fillStyle = contrastText(color);
+          ctx.fillText(text, xEnd + 1 + padX, y);
+        }
       }
     }
     ctx.restore();

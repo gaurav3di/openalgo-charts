@@ -154,7 +154,7 @@ function drawingEntries(ctx: WidgetContext, primary: Drawing, ids: readonly stri
   return out;
 }
 
-/** The rows for one price axis, every one read off `priceAxisState`. */
+/** Axis settings and placement stay attached to the target scale's identity. */
 function axisEntries(ctx: WidgetContext, paneIndex: number, scaleId: PriceScaleId): MenuEntry[] {
   const { chart } = ctx;
   const state = (): ReturnType<Chart['priceAxisState']> => chart.priceAxisState(paneIndex, scaleId);
@@ -181,14 +181,36 @@ function axisEntries(ctx: WidgetContext, paneIndex: number, scaleId: PriceScaleI
     out.push({ id: `axis-mode-${mode}`, label: widgetText(ctx, `schema.scaleMode.${mode}`, {}, SCALE_MODE_LABELS[mode]), mark: 'radio', on: s.mode === mode, keepOpen: true,
       run: () => { chart.setPriceAxisOptions(paneIndex, scaleId, { mode }); } });
   }
-  out.push(SEP);
-  out.push({ id: 'axis-move', label: s.side === 'right' ? widgetText(ctx, 'Move the scale to the left') : widgetText(ctx, 'Move the scale to the right'),
-    disabled: !s.movable, note: s.movable ? undefined : (s.active ? widgetText(ctx, 'other side taken') : widgetText(ctx, 'nothing on this side')),
-    run: () => {
-      const now = state();
-      if (now === null) return;
-      if (!chart.movePriceAxis(paneIndex, now.side, now.side === 'right' ? 'left' : 'right')) ctx.toast(widgetText(ctx, 'That side is already in use'), 'info');
-    } });
+  const placement = chart.priceAxisPlacement(paneIndex, scaleId);
+  const columns = (side: 'left' | 'right'): ReturnType<Chart['priceAxisLayout']> =>
+    chart.priceAxisLayout(paneIndex).filter(column => column.side === side).sort((a, b) => a.order - b.order);
+  if (placement !== null && placement.side !== 'hidden') {
+    out.push(SEP);
+    out.push({ id: 'axis-move', label: placement.side === 'right' ? widgetText(ctx, 'Move the scale to the left') : widgetText(ctx, 'Move the scale to the right'),
+      disabled: !s.active, note: s.active ? undefined : widgetText(ctx, 'nothing on this side'),
+      run: () => {
+        const now = chart.priceAxisPlacement(paneIndex, scaleId);
+        if (!state()?.active || now === null || now.side === 'hidden') return;
+        if (!chart.setPriceAxisPlacement(paneIndex, scaleId, now.side === 'right' ? 'left' : 'right')) {
+          ctx.toast(widgetText(ctx, 'The scale could not be moved'), 'info');
+        }
+      } });
+    const peers = columns(placement.side), index = peers.findIndex(column => column.scaleId === scaleId);
+    if (index >= 0 && peers.length > 1) for (const delta of [-1, 1] as const) {
+      out.push({ id: delta < 0 ? 'axis-closer' : 'axis-further',
+        label: delta < 0 ? widgetText(ctx, 'Move the scale closer to the plot') : widgetText(ctx, 'Move the scale further from the plot'),
+        disabled: peers[index + delta] === undefined, keepOpen: true,
+        run: () => {
+          const now = chart.priceAxisPlacement(paneIndex, scaleId);
+          if (!state()?.active || now === null || now.side === 'hidden') return;
+          const current = columns(now.side), at = current.findIndex(column => column.scaleId === scaleId);
+          const neighbor = at < 0 ? undefined : current[at + delta];
+          if (neighbor && !chart.setPriceAxisPlacement(paneIndex, scaleId, now.side, neighbor.order)) {
+            ctx.toast(widgetText(ctx, 'The scale could not be moved'), 'info');
+          }
+        } });
+    }
+  }
   out.push(SEP);
   out.push({ id: 'axis-settings', label: widgetText(ctx, 'Axis settings...'), icon: 'settings', run: () => { mountSettingsDialog(ctx, undefined, { tab: 'axes' }); } });
   return out;
