@@ -595,9 +595,20 @@ test('a session mark selects read-only, stays out of the layout, and only the ho
   expect(await marks()).toEqual([placed]);
   expect(await page.evaluate(() => JSON.stringify((window as any).__oac.draw.toJSON()))).not.toContain(`"${placed.id}"`);
 
-  // The toolbar's Del has nothing to take, and a chart-type switch, which
-  // rebuilds the chart from the saved state, brings the mark back as it was.
+  // With the mark selected again, so a drag that cleared the selection could
+  // not pass this on its own, the toolbar's Del has nothing to take and says
+  // why, and Clear has nothing either. A chart-type switch, which rebuilds
+  // the chart from the saved state, then brings the mark back as it was.
+  // Measured again: the drag panned the chart, which may have moved the line.
+  const yNow = await page.evaluate((id) => {
+    const { chart, draw } = (window as any).__oac;
+    return chart.priceToCoordinate(draw.get(id).points[0].price, 0) as number;
+  }, placed.id);
+  await page.mouse.click(box.x + box.width * 0.4, box.y + yNow);
+  expect(await selectedId(page)).toBe(placed.id);
   await expect(page.locator('#drawdel')).toBeDisabled();
+  await expect(page.locator('#drawdel')).toHaveAttribute('title', 'read-only');
+  await expect(page.locator('#drawclear')).toBeDisabled();
   await page.evaluate(() => {
     const select = document.getElementById('ctype') as HTMLSelectElement;
     select.value = 'line';
