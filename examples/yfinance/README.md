@@ -297,16 +297,23 @@ chart is a complete widget with its own top bar, loading status and retry.
   Drag a gap to resize, or focus it and use the arrow keys; double click evens it.
 - Below 640 CSS px only the active chart shows, with tabs to switch.
 - The grid keeps its layout in `localStorage` under the `yfinance-grid` namespace.
-  A first visit opens AAPL, MSFT, RELIANCE.NS and ^NSEI in a two by two grid.
-- Import accepts any portable workspace document or payload. It is validated in
-  full, then applied all at once; on failure nothing on screen changes and the
-  status line says why. Comparison symbols are refused, since a widget draws none.
+  A first visit opens AAPL, MSFT, RELIANCE.NS and ^NSEI in a two by two grid. A
+  saved layout the page cannot restore is kept, and the status line says why.
+- Each chart loads one fixed period per interval (1m 5d; 5m, 15m and 30m 1mo; 1h
+  6mo; 1d 2y; 1w 10y) and pages no older history, since the server answers by
+  period; a document's `historyPeriod` is not carried over.
+- Import accepts a portable workspace document or payload whose charts use those
+  intervals (`1wk` from the main page opens as `1w`). It is validated in full, then
+  applied all at once; on failure nothing on screen changes and the status line
+  says why. Comparison symbols are refused, since a widget draws none, and so are
+  the main page's folded calendar frames (`1mo`, `1q`).
 
 The main page draws one chart or two side by side. Importing a layout with more
 charts, or with rows, into its Layouts dialog offers **Open in grid view**, which
-hands the document over through `sessionStorage` (`oac-grid-handoff`). The link
-menu on the main page also opens the grid view. Open `grid.html?test=1` to expose
-the grid as `window.__grid` for the end-to-end suite.
+hands the document over through `sessionStorage` (`oac-grid-handoff`). The main
+page checks first that the grid view can open it, and refuses there otherwise. The
+link menu on the main page also opens the grid view. Open `grid.html?test=1` to
+expose the grid as `window.__grid` for the end-to-end suite.
 
 ## How it connects
 

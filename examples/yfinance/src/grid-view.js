@@ -3,7 +3,7 @@
 // them, and they stay importable by the node tests without a document.
 import { parseWorkspaceDocument, parseWorkspacePayload } from '/dist/openalgo-charts.workspace.mjs';
 import { CHART_GRID_PRESETS } from '/dist/openalgo-charts.widget.mjs';
-import { YFinanceDataFeed } from './feed.js';
+import { YFinanceDataFeed, AbortedError } from './feed.js';
 
 /** Interval pills in each grid chart: widget codes this server can answer. */
 export const GRID_INTERVALS = ['1m', '5m', '15m', '1h', '1d', '1w'];
@@ -19,16 +19,48 @@ export const GRID_HANDOFF_KEY = 'oac-grid-handoff';
 
 const WIRE = { '1w': '1wk' };
 // The widget asks for a time window; this server answers by named period, so
-// each interval asks for the longest period the source serves at it.
-const PERIODS = { '1m': '5d', '5m': '1mo', '15m': '1mo', '1h': '6mo', '1d': '2y', '1w': '10y' };
+// each interval asks for one fixed period, and the keys are every interval
+// this view can load at all.
+const PERIODS = { '1m': '5d', '5m': '1mo', '15m': '1mo', '30m': '1mo', '1h': '6mo', '1d': '2y', '1w': '10y' };
+// The main page saves its weekly frame by the source's own code.
+const ALIASES = { '1wk': '1w' };
 
-/** A widget DataFeed over the page's /api/history, keeping the caller's cancellation. */
-export function gridFeed(source = new YFinanceDataFeed()) {
+/**
+ * A widget DataFeed over the page's /api/history, keeping the caller's
+ * cancellation. Requests wait for `ready` when one is given: a request
+ * cancelled meanwhile never reaches the source.
+ */
+export function gridFeed(source = new YFinanceDataFeed(), { ready } = {}) {
   return {
-    getBars: req => source.getBars({
-      symbol: req.symbol, interval: WIRE[req.interval] || req.interval, period: PERIODS[req.interval] || '1y', signal: req.signal,
-    }),
+    getBars: async req => {
+      await ready;
+      if (req.signal?.aborted) throw new AbortedError();
+      return source.getBars({
+        symbol: req.symbol, interval: WIRE[req.interval] || req.interval, period: PERIODS[req.interval] || '1y', signal: req.signal,
+      });
+    },
+    // The first answer already holds the whole period this view asks for, so
+    // there is no older page. Saying so stops history paging from downloading
+    // the same period again at every left edge.
+    getBarsPage: async () => ({ bars: [], hasMore: false }),
   };
+}
+
+/**
+ * Why the grid view cannot open a layout, or '' when it can. The main page
+ * asks before it leaves, so a refusal is shown where the file was chosen.
+ */
+export function gridViewRefusal(payload) {
+  const interval = pane => ALIASES[pane.interval] || pane.interval;
+  const differ = key => new Set(payload.panes.map(key)).size > 1;
+  for (const pane of payload.panes) {
+    if (pane.comparisons?.length) return `${pane.symbol}: comparison symbols are not drawn in the grid view`;
+    if (!(interval(pane) in PERIODS)) return `${pane.symbol}: the grid view has no ${pane.interval} interval`;
+  }
+  // A linked grid makes its charts agree, which would overwrite the ones that do not.
+  if (payload.sync?.symbol && differ(pane => `${pane.symbol}|${pane.exchange}`)) return 'the charts are linked by symbol but show different symbols';
+  if (payload.sync?.interval && differ(interval)) return 'the charts are linked by interval but show different intervals';
+  return '';
 }
 
 /** A small layout glyph: one outlined box per chart. */
@@ -58,7 +90,13 @@ export function takeGridHandoff(storage = globalThis.sessionStorage) {
 }
 
 /** Validate any saved layout file, complete document or bare payload, before a chart changes. */
-export const readGridFile = text => parseWorkspacePayload(text);
+export function readGridFile(text) {
+  const payload = parseWorkspacePayload(text);
+  const refusal = gridViewRefusal(payload);
+  if (refusal) throw new Error(refusal);
+  for (const pane of payload.panes) pane.interval = ALIASES[pane.interval] || pane.interval;
+  return payload;
+}
 
 /** The grid's payload as a named document the workspace tier accepts. */
 export function gridDocument(payload, { name = 'Chart grid', now = Date.now() } = {}) {

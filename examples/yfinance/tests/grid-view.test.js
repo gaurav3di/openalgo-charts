@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import { DataLoadingController } from '/dist/openalgo-charts.mjs';
 import { parseWorkspaceDocument } from '/dist/openalgo-charts.workspace.mjs';
 import {
-  GRID_HANDOFF_KEY, GRID_INTERVALS, GRID_PRESET_LABELS, gridFeed, presetGlyph, handOffToGrid, takeGridHandoff, readGridFile, gridDocument,
+  GRID_HANDOFF_KEY, GRID_INTERVALS, GRID_PRESET_LABELS, gridFeed, gridViewRefusal, presetGlyph, handOffToGrid, takeGridHandoff, readGridFile, gridDocument,
 } from '../src/grid-view.js';
 import { needsGridView, validateReferenceWorkspace } from '../src/workspace-document.js';
 import { gridFileDocument } from '../src/workspaces.js';
@@ -33,6 +34,35 @@ describe('grid view feed', () => {
     ]);
     expect(asked.every(req => req.signal === signal && req.symbol === 'AAPL')).toBe(true);
   });
+
+  it('tells history paging there is nothing older, so a left edge downloads nothing again', async () => {
+    const asked = [];
+    const bars = Array.from({ length: 50 }, (_, i) => ({ time: 1_700_000_000 + i * 86400, open: 1, high: 2, low: 0.5, close: 1.5 }));
+    const feed = gridFeed({ getBars: async req => { asked.push(req.period); return bars.map(bar => ({ ...bar })); } });
+    const controller = new DataLoadingController(feed);
+    await controller.load({ symbol: 'AAPL', exchange: '', interval: '1d', from: 1_700_000_000, to: 1_705_000_000 });
+    for (let i = 0; i < 3; i++) await controller.loadMore();
+    expect(asked).toEqual(['2y']);
+    expect(controller.getState()).toMatchObject({ hasMore: false, historyStatus: 'exhausted' });
+    controller.destroy();
+  });
+
+  it('holds requests until the hand-off is applied, and drops the ones cancelled meanwhile', async () => {
+    const asked = [];
+    let release;
+    const ready = new Promise(resolve => { release = resolve; });
+    const feed = gridFeed({ getBars: async req => { asked.push(req.symbol); return []; } }, { ready });
+    const replaced = new AbortController();
+    const first = feed.getBars({ symbol: 'OLD', exchange: '', interval: '1d', signal: replaced.signal });
+    const second = feed.getBars({ symbol: 'NEW', exchange: '', interval: '1d', signal: new AbortController().signal });
+    await Promise.resolve();
+    expect(asked).toEqual([]);
+    replaced.abort();
+    release();
+    await expect(first).rejects.toMatchObject({ name: 'AbortedError' });
+    await second;
+    expect(asked).toEqual(['NEW']);
+  });
 });
 
 describe('grid view documents', () => {
@@ -59,6 +89,25 @@ describe('grid view documents', () => {
     const refusing = { setItem() { throw new Error('quota'); }, getItem() { throw new Error('blocked'); }, removeItem() {} };
     expect(handOffToGrid(payload(2, 2), refusing)).toBe(false);
     expect(takeGridHandoff(refusing)).toBeNull();
+  });
+
+  it('names what the grid view cannot open before the main page hands it over', () => {
+    expect(gridViewRefusal(payload(2, 2))).toBe('');
+    const compared = payload(2, 2);
+    compared.panes[1].comparisons = [{ id: 'c', symbol: 'QQQ', exchange: '', visible: true }];
+    expect(gridViewRefusal(compared)).toMatch(/MSFT: comparison symbols/);
+    const monthly = payload(2, 2);
+    monthly.panes[2].interval = '1mo';
+    expect(gridViewRefusal(monthly)).toMatch(/TSLA: the grid view has no 1mo interval/);
+    const weekly = payload(2, 2);
+    for (const pane of weekly.panes) pane.interval = '1wk';
+    weekly.sync.interval = true;
+    expect(gridViewRefusal(weekly)).toBe('');
+    expect(readGridFile(JSON.stringify(weekly)).panes.map(pane => pane.interval)).toEqual(['1w', '1w', '1w', '1w']);
+    const linked = payload(2, 2);
+    linked.sync.symbol = true;
+    expect(gridViewRefusal(linked)).toMatch(/linked by symbol/);
+    expect(() => readGridFile(JSON.stringify(monthly))).toThrow(/1mo/);
   });
 
   it('reads complete documents and bare payloads, and refuses malformed files before any chart changes', () => {

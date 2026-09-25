@@ -30,12 +30,15 @@ export function initGridView(doc = document) {
   const fresh = read(`oac-widget:${PERSIST}:grid`) === null;
   paintPage(theme);
 
-  // Taken before the grid restores its own last layout, so a hand-off is not
-  // raced by requests for charts about to be replaced.
+  // The grid restores its own last layout as it is built, and a hand-off then
+  // replaces those charts. Their requests wait until the hand-off is applied;
+  // by then the replaced charts have cancelled them, so none reaches the source.
   const handed = takeGridHandoff((() => { try { return view.sessionStorage; } catch { return null; } })());
+  let release = () => {};
+  const ready = handed === null ? undefined : new Promise(resolve => { release = resolve; });
   const coarse = view.matchMedia?.('(pointer: coarse)').matches === true;
   const grid = createChartGrid($('grid'), {
-    document: doc, feed: gridFeed(), symbol: 'AAPL', exchange: '', interval: '1d', intervals: GRID_INTERVALS,
+    document: doc, feed: gridFeed(undefined, { ready }), symbol: 'AAPL', exchange: '', interval: '1d', intervals: GRID_INTERVALS,
     theme, preset: '2x2', persist: PERSIST, links: { crosshair: true, viewport: true },
     // Touch devices get the phone controls in each chart; a mouse keeps the
     // desktop bar even when a chart in a four-way split is narrow.
@@ -113,8 +116,11 @@ export function initGridView(doc = document) {
     status('Layout exported');
   });
 
+  const restored = grid.restored();
   if (handed !== null) openLayout(handed, 'the main view');
+  else if (restored?.applied === false) status(`The saved grid could not be restored and is kept until you change this one: ${restored.reason}`);
   else status(`${grid.cells().length} charts. Click a chart to make it active; drag the gaps to resize.`);
+  release();
   if (new URLSearchParams(view.location.search).get('test') === '1') view.__grid = grid;
   return grid;
 }

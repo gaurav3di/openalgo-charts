@@ -1,7 +1,7 @@
 import { createIndexedDbWorkspaceStorage } from '/dist/openalgo-charts.workspace.mjs';
 import { ReferenceWorkspaceCatalog } from './workspace-catalog.js';
 import { workspaceFromLayout, needsGridView } from './workspace-document.js';
-import { handOffToGrid } from './grid-view.js';
+import { handOffToGrid, gridViewRefusal } from './grid-view.js';
 import { workspaceUnavailable } from './workspace-host.js';
 import { validateReferenceLayout } from './workspace-transition.js';
 import { layoutSnapshot, readLayout, persistLayoutNow, parseLayoutFile } from './persist.js';
@@ -178,10 +178,14 @@ export async function initWorkspaces(app) {
     const file = el('ws-file').files?.[0];
     if (!file) return;
     const text = await file.text();
-    gridLayout = gridFileDocument(text);
-    if (gridLayout) {
-      localError = '';
-      notice = `${file.name} holds ${gridLayout.panes.length} charts in ${gridLayout.layout.rows} rows and ${gridLayout.layout.columns} columns. Open it in the grid view.`;
+    const layout = gridFileDocument(text);
+    // Asked before the page is left, so a layout the grid view would refuse is
+    // refused here, where the file was chosen.
+    const refusal = layout ? gridViewRefusal(layout) : '';
+    gridLayout = refusal ? null : layout;
+    if (layout) {
+      localError = refusal && `${file.name} needs the grid view, which cannot open it: ${refusal}`;
+      notice = refusal ? '' : `${file.name} holds ${layout.panes.length} charts in ${layout.layout.rows} rows and ${layout.layout.columns} columns. Open it in the grid view.`;
       render();
       return;
     }
