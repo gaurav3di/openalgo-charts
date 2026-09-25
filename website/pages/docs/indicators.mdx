@@ -675,10 +675,13 @@ layer.setVisible(false);
 ```
 
 The constructor takes an optional callback returning the scale to measure prices on,
-read on every frame with that frame's render context. `new IndicatorDrawings(() => series.priceScale())`
-keeps the shapes on that series' scale wherever the series goes, without binding the layer
-to an axis, and `new IndicatorDrawings((rc) => rc.readoutPriceScale)` measures them on the
-scale the pane quotes prices on, which is what a study's price-pane shapes use.
+read on every frame with that frame's render context; without it, or when it returns
+nothing, the layer uses the scale its pane binds it to. Pass `() => series.priceScale()`
+to follow one series on that series' own pane: the shapes are measured on whichever scale
+that series uses, and the layer binds no axis. The layer itself stays on the pane it was
+added to, so it is for a series that lives there. `new IndicatorDrawings((rc) => rc.readoutPriceScale)`
+measures them on the scale the pane quotes prices on, which is what a study's price-pane
+shapes use.
 
 ## Drawing and marker targets
 

@@ -13,6 +13,7 @@
  * digests were recorded before targets existed, so any change to the default
  * path fails here rather than in someone's chart.
  */
+/// <reference types="vite/client" />
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { Chart } from '../src/core/chart';
 import { InvalidationLevel } from '../src/core/invalidate-mask';
@@ -27,6 +28,8 @@ import { SeriesMarkers, effectiveMarkerPx } from '../src/primitives/markers';
 import type { SeriesApi } from '../src/model/series';
 import { makeCtx } from './helpers/fake-ctx';
 import { fakeDocument, pointer, type FakeElement } from './helpers/fake-dom';
+import siteIndicators from '../website/pages/docs/indicators.mdx?raw';
+import skillIndicators from '../.github/skills/openalgo-charts/references/indicators.md?raw';
 
 const T0 = 1700000000;
 const BARS: Bar[] = Array.from({ length: 40 }, (_, i) => {
@@ -1119,5 +1122,17 @@ describe('routed layer lifecycle', () => {
     // The later study wins the candles, so moving red last hands them to red.
     expect(chart.reorderIndicator(red.id, 1)).toBe(true);
     expect(colour()).toBe('#ff0000');
+  });
+});
+
+describe('the documented scale callback of a drawing layer', () => {
+  it('says the same in the website and the skills reference: the layer stays on the pane it was added to', () => {
+    // The paragraph or bullet that hands a layer one series' scale, with its line breaks folded.
+    const said = (text: string): string =>
+      text.split(/\n\s*\n|\n(?=- )/).find(block => block.includes('() => series.priceScale()'))?.replace(/\s+/g, ' ') ?? '';
+    for (const text of [siteIndicators, skillIndicators]) {
+      expect(said(text)).toContain('to follow one series on that series\' own pane');
+      expect(said(text)).not.toContain('wherever the series goes');
+    }
   });
 });
