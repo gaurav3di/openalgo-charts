@@ -4,6 +4,30 @@ All notable changes to OpenAlgo Charts.
 
 ## Unreleased
 
+- Go to a date or an explicit range. `widget.goTo({ from, to? })` loads the older
+  history the request needs through the widget's feed, then places it after that
+  load, so later live bars and refreshes keep the view. Daily and longer bars are
+  matched by calendar day in the chart timezone, weekend and overnight dates move
+  to the next session, and a range with no bars is reported without moving the
+  view. Results distinguish exhausted history, empty pages, retention limits,
+  replay and unsupported intervals; a newer request, a context change or
+  destruction cancels one in flight. The DOM-free `DateNavigator`, the
+  `openDateNavigation` panel and `DATE_NAVIGATION_CSS` are exported for custom
+  hosts. The widget toolbar and mobile More sheet open the panel (greyed with the
+  reason on tick and volume intervals, and with date fields alone on daily and
+  longer ones); closing it while it loads cancels the request, and so does a pan
+  or zoom while older history loads (the widget's own move that holds the view
+  through a refresh does not count). The panel closes when the interval or the
+  chart timezone changes under it. Daily and weekly bars end on the calendar, so
+  a day of 23 or 25 hours keeps its own bar, and a date names the bar the axis
+  labels with it, including a UTC-midnight daily bar west of UTC. The reference
+  host offers the panel by loading a longer period, reopens it on the rebuilt
+  chart to report the outcome there, and drops the request on a pan or zoom
+  while that period loads.
+- `DataLoadingController.loadMore(until?)` widens a date feed's window to reach
+  `until` in one request instead of one request per default window. The window
+  stops at `maxBars` bars of a fixed interval, and a `getBarsPage` feed keeps its
+  ordinary window.
 - CSV export supports explicit study instances, inclusive UTC ranges and
   display-aligned plot values with effective runtime offsets. Candle plots expand
   into OHLC fields; projected times are identified without exposing future replay

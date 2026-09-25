@@ -223,6 +223,7 @@ examples/yfinance/
     ui.js             el(), number and text formatting, the candle palette, toasts, the overlay stack (focus trap, one Escape per layer), the chart loading, empty and error card, the theme switch
     hover.js          the one hover label every icon-only control shares
     intervals.js      interval registry, the picker's codes, period clamping
+    goto.js           Go to a date or range: the shared navigator, loading a longer period
     feed.js           YFinanceDataFeed and its typed errors, the bar cache wrapper, the cache menu
     transforms.js     Heikin Ashi, Renko, Range, Line Break, P&F, Kagi
     expression.js     symbol arithmetic: the operator keypad, leg fetching, folding
@@ -344,6 +345,25 @@ the registered tools, followed by Cursor, Undo, Redo, Magnet, Zoom out, Zoom in 
 Drawing actions use the existing controller and navigation uses the chart's public logical
 range and reset APIs. In split view the controls act on the last plot touched. Rotating or
 resizing changes only the CSS layout, so loaded bars and drawings stay in place.
+
+### Go to a date or range
+
+**Go to** beside the history range opens the widget tier's go-to panel for the
+selected chart. **Date** centres one date at the current zoom; **Range** fits two
+dates or date and time pairs. Times are read in the chart timezone. When the date
+is older than the loaded period, the page loads the shortest longer period that
+reaches it (the range menu shows the result), then places the date once that load
+has been accepted. That load rebuilds the chart, and the panel with it, so the page
+opens the panel again on the new chart to carry the request through: an interval
+that cannot serve an older period reports there where history starts. Daily and
+longer frames take a date alone, since a time could not change the bar it names.
+Closing the panel while history loads drops the request, and the view stays where
+it was; so does a pan or zoom on the chart while the longer period loads. Replay
+never loads history, a symbol or interval change cancels a pending request, and
+the linked second chart follows the placement by time. The navigation rules are
+the widget tier's `DateNavigator`; only the period loader and the pan and zoom
+watch in `src/goto.js` belong to this page, since only the page knows which view
+moves are its own.
 
 ## What each module proves
 

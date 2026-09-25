@@ -47,6 +47,7 @@ import { mountPropertiesBar } from './properties.js';
 import { initDrawing, attachDrawing } from './drawing.js';
 import { capturePaneTarget } from './pane-target.js';
 import { attachTimeline } from './timeline.js';
+import { initGoTo } from './goto.js';
 
 // Price-level family (previous close, session extremes, extended hours,
 // bid/ask). Read off the namespace rather than named above on purpose: a
@@ -524,6 +525,7 @@ initCompare(app);
 initSnapshot(app);
 initReplay(app);
 initSplit(app);
+initGoTo(app);
 initLink(app);
 initClipboard(app);
 initMenus(app);

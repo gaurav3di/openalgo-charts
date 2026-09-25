@@ -18,6 +18,7 @@ import { rememberIndicators, renderIndicatorChips } from './indicators.js';
 import { mountSymbolPicker, mountIndicatorPicker } from '/dist/openalgo-charts.widget.mjs';
 import { referenceSymbolSearch } from './symbol-search.js';
 import { toggleInspection } from './inspection.js';
+import { openGoTo } from './goto.js';
 
 let app;
 let symbolPicker = null;
@@ -322,6 +323,14 @@ export function renderToolbar() {
     onSelect: () => changeRequest(target, { period: p }),
   }))));
   bar.appendChild(range);
+  // Go to a date or range, loading a longer period when the date is older
+  // than the one on screen.
+  const goTo = tbtn('<span>Go to</span>', 'Go to a date or range', 'loads older history when it is needed');
+  goTo.id = 'goto';
+  goTo.setAttribute('aria-haspopup', 'dialog');
+  goTo.disabled = !target?.current() || Boolean(pane === 2 ? app.loading2 || app.loadFailed2 : app.loading || app.loadFailed);
+  goTo.addEventListener('click', () => openGoTo(goTo));
+  bar.appendChild(goTo);
   bar.appendChild(divider());
 
   // chart type menu

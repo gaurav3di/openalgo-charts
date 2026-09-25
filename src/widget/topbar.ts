@@ -17,6 +17,7 @@ import { chromeIconSvg } from 'openalgo-charts/draw';
 import { h, glyph, type WidgetContext } from './context';
 import type { WidgetThemeName } from './tokens';
 import { mountSymbolPicker, type SymbolPickerHandle } from './symbol-picker';
+import { timeBuckets } from './date-navigator';
 export { SEARCH_DEBOUNCE_MS } from './symbol-picker';
 export type { SymbolMatch, SymbolSearch } from './symbol-picker';
 import type { SymbolSearch } from './symbol-picker';
@@ -207,6 +208,8 @@ export interface TopbarOptions {
   /** Open the docked data window, omitted without a handler. */
   onDataWindow?(anchor: HTMLElement): void | boolean;
   onAlerts?(anchor: HTMLElement): boolean;
+  /** Open the date and range navigation panel, omitted without a handler. */
+  onGoTo?(anchor: HTMLElement): void | boolean;
   settingsAvailable(): boolean;
   indicatorsAvailable(): boolean;
   /** Refuse CSV export while the host is replacing or recovering its data. */
@@ -370,6 +373,19 @@ export function mountTopbar(ctx: WidgetContext, host: HTMLElement, opts: TopbarO
   let brandingAnchor: HTMLAnchorElement | null = null;
   host.appendChild(brandingSlot);
 
+  // Tick and volume bars have no date to go to: greyed with the reason, not dead.
+  const goTo = opts.onGoTo ? btn(widgetText(ctx, 'Go to'), 'oac-topbar__goto') : null;
+  if (goTo !== null) {
+    goTo.textContent = widgetText(ctx, 'Go to');
+    goTo.setAttribute('aria-haspopup', 'dialog');
+    ctx.tips.attach(goTo, () => ({
+      title: widgetText(ctx, 'Go to'),
+      sub: timeBuckets(opts.state().interval) === null ? widgetText(ctx, 'Go to needs a time-based interval') : undefined,
+      side: 'bottom',
+    }));
+    goTo.addEventListener('click', () => { if (!goTo.classList.contains('is-off')) opts.onGoTo?.(goTo); });
+    host.appendChild(goTo);
+  }
   if (opts.onObjects) {
     const objects = btn(widgetText(ctx, 'Objects'), 'oac-topbar__objects');
     objects.textContent = widgetText(ctx, 'Objects');
@@ -495,6 +511,7 @@ export function mountTopbar(ctx: WidgetContext, host: HTMLElement, opts: TopbarO
     typeLabel.textContent = widgetText(ctx, `schema.chartType.${s.chartType}`, {}, chartTypeLabel(s.chartType));
     setOff(setBtn, !opts.settingsAvailable());
     if (indBtn !== null) setOff(indBtn, !opts.indicatorsAvailable());
+    if (goTo !== null) setOff(goTo, timeBuckets(s.interval) === null);
     themeBtn.dataset.theme = s.theme;
     themeLabel.textContent = s.theme === 'dark' ? widgetText(ctx, 'Light') : widgetText(ctx, 'Dark');
     ctx.tips.refreshLabel(themeBtn);

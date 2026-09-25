@@ -51,6 +51,8 @@ import { mountDataWindow } from './data-window';
 import { mountPanelDock, sanitizePanelDockState, type PanelDockHandle, type PanelDockState } from './panel-dock';
 import { mountQuickEntry, type QuickEntryHandle } from './quick-entry';
 import { WIDGET_COMPONENT_CSS } from './component-styles';
+import { DateNavigator, timeBuckets, type DateNavigationResult, type DateNavigationTarget, type HistoryReach } from './date-navigator';
+import { openDateNavigation } from './date-navigation-dialog';
 
 /** The intervals offered when the host names none: the registry's codes are appended. */
 export const DEFAULT_INTERVALS: readonly string[] = ['1m', '5m', '15m', '1h', '1d', '1w'];
@@ -184,6 +186,15 @@ export interface Widget {
   restoreState(state: unknown): WidgetRestoreReport;
   /** Load (or reload) bars from the feed for the current symbol and interval. */
   reload(): Promise<void>;
+  /**
+   * Show a date, or an explicit UTC range, after loading the older history it
+   * needs through the feed. Waits for a load in flight; a newer request, a
+   * symbol or interval change, a pan or zoom while history loads, or
+   * destruction settles it `cancelled`.
+   */
+  goTo(target: DateNavigationTarget): Promise<DateNavigationResult>;
+  /** Open the go-to panel. False after destruction or on an interval without time buckets. */
+  openDateNavigation(): boolean;
   on<K extends WidgetEventName>(event: K, cb: (payload: WidgetBusEvents[K]) => void): () => void;
   off<K extends WidgetEventName>(event: K, cb?: (payload: WidgetBusEvents[K]) => void): void;
   destroy(): void;
@@ -333,6 +344,13 @@ class WidgetImpl implements Widget {
   private _dock: PanelDockHandle | null = null;
   private _quickEntry: QuickEntryHandle | null = null;
   private _alertsPanel: PanelHandle | null = null;
+  private _goToPanel: PanelHandle | null = null;
+  private readonly _navigator: DateNavigator;
+  /** Bumped by every go-to request and every context change, so a waiting request knows it lost. */
+  private _navigation = 0;
+  private _loading: Promise<unknown> | null = null;
+  /** Set while the widget itself moves the view for arriving data, which is not the user moving on. */
+  private _anchoring = false;
   private readonly _intervals: string[];
 
   private _symbol: string;
@@ -361,6 +379,7 @@ class WidgetImpl implements Widget {
       now: () => Math.floor((options.now ?? Date.now)() / 1000),
       ...options.loading,
     }) : null;
+    this._navigator = new DateNavigator({ chart: () => this.chart, loadHistory: time => this._loadHistory(time) });
     const doc = options.document ?? container.ownerDocument;
     this._doc = doc;
     injectWidgetStyles(doc, WIDGET_COMPONENT_CSS, options.styleNonce);
@@ -538,6 +557,7 @@ class WidgetImpl implements Widget {
         onObjects: (anchor) => this._openObjects(anchor),
         onDataWindow: options.panels === false ? undefined : () => this._dock?.toggle('data'),
         onAlerts: (anchor) => this._openAlerts(anchor),
+        onGoTo: (anchor) => this._openGoTo(anchor),
         settingsAvailable: () => widgetDialog('settings') !== null,
         indicatorsAvailable: () => widgetDialog('indicatorPicker') !== null,
         dataAvailable: () => this.dataController === null || this._dataState?.status === 'ready' || this._dataState?.status === 'stale',
@@ -562,6 +582,7 @@ class WidgetImpl implements Widget {
       onObjects: (anchor) => this._openObjects(anchor),
       onDataWindow: options.panels === false ? undefined : () => this._dock?.toggle('data'),
       onAlerts: (anchor) => this._openAlerts(anchor),
+      onGoTo: (anchor) => this._openGoTo(anchor),
       onProperties: (anchor) => this._openDialog('drawingProperties', anchor),
       onCapture: (anchor) => this._topbar?.openCapture(anchor),
       settingsAvailable: () => widgetDialog('settings') !== null,
@@ -634,6 +655,7 @@ class WidgetImpl implements Widget {
     if (s === this._symbol && ex === this._exchange) { this._topbar?.refresh(); this._mobile?.refresh(); return; }
     this._symbol = s;
     this._exchange = ex;
+    this._cancelNavigation();
     this._keepView = false;
     this._pendingView = null;
     if (this.dataController === null) {
@@ -657,6 +679,7 @@ class WidgetImpl implements Widget {
     resolveInterval(c);
     if (c === this._interval) { this._topbar?.refresh(); this._mobile?.refresh(); return; }
     this._interval = c;
+    this._cancelNavigation();
     this._keepView = false;
     this._pendingView = null;
     if (this.dataController === null) {
@@ -704,6 +727,24 @@ class WidgetImpl implements Widget {
     return true;
   }
   public openAlerts(): boolean { return this._openAlerts(); }
+  public openDateNavigation(): boolean { return this._openGoTo(); }
+
+  private _openGoTo(anchor?: HTMLElement): boolean {
+    if (this._destroyed || timeBuckets(this._interval) === null) return false;
+    if (this._goToPanel?.isOpen()) { this._goToPanel.el.focus(); return true; }
+    let mine = 0;
+    this._goToPanel = openDateNavigation(this.context, anchor, {
+      navigate: target => {
+        const work = this.goTo(target);
+        mine = this._navigation;
+        return work;
+      },
+      // Only the panel's own request: a newer goTo or a context change already replaced it.
+      cancel: () => { if (mine === this._navigation) this._cancelNavigation(); },
+      onClose: () => { this._goToPanel = null; },
+    });
+    return true;
+  }
 
   private _openAlerts(anchor?: HTMLElement): boolean {
     if (this._destroyed) return false;
@@ -752,7 +793,46 @@ class WidgetImpl implements Widget {
     this._displayedBars = null;
     this._series.setData([]);
     this._publishDataContext();
-    await controller.load(request);
+    const work = controller.load(request);
+    this._loading = work;
+    await work;
+    if (this._loading === work) this._loading = null;
+  }
+
+  public async goTo(target: DateNavigationTarget): Promise<DateNavigationResult> {
+    const request = ++this._navigation;
+    this._navigator.cancel();
+    // The placement belongs after the accepted load, or the first data would reset it.
+    if (this._loading !== null) await this._loading;
+    if (request !== this._navigation || this._destroyed) return { status: 'cancelled' };
+    return this._navigator.goTo(target);
+  }
+
+  private _cancelNavigation(): void {
+    this._navigation++;
+    this._navigator.cancel();
+  }
+
+  /** One reach of the managed controller, translated into what the navigator can decide on. */
+  private async _loadHistory(time: number): Promise<HistoryReach> {
+    const controller = this.dataController;
+    const state = controller?.getState();
+    if (controller == null || state === undefined || state.paused || state.request === null) return 'unavailable';
+    if (state.hasMore === false) return 'exhausted';
+    const first = controller.bars()[0]?.time;
+    // A pan or zoom the widget did not make while the page loads (a gesture,
+    // a key, a linked chart, the host's own call) means the view is wanted
+    // elsewhere, and a placement landing after it would undo it. A first load
+    // is not watched: the chart is blank until it lands and then resets.
+    const moved = (): void => { if (!this._anchoring) this._cancelNavigation(); };
+    const offs = [this.chart.on('pan', moved), this.chart.on('zoom', moved)];
+    try { await controller.loadMore(time); } finally { for (const off of offs) off(); }
+    const next = controller.getState();
+    if (next.historyStatus === 'error') throw next.historyError ?? new Error('Older history failed to load');
+    if (next.historyStatus === 'limited') return 'limited';
+    const reached = controller.bars()[0]?.time;
+    if (reached !== undefined && (first === undefined || reached < first)) return 'loaded';
+    return next.hasMore === false ? 'exhausted' : 'empty';
   }
 
   private _applyData(state: DataLoadingSnapshot): void {
@@ -771,6 +851,7 @@ class WidgetImpl implements Widget {
         (before.length === state.bars.length || before.length + 1 === state.bars.length)) this._series.update(tail);
       else {
         this._series.setData(state.bars);
+        this._anchoring = true;
         if (state.bars.length > 0) {
           if (this._initialView) {
             if (this._pendingView) this.chart.setVisibleLogicalRange(this._pendingView);
@@ -784,6 +865,7 @@ class WidgetImpl implements Widget {
             this.chart.setVisibleLogicalRange({ from: view.from + shift, to: view.to + shift });
           }
         }
+        this._anchoring = false;
       }
       this._displayedBars = state.bars;
       this._statusline?.refresh();
@@ -840,6 +922,7 @@ class WidgetImpl implements Widget {
       this._pendingView = same ? doc.viewport ?? null : null;
     }
     if (!same) {
+      this._cancelNavigation();
       if (interval !== this._interval) {
         this._interval = interval;
         this._bus.emit('interval', { interval });
@@ -1051,6 +1134,9 @@ class WidgetImpl implements Widget {
     if (this._destroyed) return;
     this._saveNow();
     this._destroyed = true;
+    this._cancelNavigation();
+    this._navigator.destroy();
+    this._goToPanel?.close();
     this._quickEntry?.destroy();
     this._dock?.destroy();
     this.dataController?.destroy();

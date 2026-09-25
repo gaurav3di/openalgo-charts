@@ -7,7 +7,8 @@ import { SYMBOL_PICKER_CSS } from './symbol-picker';
 import { QUICK_ENTRY_CSS } from './quick-entry';
 import { COLOR_PICKER_CSS } from './color-picker';
 import { INDICATOR_PICKER_CSS } from './dialogs/indicator-picker';
+import { DATE_NAVIGATION_CSS } from './date-navigation-dialog';
 
 /** Shared first-mount styles keep embedded hosts and full widgets identical under CSP. */
 export const WIDGET_COMPONENT_CSS = DIALOG_CSS + OBJECTS_PANEL_CSS + EVENT_DETAILS_CSS
-  + DATA_WINDOW_CSS + PANEL_DOCK_CSS + SYMBOL_PICKER_CSS + QUICK_ENTRY_CSS + COLOR_PICKER_CSS + INDICATOR_PICKER_CSS;
+  + DATA_WINDOW_CSS + PANEL_DOCK_CSS + SYMBOL_PICKER_CSS + QUICK_ENTRY_CSS + COLOR_PICKER_CSS + INDICATOR_PICKER_CSS + DATE_NAVIGATION_CSS;

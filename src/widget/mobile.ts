@@ -7,6 +7,7 @@ import {
   brandingLink, type SymbolSearch, type TopbarState,
 } from './topbar';
 import { mountSymbolPicker, type SymbolPickerHandle } from './symbol-picker';
+import { timeBuckets } from './date-navigator';
 
 export type MobileMode = 'auto' | 'always' | 'never';
 
@@ -30,6 +31,7 @@ export interface MobileOptions {
   onDataWindow?(anchor: HTMLElement): void | boolean;
   onAlerts?(anchor: HTMLElement): boolean;
   onCapture?(anchor: HTMLElement): void;
+  onGoTo?(anchor: HTMLElement): void | boolean;
   onProperties(anchor: HTMLElement): boolean;
   settingsAvailable(): boolean;
   indicatorsAvailable(): boolean;
@@ -273,6 +275,14 @@ export function mountMobile(ctx: WidgetContext, opts: MobileOptions): MobileHand
           close();
           opts.onAlerts?.(anchor);
         }));
+        if (opts.onGoTo) {
+          const goTo = makeAction('go-to', widgetText(ctx, 'Go to'), () => {
+            close();
+            opts.onGoTo?.(anchor);
+          });
+          goTo.setAttribute('aria-disabled', String(timeBuckets(opts.state().interval) === null));
+          body.appendChild(goTo);
+        }
         const theme = makeAction('theme', opts.state().theme === 'dark' ? widgetText(ctx, 'Light theme') : widgetText(ctx, 'Dark theme'), () => {
           opts.onTheme();
           close();

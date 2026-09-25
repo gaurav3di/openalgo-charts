@@ -588,6 +588,65 @@ For a custom replay host, call `dataController.setPaused(true)` for the entire
 replay lifetime, including paused replay; stop replay before resuming delivery.
 See [data loading](/docs/data-loading) for the interactive failure/retry example.
 
+## Go to a date or range
+
+**Go to** in the toolbar (or **More**, then **Go to** on a narrow screen) opens a
+compact panel. **Date** shows one date at the current zoom; **Range** fits two
+dates, or two date and time pairs, to the plot. Dates and times are read in the
+chart timezone, IST unless the host sets another. A blank time is the start of
+the day, or its end for the To field. Daily and longer intervals show the date
+fields alone, since a time cannot change which bar a date names. On a tick or
+volume interval the button is greyed with the reason, and
+`widget.openDateNavigation()` returns false.
+
+When the date is older than the loaded history, the widget pages back through
+its feed first: a date-window feed receives one request that reaches the date,
+a paged feed one page at a time. The view moves only after that load is
+accepted, so later live bars and refreshes keep the placement instead of
+returning to the newest bars. Closing the panel while it is loading cancels the
+request: the older bars still arrive, but the view stays where the user left it.
+A pan or zoom while older history loads does the same, from a gesture, a key, a
+linked chart or the host's own `setVisibleLogicalRange`; the move the widget makes
+itself to keep the bars in view still when a refresh lands does not count. The
+panel closes when the interval or the chart timezone changes under it, since its
+fields were built for both.
+
+```ts
+const result = await widget.goTo({
+  from: zonedStringToUtcSeconds('2024-03-04', widget.chart.timezone()),
+  to: zonedStringToUtcSeconds('2024-03-28 23:59', widget.chart.timezone()),
+});
+// { status: 'placed', from, to }  open times of the first and last placed bars
+```
+
+| `status` | Meaning |
+| --- | --- |
+| `placed` | The date or range is in view. |
+| `partial` | Something is in view, but `history` says why the source stopped before the requested start (`exhausted`, `empty`, `limited` or `unavailable`), or `clipped` says the range is wider than the plot and its start is shown. |
+| `no-data` | No bar at or after the date, or none inside the range. The view is unchanged. |
+| `unsupported` | The interval has no time buckets (tick or volume bars). |
+| `invalid` | A non-finite time, or a range that ends before it starts. |
+| `cancelled` | A newer request, a symbol or interval change, a pan or zoom while older history loads, or `destroy` took over. |
+| `error` | The feed failed; `error` carries the reason. |
+
+A date lands on its own daily bar whether the feed stamps bars at midnight or at
+the session open, and on a day of 23 or 25 hours around a daylight saving change.
+It names the bar the axis labels with that date: west of UTC, a daily bar stamped
+at UTC midnight is labelled with the previous date and is found by it, so set the
+chart timezone to `UTC` for such a feed when its bars should read by their UTC
+date. A date on a weekend or in an overnight gap moves to the next
+session. History is never loaded during replay, and a date beyond the replay
+cursor is `no-data`. A chart linked through a link group follows the placement
+by time. The panel closes once a request is placed and otherwise keeps the reason
+in view. `widget.openDateNavigation()` opens it programmatically. A custom host
+uses the same rules through `DateNavigator` and `openDateNavigation`, whose
+`cancel` option runs when the panel is dismissed mid-load and whose `pending`
+option lets a host that rebuilds its chart reopen the panel on a request already
+under way; see [data loading](/docs/data-loading). Only the host knows which view
+moves are its own, so a custom host that wants a pan or zoom to drop a loading
+request listens for the chart's `pan` and `zoom` events around its loader and
+calls `navigator.cancel()`.
+
 ## Timeline event details
 
 For grouped timeline events, the widget opens an accessible text-only details
