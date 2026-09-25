@@ -98,19 +98,19 @@ const touch = (el: FakeElement, type: 'down' | 'move' | 'up', id: number, x: num
   el.dispatch(`pointer${type}`, pointer(type, x, y, { pointerType: 'touch', pointerId: id }));
 const paneHolds = (chart: Chart, index: number, type: abstract new (...args: never[]) => unknown): boolean =>
   chart.panes()[index].primitives().some((primitive) => primitive instanceof type);
-/** Where the strip's collapse control sits, in container px, once the row has painted its buttons. */
-const collapseControl = (chart: Chart, legend: PaneLegend, pane: number): { x: number; y: number } => {
+/** Where one of a row's controls sits, in container px, once the row has painted its buttons. */
+const rowControl = (chart: Chart, legend: PaneLegend, pane: number, action: string): { x: number; y: number } => {
   const buttons = (legend as unknown as { _buttons: { id: string; x: number; y: number }[] })._buttons;
-  const button = buttons.find((b) => b.id.endsWith('::collapse'));
+  const button = buttons.find((b) => b.id.endsWith('::' + action));
   expect(button).toBeDefined();
   return { x: button!.x + 8, y: tops(chart)[pane] + button!.y + 8 };
 };
-/** Hover the row so its buttons appear, then press its collapse control. */
-const pressCollapse = (chart: Chart, el: FakeElement, legend: PaneLegend, pane: number): void => {
+/** Hover the row so its buttons appear, then press one of them: the collapse control unless told otherwise. */
+const pressControl = (chart: Chart, el: FakeElement, legend: PaneLegend, pane: number, action = 'collapse'): void => {
   hover(el, 20, tops(chart)[pane] + 15);
-  const first = collapseControl(chart, legend, pane);
+  const first = rowControl(chart, legend, pane, action);
   hover(el, first.x, first.y);
-  const { x, y } = collapseControl(chart, legend, pane);
+  const { x, y } = rowControl(chart, legend, pane, action);
   hover(el, x, y);
   press(el, x, y);
 };
@@ -594,6 +594,118 @@ describe('removing and moving strips', () => {
   });
 });
 
+describe('the row a strip shows', () => {
+  /** RSI and CCI sharing pane 1, with MACD on pane 2 below them. */
+  const shared = () => {
+    const made = stacked();
+    const cci = made.chart.addIndicator('cci', {}, { paneIndex: 1 });
+    return { ...made, cci };
+  };
+  const rowOf = (legend: PaneLegend): number | undefined => legend.options().row;
+
+  it.each([false, true])('keeps the way back when the first study is closed from the strip (compact legends %s)', (compact) => {
+    const { chart, el, rsi, cci } = shared();
+    if (compact) chart.setIndicatorLegendCollapsed(true);
+    chart.setPaneCollapsed(1, true);
+    pressControl(chart, el, rsi.legend()!, 1, 'close');
+    const ids = chart.indicators().map((study) => study.id);
+    expect(ids).not.toContain(rsi.id);
+    expect(ids).toContain(cci.id);
+    expect(chart.paneCollapsed(1)).toBe(true);
+    // The surviving row is now the strip's only row, and it has to open it.
+    pressControl(chart, el, cci.legend()!, 1);
+    expect(chart.paneCollapsed(1)).toBe(false);
+  });
+
+  it('leaves the rows of an open pane as they were, and gives a strip its control when it folds', () => {
+    const { chart, el, rsi, cci } = shared();
+    chart.removeIndicator(rsi.id);
+    // No fold, no change: the surviving row keeps the actions it was made with.
+    expect(cci.legend()!.options().actions).toEqual(['hide', 'settings', 'close']);
+    chart.setPaneCollapsed(1, true);
+    pressControl(chart, el, cci.legend()!, 1);
+    expect(chart.paneCollapsed(1)).toBe(false);
+  });
+
+  it('gives the strip its control when a restored layout folds the pane', () => {
+    const { chart, el, rsi, cci } = shared();
+    chart.removeIndicator(rsi.id);
+    const state = JSON.parse(JSON.stringify(chart.getState()));
+    state.panes[1].collapsed = true;
+    expect(chart.restoreState({ version: state.version, panes: state.panes }).applied).toBe(true);
+    expect(chart.indicators().map((study) => study.id)).toContain(cci.id);
+    expect(chart.paneCollapsed(1)).toBe(true);
+    pressControl(chart, el, cci.legend()!, 1);
+    expect(chart.paneCollapsed(1)).toBe(false);
+  });
+
+  it.each([false, true])('leads with the first study row above a row the host placed first (compact legends %s)', (compact) => {
+    const { chart, el } = makeChart();
+    chart.addSeries('candlestick').setData(bars(120));
+    chart.addSeries('line', { paneIndex: 1 }).setData(bars(120).map((bar) => ({ time: bar.time, value: bar.close })));
+    const host = new PaneLegend({ id: 'host', title: 'Host', actions: [] });
+    chart.addPrimitive(host, 1);
+    const cci = chart.addIndicator('cci', {}, { paneIndex: 1 });
+    chart.addIndicator('macd');
+    if (compact) chart.setIndicatorLegendCollapsed(true);
+    // An open pane keeps the order the rows were added in.
+    expect([rowOf(host), rowOf(cci.legend()!)]).toEqual([0, 1]);
+
+    chart.setPaneCollapsed(1, true);
+    expect([rowOf(host), rowOf(cci.legend()!)]).toEqual([1, 0]);
+    const strip = chart.panes()[1].top.ctx;
+    recorder(strip).ops.length = 0;
+    fullFrame(chart);
+    expect(texts(strip)).toContain('CCI');
+    expect(texts(strip)).not.toContain('Host');
+    // Maximized, the pane shows whole, its rows in the order they were added
+    // (with the study toggle's row reserved between them, as on any top pane).
+    chart.maximizePane(1);
+    expect(rowOf(host)).toBe(0);
+    expect(rowOf(cci.legend()!)).toBeGreaterThan(0);
+    recorder(strip).ops.length = 0;
+    fullFrame(chart);
+    expect(texts(strip)).toContain('Host');
+    chart.maximizePane(1);
+    expect([rowOf(host), rowOf(cci.legend()!)]).toEqual([1, 0]);
+    pressControl(chart, el, cci.legend()!, 1);
+    expect(chart.paneCollapsed(1)).toBe(false);
+    expect([rowOf(host), rowOf(cci.legend()!)]).toEqual([0, 1]);
+    recorder(strip).ops.length = 0;
+    fullFrame(chart);
+    expect(texts(strip)).toContain('Host');
+  });
+
+  it('draws and answers only its one row', () => {
+    const { chart, el, cci } = shared();
+    chart.setPaneCollapsed(1, true);
+    const strip = chart.panes()[1].top.ctx;
+    recorder(strip).ops.length = 0;
+    fullFrame(chart);
+    expect(texts(strip)).toContain('RSI');
+    // The second row starts inside the strip's lower inset, so drawing it
+    // would leave the tops of its letters along the strip's bottom edge.
+    expect(texts(strip)).not.toContain('CCI');
+    const hovered: (string | null)[] = [];
+    chart.on('hover', (e) => hovered.push((e as { id: string | null }).id));
+    const clicks: ChartClickEvent[] = [];
+    chart.on('click', (e) => clicks.push(e as ChartClickEvent));
+    // Just above the divider grab, where the second row begins.
+    const band = (): number => tops(chart)[1] + STRIP - 5;
+    hover(el, 20, band());
+    press(el, 20, band());
+    expect(hovered.some((id) => id?.includes(cci.id))).toBe(false);
+    expect(last(clicks)).toMatchObject({ id: null, paneIndex: 1 });
+
+    chart.setPaneCollapsed(1, false);
+    recorder(strip).ops.length = 0;
+    fullFrame(chart);
+    expect(texts(strip)).toContain('CCI');
+    hover(el, 20, band());
+    expect(last(hovered)).toContain(cci.id);
+  });
+});
+
 describe('saving and restoring collapse', () => {
   const scale = { marginTop: 0.1, marginBottom: 0.1, minMove: 0, mode: 'linear', inverted: false, autoScale: true };
 
@@ -713,7 +825,7 @@ describe('study legend collapse is a different thing', () => {
     expect(texts(strip)).toContain('RSI');
     expect(texts(open)).not.toContain('MACD');
 
-    pressCollapse(chart, el, rsi.legend()!, 1);
+    pressControl(chart, el, rsi.legend()!, 1);
     expect(chart.paneCollapsed(1)).toBe(false);
     expect(chart.indicatorLegendCollapsed()).toBe(true);
     recorder(strip).ops.length = 0;
@@ -734,7 +846,7 @@ describe('study legend collapse is a different thing', () => {
     fullFrame(b.chart);
     expect(texts(strip)).toContain('RSI');
     const rsi = b.chart.indicators().find((study) => study.indicatorId === 'rsi')!;
-    pressCollapse(b.chart, b.el, rsi.legend()!, 1);
+    pressControl(b.chart, b.el, rsi.legend()!, 1);
     expect(b.chart.paneCollapsed(1)).toBe(false);
   });
 });

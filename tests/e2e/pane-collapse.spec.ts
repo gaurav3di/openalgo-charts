@@ -3,7 +3,7 @@ import type { Chart, IndicatorApi } from '../../src/index';
 import type * as Charts from '../../src/index';
 
 declare global {
-  interface Window { __paneCollapse: { chart: Chart; rsi: IndicatorApi } }
+  interface Window { __paneCollapse: { chart: Chart; rsi: IndicatorApi; cci?: IndicatorApi } }
 }
 
 const STRIP = 30;
@@ -56,16 +56,17 @@ const plotPixels = (page: Page, paneIndex: number, rgb: [number, number, number]
   return hits;
 }, [paneIndex, rgb] as const);
 
-/** The pane's collapse control, found on the legend row once the pointer has revealed it. */
-async function collapseControl(page: Page): Promise<{ x: number; y: number }> {
-  const find = () => page.evaluate(() => {
-    const { chart, rsi } = window.__paneCollapse;
-    const buttons = (rsi.legend() as unknown as { _buttons: { id: string; x: number; y: number }[] })._buttons;
-    const button = buttons.find(b => b.id.endsWith('::collapse'));
+/** One of a study row's controls, the collapse control unless told otherwise, found once the pointer has revealed it. */
+async function rowControl(page: Page, study: 'rsi' | 'cci' = 'rsi', action = 'collapse'): Promise<{ x: number; y: number }> {
+  const find = () => page.evaluate(([key, name]) => {
+    const { chart } = window.__paneCollapse;
+    const handle = window.__paneCollapse[key]!;
+    const buttons = (handle.legend() as unknown as { _buttons: { id: string; x: number; y: number }[] })._buttons;
+    const button = buttons.find(b => b.id.endsWith('::' + name));
     if (!button) return null;
-    const pane = chart.panes()[rsi.paneIndex].element.getBoundingClientRect();
+    const pane = chart.panes()[handle.paneIndex].element.getBoundingClientRect();
     return { x: pane.left + button.x + 8, y: pane.top + button.y + 8 };
-  });
+  }, [study, action] as const);
   const boxes = await paneBoxes(page);
   await page.mouse.move(40, boxes[1].top + 15);
   await paint(page);
@@ -93,7 +94,7 @@ test('a lower pane folds to its header strip from its legend and opens back pixe
   const before = await page.locator('#c').screenshot();
   expect(await plotPixels(page, 1, [255, 0, 255])).toBeGreaterThan(50);
 
-  const control = await collapseControl(page);
+  const control = await rowControl(page);
   await page.mouse.click(control.x, control.y);
   await page.mouse.move(980, 690);
   await paint(page);
@@ -107,7 +108,7 @@ test('a lower pane folds to its header strip from its legend and opens back pixe
   expect(await page.evaluate(() => window.__paneCollapse.rsi.legend()!.options().collapsed)).toBe(true);
   await page.screenshot({ path: info.outputPath('collapsed.png') });
 
-  const again = await collapseControl(page);
+  const again = await rowControl(page);
   await page.mouse.click(again.x, again.y);
   await page.mouse.move(980, 690);
   await paint(page);
@@ -133,7 +134,7 @@ test('a strip keeps its row and the way back while study legends are compact', a
   });
   await paint(page);
   await page.screenshot({ path: info.outputPath('compact-strip.png') });
-  const control = await collapseControl(page);
+  const control = await rowControl(page);
   await page.mouse.click(control.x, control.y);
   await paint(page);
   expect(await page.evaluate(() => window.__paneCollapse.chart.paneCollapsed(1))).toBe(false);
@@ -168,5 +169,44 @@ test('the bottom pane folds above a time axis that stays at the foot of the char
   expect(rows.axis).toBeGreaterThan(0);
   expect(rows.plot).toBe(0);
   await page.screenshot({ path: info.outputPath('bottom-collapsed.png') });
+  expect(errors).toEqual([]);
+});
+
+test('a strip shows one row, and closing that row on the strip leaves the next one the way back', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await mount(page);
+  await page.evaluate(() => {
+    const state = window.__paneCollapse;
+    state.cci = state.chart.addIndicator('cci', {}, { paneIndex: 1 });
+    state.chart.setPaneCollapsed(1, true);
+  });
+  await page.mouse.move(980, 690);
+  await paint(page);
+  // The second row starts inside the strip's lower inset: drawn, the tops of
+  // its letters would show along the strip's bottom edge.
+  const band = await page.evaluate(([strip]) => {
+    const canvas = window.__paneCollapse.chart.panes()[1].top.element;
+    const ratio = canvas.width / canvas.getBoundingClientRect().width;
+    const data = canvas.getContext('2d')!.getImageData(0, Math.round((strip - 6) * ratio), Math.round(canvas.width * 0.5), Math.round(6 * ratio)).data;
+    let lit = 0;
+    for (let i = 3; i < data.length; i += 4) if (data[i] > 0) lit++;
+    return lit;
+  }, [STRIP] as const);
+  expect(band).toBe(0);
+  await page.screenshot({ path: info.outputPath('two-study-strip.png') });
+
+  const close = await rowControl(page, 'rsi', 'close');
+  await page.mouse.click(close.x, close.y);
+  await page.mouse.move(980, 690);
+  await paint(page);
+  expect(await page.evaluate(() => window.__paneCollapse.chart.indicators().map(study => study.id)))
+    .not.toContain(await page.evaluate(() => window.__paneCollapse.rsi.id));
+  expect(await page.evaluate(() => window.__paneCollapse.chart.paneCollapsed(1))).toBe(true);
+  await page.screenshot({ path: info.outputPath('strip-after-close.png') });
+  const control = await rowControl(page, 'cci');
+  await page.mouse.click(control.x, control.y);
+  await paint(page);
+  expect(await page.evaluate(() => window.__paneCollapse.chart.paneCollapsed(1))).toBe(false);
   expect(errors).toEqual([]);
 });
