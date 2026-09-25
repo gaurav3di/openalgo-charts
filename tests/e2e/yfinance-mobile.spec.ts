@@ -1073,10 +1073,14 @@ test('chart settings retain their selected owner through cancel, rebuild and rel
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const firstView = await page.evaluate(() => {
     const chart = (window as any).__oac.app.chart2;
-    return { ...chart.timeScale.getVisibleLogicalRange(), count: chart.primaryBars().length };
+    return { ...chart.timeScale.getVisibleLogicalRange(), count: chart.primaryBars().length, spacing: chart.timeScale.barSpacing };
   });
+  // A freshly opened follower restores its own default view: the latest bar at
+  // the default candle density, not its whole history fitted. This asserted the
+  // fitted view until the density change, which updated the other hosts' tests
+  // and missed this one.
   expect(firstView.to).toBeGreaterThanOrEqual(firstView.count - 1);
-  expect(firstView.from).toBeLessThanOrEqual(1);
+  expect(firstView.spacing).toBe(8);
   await page.locator('#chart2').focus();
   const settings = page.getByRole('button', { name: 'Chart settings (or right-click the chart)', exact: true });
   await settings.click();
