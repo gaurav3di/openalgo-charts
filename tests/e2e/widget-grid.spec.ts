@@ -13,6 +13,22 @@ async function mount(page: Page, preset = '2x2', size = { width: 1200, height: 8
 }
 const counts = (page: Page): Promise<number[]> => page.evaluate(() => (window as any).fixture.counts());
 const ranges = (page: Page): Promise<Array<{ from: number; to: number }>> => page.evaluate(() => (window as any).fixture.ranges());
+/**
+ * True once a chart has drawn candles, not just its background, grid and
+ * axes: those are grey, and the candles are the only saturated pixels.
+ */
+const painted = (page: Page, index: number): Promise<boolean> => page.evaluate(i => {
+  const canvases = [...document.querySelectorAll('.oac-grid__cell')[i].querySelectorAll('.oac-chart canvas')] as HTMLCanvasElement[];
+  let saturated = 0;
+  for (const canvas of canvases) {
+    if (canvas.width === 0 || canvas.height === 0) continue;
+    const { data } = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height);
+    for (let p = 0; p < data.length; p += 4) {
+      if (data[p + 3] > 128 && Math.max(data[p], data[p + 1], data[p + 2]) - Math.min(data[p], data[p + 1], data[p + 2]) > 60) saturated++;
+    }
+  }
+  return saturated > 500;
+}, index);
 const activeIndex = (page: Page): Promise<number> => page.evaluate(() => {
   const grid = (window as any).fixture.grid;
   return grid.cells().findIndex((cell: any) => cell.id === grid.active().id);
@@ -95,19 +111,32 @@ test('splitters resize by drag and by keyboard, and a double click evens them', 
 test('a narrow grid shows the active chart alone with tabs, and widening restores the grid', async ({ page }, info) => {
   const errors = await mount(page, '2x2', { width: 480, height: 720 });
   await page.evaluate(() => (window as any).fixture.readyAll());
+  await expect.poll(() => counts(page)).toEqual([120, 120, 120, 120]);
   const tabs = page.locator('.oac-grid__tab');
   await expect(tabs).toHaveCount(4);
   await expect(page.locator('.oac-grid__cell:visible')).toHaveCount(1);
   const only = (await page.locator('.oac-grid__cell:visible').boundingBox())!;
   expect(only.width).toBeGreaterThan(460);
+  // Linked viewports reach the charts hidden behind the tabs as well.
+  await page.evaluate(() => {
+    const grid = (window as any).fixture.grid;
+    grid.setLinks({ viewport: true });
+    grid.cells()[0].widget.chart.setVisibleLogicalRange({ from: 30, to: 60 });
+  });
   await tabs.nth(2).click();
   expect(await activeIndex(page)).toBe(2);
   await expect(page.locator('.oac-grid__cell').nth(2)).toBeVisible();
   await expect(page.locator('.oac-grid__split:visible')).toHaveCount(0);
+  await expect.poll(() => painted(page, 2)).toBe(true);
+  const near = (range: { from: number; to: number }): boolean => Math.abs(range.from - 30) < 0.01 && Math.abs(range.to - 60) < 0.01;
+  await expect.poll(async () => near((await ranges(page))[2])).toBe(true);
   await page.screenshot({ path: info.outputPath('grid-compact.png') });
   await page.setViewportSize({ width: 1200, height: 800 });
   await expect(page.locator('.oac-grid__cell:visible')).toHaveCount(4);
   await expect(page.locator('.oac-grid__tabs')).toBeHidden();
+  await expect.poll(async () => (await ranges(page)).every(near)).toBe(true);
+  for (const index of [0, 1, 2, 3]) await expect.poll(() => painted(page, index)).toBe(true);
+  await page.screenshot({ path: info.outputPath('grid-widened.png') });
   expect(errors).toEqual([]);
 });
 

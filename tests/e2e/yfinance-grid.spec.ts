@@ -41,20 +41,66 @@ test('the grid view loads four instruments, switches presets and links, and keep
   await expect(page.getByRole('button', { name: 'Two columns' })).toHaveAttribute('aria-pressed', 'true');
   await expect.poll(() => loaded(page), { timeout: 20_000 }).toBe(true);
   await page.screenshot({ path: info.outputPath('yfinance-grid-restored.png') });
+
+  // A reload straight after a change keeps it: nothing waits on a timer or on unload.
+  await page.getByRole('button', { name: 'Three columns' }).click();
+  await page.reload();
+  await page.waitForFunction(() => (window as any).__grid?.cells().length > 0);
+  expect(await grid(page, g => g.cells().length)).toBe(3);
   expect(errors).toEqual([]);
+});
+
+test('a saved grid the page cannot restore is kept and reported, not overwritten', async ({ page }) => {
+  await page.goto(ORIGIN + '/examples/yfinance/grid.html?test=1');
+  await page.waitForFunction(() => (window as any).__grid?.cells().length === 4);
+  const text = await page.evaluate(() => {
+    const payload = (window as any).__grid.getWorkspace();
+    payload.panes[0].chart.indicators = [{ indicatorId: 'registered-later', settings: {}, paneIndex: 0 }];
+    const value = JSON.stringify(payload);
+    (window as any).__grid.destroy();
+    localStorage.setItem('oac-widget:yfinance-grid:grid', value);
+    return value;
+  });
+  await page.reload();
+  await page.waitForFunction(() => (window as any).__grid?.cells().length === 4);
+  await expect(page.locator('#grid-status')).toContainText('could not be restored');
+  await expect(page.locator('#grid-status')).toContainText('registered-later');
+  await expect.poll(() => loaded(page), { timeout: 20_000 }).toBe(true);
+  expect(await page.evaluate(() => localStorage.getItem('oac-widget:yfinance-grid:grid'))).toBe(text);
+});
+
+const handPane = (id: string, symbol: string) => ({ id, symbol, exchange: '', interval: '1d', chartType: 'candlestick',
+  chart: { version: 1 }, settings: {}, volume: true, magnet: 'off', stay: false, comparisons: [] as unknown[], comparisonMode: 'percent' });
+const deskOf = (panes: ReturnType<typeof handPane>[]) => ({ kind: 'workspace', version: 1, id: 'desk', name: 'Desk', createdAt: 1, updatedAt: 1,
+  panes, activePaneId: panes[2].id,
+  layout: { rows: 2, columns: 2, slots: panes.map((pane, i) => ({ paneId: pane.id, row: Math.floor(i / 2), column: i % 2, rowSpan: 1, columnSpan: 1 })) },
+  sync: { crosshair: true, viewport: false, symbol: false, interval: false } });
+
+test('the main page refuses, before leaving, a layout the grid view could not open', async ({ page }) => {
+  await page.goto(ORIGIN + '/examples/yfinance/index.html?test=1');
+  await page.waitForFunction(() => (window as any).__oac?.app.chart && !(window as any).__oac.app.loading);
+  const panes = [handPane('a', 'AAPL'), handPane('b', 'MSFT'), handPane('c', 'TSLA'), handPane('d', 'NVDA')];
+  panes[1].comparisons = [{ id: 'q', symbol: 'QQQ', exchange: '', visible: true }];
+  await page.getByRole('button', { name: 'Layouts', exact: true }).click();
+  await page.locator('#ws-file').setInputFiles({ name: 'compared.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(deskOf(panes))) });
+  await expect(page.locator('#ws-error')).toContainText('MSFT: comparison symbols');
+  await expect(page.getByRole('button', { name: 'Open in grid view' })).toBeHidden();
+  expect(page.url()).toContain('index.html');
 });
 
 test('the main page hands a layout it cannot draw to the grid view, which opens it whole', async ({ page }, info) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
+  // The grid view's own saved desk, which the hand-off replaces before any of its charts loads.
+  await page.goto(ORIGIN + '/examples/yfinance/grid.html?test=1');
+  await page.waitForFunction(() => (window as any).__grid?.cells().length === 4);
+  await page.evaluate(() => { for (const cell of (window as any).__grid.cells()) cell.widget.setSymbol('IBM'); });
+  await expect.poll(() => grid(page, g => g.cells().every((cell: any) => cell.widget.series.getData().length > 0 && cell.widget.symbol() === 'IBM')), { timeout: 20_000 }).toBe(true);
+  const asked: string[] = [];
+  page.on('request', request => { if (request.url().includes('/api/history')) asked.push(new URL(request.url()).searchParams.get('symbol')!); });
   await page.goto(ORIGIN + '/examples/yfinance/index.html?test=1');
   await page.waitForFunction(() => (window as any).__oac?.app.chart && !(window as any).__oac.app.loading);
-  const pane = (id: string, symbol: string) => ({ id, symbol, exchange: '', interval: '1d', chartType: 'candlestick',
-    chart: { version: 1 }, settings: {}, volume: true, magnet: 'off', stay: false, comparisons: [], comparisonMode: 'percent' });
-  const desk = { kind: 'workspace', version: 1, id: 'desk', name: 'Desk', createdAt: 1, updatedAt: 1,
-    panes: [pane('a', 'AAPL'), pane('b', 'MSFT'), pane('c', 'TSLA'), pane('d', 'NVDA')], activePaneId: 'c',
-    layout: { rows: 2, columns: 2, slots: ['a', 'b', 'c', 'd'].map((paneId, i) => ({ paneId, row: Math.floor(i / 2), column: i % 2, rowSpan: 1, columnSpan: 1 })) },
-    sync: { crosshair: true, viewport: false, symbol: false, interval: false } };
+  const desk = deskOf([handPane('a', 'AAPL'), handPane('b', 'MSFT'), handPane('c', 'TSLA'), handPane('d', 'NVDA')]);
   await page.getByRole('button', { name: 'Layouts', exact: true }).click();
   await page.locator('#ws-file').setInputFiles({ name: 'desk.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(desk)) });
   await expect(page.locator('#ws-notice')).toContainText('grid view');
@@ -64,6 +110,10 @@ test('the main page hands a layout it cannot draw to the grid view, which opens 
   await expect(page.locator('.oac-grid__cell')).toHaveCount(4);
   await expect(page.locator('#grid-status')).toContainText('Opened the layout from the main view: 4 charts');
   await expect(page.locator('.oac-grid__cell').nth(2)).toHaveAttribute('data-active', 'true');
+  // The saved IBM desk was built first and replaced; only the handed charts reached the server.
+  await expect.poll(() => ['MSFT', 'TSLA', 'NVDA'].every(symbol => asked.includes(symbol)), { timeout: 20_000 }).toBe(true);
+  await expect(page.locator('.oac-grid__cell .oac-data-status').first()).not.toContainText('Loading');
   await page.screenshot({ path: info.outputPath('yfinance-grid-opened.png') });
+  expect(asked.filter(symbol => symbol === 'IBM')).toEqual([]);
   expect(errors).toEqual([]);
 });
