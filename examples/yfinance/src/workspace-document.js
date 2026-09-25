@@ -84,26 +84,31 @@ export function needsGridView(input) {
 
 // The grid view (grid.html) writes each chart's widget theme under this key.
 const GRID_THEME = 'widget.theme';
+// The periods the grid view's server knows and this page has no range for, as
+// the range nearest in length, by ratio: twice and half as long are equally
+// near, and the year to date counts as the year it can reach.
+const NEAREST_PERIOD = new Map([['1d', '1mo'], ['5d', '1mo'], ['3mo', '6mo'], ['ytd', '1y'], ['2y', '1y'], ['10y', '5y']]);
 
 /**
  * A layout the grid view exported, in this page's terms. This page sets one
  * theme for the whole page, so the per-chart widget theme is dropped; the
- * widget's weekly code becomes the source's; and a period this page saved
- * that the chart's new interval cannot serve is clamped the way this page
- * clamps its own. The grid view loads its own periods, so a saved window,
- * which counts bars, would land on other bars here: each chart opens fitted
- * to its data instead, with its studies and drawings. Any document without
- * the grid view's theme comes back unchanged, so this page's own files keep
- * every strict check.
+ * widget's weekly code becomes the source's; and a saved period becomes this
+ * page's nearest range, clamped to what the chart's interval can serve the
+ * way this page clamps its own. The grid view loads its own periods, so a
+ * saved window, which counts bars, would land on other bars here: each chart
+ * opens fitted to its data instead, with its studies and drawings. Any
+ * document without the grid view's theme comes back unchanged, so this page's
+ * own files keep every strict check.
  */
 export function fromGridView(input) {
   const panes = Array.isArray(input?.panes) ? input.panes : [];
   if (!panes.some(pane => Object.prototype.hasOwnProperty.call(pane?.settings ?? {}, GRID_THEME))) return input;
   return { ...input, panes: panes.map(pane => {
     const settings = { ...pane?.settings }, interval = pane?.interval === '1w' ? '1wk' : pane?.interval;
+    const period = PERIODS.includes(pane?.historyPeriod) ? pane.historyPeriod : NEAREST_PERIOD.get(pane?.historyPeriod);
     delete settings[GRID_THEME];
     return { ...pane, settings, interval, chart: pane?.chart && typeof pane.chart === 'object' ? stripView(pane.chart) : pane?.chart,
-      ...(PERIODS.includes(pane?.historyPeriod) ? { historyPeriod: clampPeriod(interval, pane.historyPeriod) } : {}) };
+      ...(period === undefined ? {} : { historyPeriod: clampPeriod(interval, period) }) };
   }) };
 }
 

@@ -175,6 +175,28 @@ describe('grid view documents', () => {
     expect(workspaceFileDocument(JSON.stringify(own), 'own.json')).toEqual(own);
   });
 
+  it('opens a grid layout on the main page with the page range nearest each server period it saved', () => {
+    // Per interval: the server's periods the main page has no range for, and the range each opens with.
+    const daily = { '1d': '1mo', '5d': '1mo', '3mo': '6mo', ytd: '1y', '2y': '1y', '10y': '5y' };
+    const expected = {
+      '5m': { '1d': '1mo', '5d': '1mo', '3mo': '1mo', ytd: '1mo', '2y': '1mo', '10y': '1mo' },
+      '15m': { '1d': '1mo', '5d': '1mo', '3mo': '1mo', ytd: '1mo', '2y': '1mo', '10y': '1mo' },
+      '1h': { ...daily, '10y': '1y' },
+      '1d': daily,
+      '1w': daily,
+    };
+    const opened = {};
+    for (const [interval, periods] of Object.entries(expected)) {
+      opened[interval] = {};
+      for (const period of Object.keys(periods)) {
+        const exported = gridDocument(payload(1, 1));
+        Object.assign(exported.panes[0], { interval, historyPeriod: period, settings: { 'widget.theme': 'dark' } });
+        opened[interval][period] = layoutFromWorkspace(workspaceFileDocument(JSON.stringify(exported), 'grid.json')).request.period;
+      }
+    }
+    expect(opened).toEqual(expected);
+  });
+
   it('draws one box per chart in each preset glyph, with a label for every preset', () => {
     expect(presetGlyph('2x2').match(/<rect /g)).toHaveLength(4);
     expect(presetGlyph('1x3').match(/<rect /g)).toHaveLength(3);

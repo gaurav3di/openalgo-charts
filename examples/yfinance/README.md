@@ -325,9 +325,12 @@ A one or two chart layout exported from the grid view opens on the main page
 through the same Layouts import. The widget's `1w` becomes the page's `1wk`, the
 per-chart theme is dropped because the main page has one theme for the page, and
 each chart opens fitted to its data with its studies and drawings, because the
-saved window counts the grid view's bars. The main page still refuses what it
-cannot show, such as a `1m` chart or two charts with different drawing magnet or
-stay settings.
+saved window counts the grid view's bars. A saved history period the main page
+has no range for opens as the nearest range it has (`1d` and `5d` as `1mo`, `3mo`
+as `6mo`, `ytd` and `2y` as `1y`, `10y` as `5y`), and every saved period is then
+clamped to what the chart's interval can serve, as the main page clamps its own.
+The main page still refuses what it cannot show, such as a `1m` chart or two
+charts with different drawing magnet or stay settings.
 
 ## How it connects
 
