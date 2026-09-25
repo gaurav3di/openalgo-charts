@@ -876,6 +876,34 @@ describe('chart grid linked viewports across hidden charts', () => {
     expect(b.getVisibleLogicalRange().to).toBeCloseTo(fitted.to, 6);
   });
 
+  it('keeps a chart whose first bars came through its feed after a linked pan on their span through a resize', async () => {
+    // One feed per chart, so the second chart's history arrives on its own.
+    const feeds = new Map<string, Pending[]>();
+    const feed = ({ id }: { readonly id: string }): DataFeed => {
+      const { feed: own, requests } = pendingFeed();
+      feeds.set(id, requests);
+      return own;
+    };
+    const { grid } = makeGrid({ feed, preset: '1x2', links: { viewport: true, crosshair: false } });
+    const [first, second] = grid.cells();
+    const [a, b] = [first.widget.chart, second.widget.chart];
+    feeds.get(first.id)![0].resolve(bars(200));
+    await flush();
+    a.setVisibleLogicalRange({ from: 150, to: 190 });
+    // A splitter drag while the second chart still waits for its history: it
+    // keeps the span it showed empty, at a new bar width.
+    b.applySize(700, 400);
+    const empty = b.getVisibleLogicalRange();
+    feeds.get(second.id)![0].resolve(bars(200));
+    await flush();
+    // Its first bars fit the default candle density, a span no event reported.
+    const fitted = b.getVisibleLogicalRange();
+    expect(fitted.to - fitted.from).not.toBeCloseTo(empty.to - empty.from, 3);
+    b.applySize(600, 400);
+    expect(b.getVisibleLogicalRange().from).toBeCloseTo(fitted.from, 6);
+    expect(b.getVisibleLogicalRange().to).toBeCloseTo(fitted.to, 6);
+  });
+
   it('leaves a resize to the engine until the linked charts share a window', async () => {
     const { grid } = makeGrid({ preset: '1x2', links: { viewport: true, crosshair: false } });
     const chart = grid.cells()[0].widget.chart;
