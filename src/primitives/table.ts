@@ -8,7 +8,7 @@
  * part in autoscale, and survives a zoom untouched.
  */
 import type { IPrimitive, PrimitiveHost, PrimitiveRenderContext, PrimitiveHit, ZOrder } from './primitive';
-import { contrastText } from '../render/pill';
+import { contrastText, roundRectPath } from '../render/pill';
 
 export type TablePosition =
   | 'top-left' | 'top-center' | 'top-right'
@@ -18,6 +18,8 @@ export type TablePosition =
 export interface TableCell {
   /** Explicit newlines form a block with 1.2em line spacing. */
   text: string;
+  /** Plain-text hover detail. Newlines are preserved; a merged cell uses its anchor's tooltip. */
+  tooltip?: string;
   /** Cell fill. Transparent when omitted, so the pane shows through. */
   bgColor?: string;
   /** Text colour. Derived from `bgColor` for contrast when omitted. */
@@ -149,6 +151,7 @@ function positionCells(rows: readonly (readonly TableCell[])[]): { cols: number;
   for (let r = 0; r < rows.length; r++) {
     for (let c = 0; c < rows[r].length; c++) {
       const cell = rows[r][c];
+      if (cell.tooltip !== undefined && typeof cell.tooltip !== 'string') throw new TypeError('Table tooltip must be text');
       const rowSpan = cell.rowSpan === undefined ? 1 : cell.rowSpan;
       const colSpan = cell.colSpan === undefined ? 1 : cell.colSpan;
       if (!Number.isSafeInteger(rowSpan) || rowSpan < 1 || !Number.isSafeInteger(colSpan) || colSpan < 1) {
@@ -235,6 +238,34 @@ export function tableOrigin(
   return { x, y };
 }
 
+interface CellHit { x: number; y: number; w: number; h: number; key: string; tooltip: string }
+let nextTableId = 0;
+
+/** Bound work by the visible height as well as wrapping width, even for a very long word. */
+function tooltipLines(ctx: CanvasRenderingContext2D, text: string, width: number, limit: number): string[] {
+  const lines: string[] = [];
+  for (const line of text.split(/\r\n|\r|\n/)) {
+    const chars = Array.from(line);
+    if (chars.length === 0) lines.push('');
+    for (let start = 0; start < chars.length && lines.length < limit;) {
+      let lo = 0, hi = chars.length - start;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (ctx.measureText(chars.slice(start, start + mid).join('')).width <= width) lo = mid;
+        else hi = mid - 1;
+      }
+      let count = Math.max(1, lo);
+      if (start + count < chars.length) {
+        for (let i = count - 1; i > 0; i--) if (/\s/.test(chars[start + i])) { count = i + 1; break; }
+      }
+      lines.push(chars.slice(start, start + count).join(''));
+      start += count;
+    }
+    if (lines.length >= limit) break;
+  }
+  return lines;
+}
+
 export class ChartTable implements IPrimitive {
   private _rows: readonly (readonly TableCell[])[] = [];
   private _grid: { cols: number; cells: PositionedCell[] } = { cols: 0, cells: [] };
@@ -242,19 +273,24 @@ export class ChartTable implements IPrimitive {
   private _host: PrimitiveHost | null = null;
   /** Last drawn rect in media px, for hit-testing without recomputing layout. */
   private _rect: { x: number; y: number; w: number; h: number } | null = null;
+  private readonly _hitId = `table-tooltip:${++nextTableId}`;
+  private _revision = 0;
+  private _hits: CellHit[] = [];
+  private _size: { width: number; height: number; dpr: number } | null = null;
 
   public constructor(options: Partial<ChartTableOptions> = {}) {
     this._opts = { ...DEFAULT_CHART_TABLE_OPTIONS, ...options };
   }
 
   public attached(host: PrimitiveHost): void { this._host = host; }
-  public detached(): void { this._host = null; }
+  public detached(): void { this._host = null; this._clearHits(); }
   public zOrder(): ZOrder { return 'top'; }
 
   public options(): Readonly<ChartTableOptions> { return this._opts; }
 
   public setOptions(patch: Partial<ChartTableOptions>): void {
     this._opts = { ...this._opts, ...patch };
+    this._clearHits();
     this._host?.requestUpdate();
   }
 
@@ -263,13 +299,25 @@ export class ChartTable implements IPrimitive {
     const grid = positionCells(rows);
     this._rows = rows;
     this._grid = grid;
+    this._clearHits();
     this._host?.requestUpdate();
   }
 
   public rows(): readonly (readonly TableCell[])[] { return this._rows; }
 
+  private _clearHits(): void {
+    this._rect = null; this._hits = []; this._size = null; this._revision++;
+  }
+
+  private _sameSize(rc: PrimitiveRenderContext): boolean {
+    return this._size?.width === rc.plotWidth && this._size.height === rc.plotHeight && this._size.dpr === rc.dpr;
+  }
+
   public draw(ctx: CanvasRenderingContext2D, rc: PrimitiveRenderContext): void {
+    if (!this._sameSize(rc)) this._clearHits();
+    this._size = { width: rc.plotWidth, height: rc.plotHeight, dpr: rc.dpr };
     this._rect = null;
+    this._hits = [];
     const rows = this._rows;
     if (rows.length === 0) return;
     const o = this._opts;
@@ -330,6 +378,14 @@ export class ChartTable implements IPrimitive {
       const cellLeft = ox + px(colX[c]);
       const endX = colX[c + colSpan] ?? w;
       const cellW = colSpan === 1 ? px(endX - colX[c]) : px(endX) - px(colX[c]);
+
+      if (cell.tooltip) {
+        const x = Math.max(0, cellLeft / dpr), y = Math.max(0, cellTop / dpr);
+        const right = Math.min(rc.plotWidth, (cellLeft + cellW) / dpr);
+        const bottom = Math.min(rc.plotHeight, (cellTop + rowH) / dpr);
+        if (right > x && bottom > y) this._hits.push({ x, y, w: right - x, h: bottom - y,
+          key: `${this._hitId}:${this._revision}:${r}:${c}`, tooltip: cell.tooltip });
+      }
 
       if (cell.bgColor !== undefined) {
         ctx.fillStyle = cell.bgColor;
@@ -401,12 +457,44 @@ export class ChartTable implements IPrimitive {
       ctx.lineWidth = Math.max(1, px(o.frameWidth ?? 1));
       ctx.strokeRect(ox, oy, px(w), px(h));
     }
+    this._drawTooltip(ctx, rc);
     ctx.restore();
   }
 
-  public hitTest(x: number, y: number): PrimitiveHit | null {
+  private _drawTooltip(ctx: CanvasRenderingContext2D, rc: PrimitiveRenderContext): void {
+    if (rc.hoverId !== (this._opts.id ?? this._hitId) || !rc.hoverKey) return;
+    const hit = this._hits.find(cell => cell.key === rc.hoverKey);
+    const d = rc.dpr, width = rc.plotWidth * d, height = rc.plotHeight * d;
+    if (!hit || width <= 10 * d || height <= 6 * d) return;
+    ctx.save();
+    ctx.font = `${11 * d}px system-ui, sans-serif`;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    const padX = 5 * d, padY = 3 * d, lineHeight = 11 * d * 1.35;
+    const lines = tooltipLines(ctx, hit.tooltip, width - 2 * padX, Math.ceil((height - 2 * padY) / lineHeight));
+    const w = Math.min(width, widestLine(ctx, lines) + 2 * padX), h = lines.length * lineHeight + 2 * padY;
+    const x = Math.max(0, Math.min((hit.x + hit.w / 2) * d - w / 2, width - w));
+    const above = hit.y * d - 8 * d - h;
+    const y = Math.max(0, Math.min(above >= 0 ? above : (hit.y + hit.h) * d + 8 * d, height - h));
+    ctx.beginPath(); ctx.rect(0, 0, width, height); ctx.clip();
+    ctx.beginPath(); roundRectPath(ctx, x, y, w, h, Math.min(3 * d, w / 2, h / 2));
+    ctx.fillStyle = rc.theme.axisText; ctx.fill();
+    ctx.fillStyle = contrastText(rc.theme.axisText);
+    for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], x + padX, y + padY + (i + 0.5) * lineHeight);
+    ctx.restore();
+  }
+
+  public hitTest(x: number, y: number, rc?: PrimitiveRenderContext): PrimitiveHit | null {
+    if (rc !== undefined && !this._sameSize(rc)) { this._clearHits(); return null; }
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !this._size
+      || x < 0 || y < 0 || x > this._size.width || y > this._size.height) return null;
     const r = this._rect;
-    if (this._opts.id === undefined || r === null) return null;
+    if (r === null) return null;
+    for (const cell of this._hits) {
+      if (x >= cell.x && x < cell.x + cell.w && y >= cell.y && y < cell.y + cell.h) {
+        return { externalId: this._opts.id ?? this._hitId, hoverKey: cell.key, zOrder: 'top', distance: 0, cursor: 'default' };
+      }
+    }
+    if (this._opts.id === undefined) return null;
     if (x < r.x || x > r.x + r.w || y < r.y || y > r.y + r.h) return null;
     return { externalId: this._opts.id, zOrder: 'top', distance: 0, cursor: 'default' };
   }

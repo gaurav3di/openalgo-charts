@@ -100,6 +100,7 @@ export interface PaneRenderContext {
   barCountdown?: BarCountdownOptions;
   /** externalId of the primitive under the pointer (hover visual state). */
   hoverId?: string | null;
+  hoverKey?: string | null;
   /** externalId of the line currently being dragged (active visual state). */
   dragId?: string | null;
   /**
@@ -562,6 +563,7 @@ export class Pane {
       dpr: ctx.dpr,
       theme: ctx.theme,
       hoverId: ctx.hoverId ?? null,
+      hoverKey: ctx.hoverKey ?? null,
       dragId: ctx.dragId ?? null,
       bars: () => {
         for (const s of this._series) {

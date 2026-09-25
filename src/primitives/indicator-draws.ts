@@ -33,6 +33,38 @@ interface PlateRect {
   h: number;
 }
 
+type ScreenPoint = [number, number];
+type CubicSegment = [number, number, number, number, number, number];
+
+function smoothPath(xs: number[], ys: number[], closed: boolean): { points: ScreenPoint[]; segments: CubicSegment[] } | null {
+  const points: ScreenPoint[] = [];
+  for (let i = 0; i < xs.length; i++) {
+    const previous = points[points.length - 1];
+    if (!previous || previous[0] !== xs[i] || previous[1] !== ys[i]) points.push([xs[i], ys[i]]);
+  }
+  if (closed && points.length > 1 && points[0][0] === points[points.length - 1][0]
+    && points[0][1] === points[points.length - 1][1]) points.pop();
+  if (points.length < 2) return null;
+  const segments: CubicSegment[] = [];
+  if (points.length > 2) {
+    const n = points.length;
+    for (let i = 0; i < (closed ? n : n - 1); i++) {
+      const a = points[i], b = points[(i + 1) % n];
+      const before = points[closed ? (i + n - 1) % n : Math.max(0, i - 1)];
+      const after = points[closed ? (i + 2) % n : Math.min(n - 1, i + 2)];
+      // Cubic controls take one third of the half-chord tangent. Repeated open
+      // endpoints avoid inventing an extra anchor; closed paths wrap the seam.
+      const segment: CubicSegment = [
+        a[0] + (b[0] - before[0]) / 6, a[1] + (b[1] - before[1]) / 6,
+        b[0] - (after[0] - a[0]) / 6, b[1] - (after[1] - a[1]) / 6, b[0], b[1],
+      ];
+      if (!segment.every(Number.isFinite)) return null;
+      segments.push(segment);
+    }
+  }
+  return { points, segments };
+}
+
 /** Dash pattern in device px, matching the drawing tier's vocabulary. */
 function dashOf(style: IndicatorLineStyle | undefined, d: number): number[] {
   return style === 'dashed' ? [6 * d, 4 * d] : style === 'dotted' ? [1 * d, 3 * d] : [];
@@ -148,19 +180,47 @@ export class IndicatorDrawings implements IPrimitive {
         const xs = new Array<number>(pts.length);
         const ys = new Array<number>(pts.length);
         let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+        let valid = true;
         for (let i = 0; i < pts.length; i++) {
+          if (!Number.isFinite(pts[i].time) || !Number.isFinite(pts[i].price)) { valid = false; break; }
           const px = x(pts[i]);
           const py = y(pts[i]);
+          if (!Number.isFinite(px) || !Number.isFinite(py)) { valid = false; break; }
           xs[i] = px; ys[i] = py;
           if (px < x0) x0 = px;
           if (px > x1) x1 = px;
           if (py < y0) y0 = py;
           if (py > y1) y1 = py;
         }
-        if (offPane(x0, y0, x1, y1)) continue;
+        if (!valid) continue;
+        const smooth = item.curve === 'smooth';
+        const path = smooth ? smoothPath(xs, ys, item.closed === true) : null;
+        if (smooth && path === null) continue;
+        if (path) {
+          for (const segment of path.segments) {
+            for (let i = 0; i < segment.length; i += 2) {
+              x0 = Math.min(x0, segment[i]); x1 = Math.max(x1, segment[i]);
+              y0 = Math.min(y0, segment[i + 1]); y1 = Math.max(y1, segment[i + 1]);
+            }
+          }
+        }
+        const margin = smooth ? ctx.lineWidth / 2 : 0;
+        if (offPane(x0 - margin, y0 - margin, x1 + margin, y1 + margin)) continue;
+        if (smooth) {
+          // Normal primitives paint after axes, so their layer does not supply
+          // a plot clip. Interpolated overshoot must stay inside the data area.
+          ctx.save();
+          ctx.beginPath(); ctx.rect(0, 0, w, h); ctx.clip();
+        }
         ctx.beginPath();
         ctx.moveTo(xs[0], ys[0]);
-        for (let i = 1; i < pts.length; i++) ctx.lineTo(xs[i], ys[i]);
+        if (path && path.segments.length > 0) {
+          for (const segment of path.segments) ctx.bezierCurveTo(...segment);
+        } else if (path) {
+          ctx.lineTo(path.points[1][0], path.points[1][1]);
+        } else {
+          for (let i = 1; i < pts.length; i++) ctx.lineTo(xs[i], ys[i]);
+        }
         if (item.closed === true) ctx.closePath();
         if (item.fillColor !== undefined) {
           ctx.globalAlpha = item.opacity ?? 0.12;
@@ -171,6 +231,7 @@ export class IndicatorDrawings implements IPrimitive {
         ctx.setLineDash([]);
         ctx.strokeStyle = color;
         ctx.stroke();
+        if (smooth) ctx.restore();
         continue;
       }
 

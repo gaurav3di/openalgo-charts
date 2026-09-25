@@ -243,6 +243,24 @@ widths distribute any extra width needed by merged text across its columns.
 `frameColor` adds a separate outer frame, with optional `frameWidth` in media pixels
 (default one). Cell borders continue to use `borderColor` and `borderWidth`.
 
+Add `tooltip` to a cell for plain-text hover details. Explicit newlines are kept,
+long lines wrap, and the tooltip stays inside the plot. A merged cell uses its
+anchor's tooltip; covered cells are ignored. Empty or omitted tooltips leave
+ordinary table rendering unchanged. Malformed nonstring tooltip values reject
+before `setRows` replaces the current table.
+
+The table's optional `id` remains its click ID across all cells. When it is absent,
+only tooltip cells have hit targets, with an opaque generated ID. Supply an `id`
+when handling table clicks. Tooltip state clears after content, layout or ownership
+changes and is omitted from SVG exports.
+
+```js
+table.setRows([
+  [{ text: 'Session', colSpan: 2, tooltip: 'Regular hours\nValues update with the newest bar' }, { text: '' }],
+  [{ text: 'Range' }, { text: '4.75', tooltip: 'Session high minus session low' }],
+]);
+```
+
 Fixed sizing uses `cellWidth` (a number, or an array for per-column widths)
 and `cellHeight`, in media px. Proportional: `widthPercent` and `heightPercent` stretch
 the grid to a share of the plot, preserving the column proportions declared in
@@ -511,6 +529,12 @@ function bestHit(hits: readonly (PrimitiveHit | null)[]): PrimitiveHit | null
 ```
 
 `null` entries in the input array are skipped. Returns `null` if every entry is `null`.
+
+Composite primitives may return an optional `hoverKey` to distinguish regions
+that share an `externalId`. The chart forwards the key in `PrimitiveRenderContext`
+and repaints when it changes; click IDs and public `hover` event IDs remain the
+external ID. Existing primitives can omit it. SVG exports clear transient hover
+IDs and keys.
 
 ## `InvalidationLevel`
 

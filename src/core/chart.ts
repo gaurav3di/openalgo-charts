@@ -893,6 +893,7 @@ export class Chart {
   private _dragPriceScale: PriceScale | null = null;
   private _dragCancelOnEscape = false;
   private _hoverId: string | null = null; // externalId of the primitive under the pointer
+  private _hoverKey: string | null = null;
   /** Whether that primitive draws below the overlay, so leaving it must repaint the base. */
   private _hoverOnBase = false;
   private _overlayFrozen = false; // native context menu open: keep the save-image snapshot
@@ -2985,7 +2986,7 @@ export class Chart {
         const pane = this._panes[i];
         const ctx: PaneRenderContext = {
           ...this._renderContext(i === bottomPane),
-          dpr: 1, hoverId: null, dragId: null, paintBackground: background,
+          dpr: 1, hoverId: null, hoverKey: null, dragId: null, paintBackground: background,
         };
         // The DOM draws the separator as a 1px border on the pane box and lets
         // the canvas start below it, its last row hidden by the overflow clip.
@@ -4318,6 +4319,7 @@ export class Chart {
       timezone: this._timezone,
       leftAxisWidth: this._leftAxisWidth,
       hoverId: this._hoverId,
+      hoverKey: this._hoverKey,
       dragId: this._dragId,
       sessionClock: this._sessionClockOptions(),
       barCountdown: this._barCountdownOptions(),
@@ -5460,8 +5462,10 @@ export class Chart {
    */
   private _setHover(hit: PrimitiveHit | null): void {
     const id = hit?.externalId ?? null;
+    const key = hit?.hoverKey ?? id;
     this._container.style.cursor = this._dragging && hit?.cursor !== 'pointer' ? 'grabbing' : hit?.cursor ?? '';
-    if (id === this._hoverId) return;
+    if (id === this._hoverId && key === this._hoverKey) return;
+    const changedId = id !== this._hoverId;
     // Hover-styled primitives on the base canvas need a light repaint, no
     // rescale. A change that touches only 'top' primitives (leaving a drawing
     // for another, or for empty space) is the overlay's alone: the pointer
@@ -5470,9 +5474,10 @@ export class Chart {
     const onBase = hit !== null && hit.zOrder !== 'top';
     const level = onBase || this._hoverOnBase ? InvalidationLevel.Light : InvalidationLevel.Cursor;
     this._hoverId = id;
+    this._hoverKey = key;
     this._hoverOnBase = onBase;
     this.invalidate((m) => m.invalidateGlobal(level));
-    this.emit('hover', { id });
+    if (changedId) this.emit('hover', { id });
   }
 
   private _updateCursor(paneIndex: number, x: number, localY: number, containerY: number, source: PointerEvent): void {

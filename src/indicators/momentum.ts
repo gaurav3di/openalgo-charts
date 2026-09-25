@@ -432,7 +432,15 @@ export const MFI: IndicatorDescriptor = {
     const pos = new Array<number>(n).fill(0);
     const neg = new Array<number>(n).fill(0);
     for (let i = 1; i < n; i++) {
-      const flow = tp[i] * (bars[i].volume ?? 0);
+      const volume = bars[i].volume ?? 0;
+      if (!Number.isFinite(tp[i]) || !Number.isFinite(tp[i - 1]) || !Number.isFinite(volume)) {
+        pos[i] = NaN;
+        neg[i] = NaN;
+        continue;
+      }
+      const rawFlow = tp[i] * volume;
+      const flow = Number.isFinite(rawFlow) ? rawFlow : NaN;
+      // A price tie contributes zero even when its unused raw product overflows.
       if (tp[i] > tp[i - 1]) pos[i] = flow;
       else if (tp[i] < tp[i - 1]) neg[i] = flow;
     }
@@ -440,7 +448,9 @@ export const MFI: IndicatorDescriptor = {
     for (let i = period; i < n; i++) {
       let p = 0;
       let q = 0;
-      for (let j = 0; j < period; j++) { p += pos[i - j]; q += neg[i - j]; }
+      // Chronological sums retain finite rounding order and discard expired gaps.
+      for (let j = i - period + 1; j <= i; j++) { p += pos[j]; q += neg[j]; }
+      if (!Number.isFinite(p) || !Number.isFinite(q)) continue;
       out[i] = q === 0 ? 100 : 100 - 100 / (1 + p / q);
     }
     // The 80 / 20 band edges are fixed in the definition, so they are literals

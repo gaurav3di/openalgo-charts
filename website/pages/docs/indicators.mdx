@@ -560,6 +560,7 @@ Four kinds. Every colour defaults to the theme's axis ink, and every anchor is a
 | Field | Type | Description |
 |---|---|---|
 | `points` | `DrawAnchor[]` | Two or more; a shorter list draws nothing. |
+| `curve` | `'linear' \| 'smooth'?` | Straight by default; smooth interpolates the anchors after time and price mapping. |
 | `color` | `string?` | |
 | `lineWidth` | `number?` | Media px, default 1. |
 | `closed` | `boolean?` | Close the path back to the first point (a triangle, a wedge). |
@@ -582,6 +583,20 @@ const wedge: IndicatorDrawing = {
 ```
 
 `lineStyle` belongs to `line` alone; boxes and polylines stroke solid.
+
+`curve: 'smooth'` uses cubic segments with half-chord tangents. The control
+points sit one sixth of the adjacent-anchor difference from each segment's
+endpoints. Open endpoints repeat their nearest anchor; a closed path wraps its
+neighbors through the seam. This interpolation happens in screen space, so it
+also follows logarithmic and inverted axes. It can overshoot the anchor prices;
+the curve does not add those extrema to autoscale.
+
+Consecutive duplicate anchors are collapsed for smoothing. Two surviving
+anchors remain a straight segment. A repeated final anchor is removed only for
+a closed path. An open filled path uses a straight closing edge for its fill,
+while its stroked curve stays open. Smooth paths are clipped to the plot in both
+canvas and SVG output. A nonfinite source or mapped anchor omits the complete
+polyline, including in linear mode, rather than bridging an unknown coordinate.
 
 What the layer does with what you return:
 

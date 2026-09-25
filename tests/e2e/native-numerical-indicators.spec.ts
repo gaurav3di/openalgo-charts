@@ -178,6 +178,58 @@ test('Balance of Power omits an overflowing range and paints the later finite ra
   await page.screenshot({ path: info.outputPath('bop-overflow-gap.png') });
 });
 
+test('MFI paints finite windows and removes unavailable overflowing money flow', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await numericalFixture(page);
+  const initial = await page.evaluate(async () => {
+    const { chart, source, paint, ink } = window.__numeric;
+    const volume = [1, 1, 2, 1, 1e308, 1, 1, 1, 1];
+    source.setData([1, 2, 1, 2, 3, 2, 1, 2, 3].map((close, i) => ({
+      time: 1700000000 + i * 60, open: close, high: close + 1, low: close - 1,
+      close, volume: volume[i],
+    })));
+    const study = chart.addIndicator('mfi', { period: 2, color: '#ff9900' });
+    window.__numeric.study = study;
+    const plot = study.series('mfi')!;
+    plot.applyOptions({ lineWidth: 3 });
+    plot.priceScale().setAutoScale(false);
+    plot.priceScale().setPriceRange({ min: -10, max: 110 });
+    chart.setPaneWeight(study.paneIndex, 1.5);
+    chart.setVisibleLogicalRange({ from: -1, to: 9 });
+    await paint();
+    return { values: study.values().mfi, ordinary: ink(plot, study.paneIndex, 2.5, 50),
+      recovered: ink(plot, study.paneIndex, 7.5, (100 - 100 / 3 + 100) / 2),
+      unavailable: ink(plot, study.paneIndex, 4.5, 100) };
+  });
+  expect(initial.values).toEqual([null, null, 50, 50, null, null, 0, 100 - 100 / 3, 100]);
+  expect(initial.ordinary).toBeGreaterThan(1);
+  expect(initial.recovered).toBeGreaterThan(1);
+  expect(initial.unavailable).toBe(0);
+  await page.screenshot({ path: info.outputPath('mfi-finite-recovery.png') });
+
+  const forming = await page.evaluate(async () => {
+    const { source, study, paint, ink } = window.__numeric;
+    source.update({ time: 1700000000 + 8 * 60, open: 3, high: 4, low: 2, close: 3, volume: 1e308 });
+    await paint();
+    return { values: study!.values().mfi,
+      stale: ink(study!.series('mfi')!, study!.paneIndex, 7.5, (100 - 100 / 3 + 100) / 2) };
+  });
+  expect(forming.values[8]).toBeNull();
+  expect(forming.stale).toBe(0);
+  const restored = await page.evaluate(async () => {
+    const { source, study, paint, ink } = window.__numeric;
+    source.update({ time: 1700000000 + 8 * 60, open: 3, high: 4, low: 2, close: 3, volume: 1 });
+    await paint();
+    return { values: study!.values().mfi,
+      line: ink(study!.series('mfi')!, study!.paneIndex, 7.5, (100 - 100 / 3 + 100) / 2) };
+  });
+  expect(restored.values).toEqual(initial.values);
+  expect(restored.line).toBeGreaterThan(1);
+  expect(errors).toEqual([]);
+  await page.screenshot({ path: info.outputPath('mfi-replaced-forming-flow.png') });
+});
+
 test('WaveTrend draws a genuine crossing but no marker for equal finite lines', async ({ page }, info) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));

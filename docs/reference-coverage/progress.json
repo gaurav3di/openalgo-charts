@@ -66,7 +66,8 @@
         "AlphaTrend price and money-flow window recovery after overflow expires",
         "Seasonality finite monthly returns and unavailable aggregate statistics",
         "Independent RSI seed recovery, held state across absent changes and finite final ratios",
-        "Companion numerical audit and verified public 0.7.0 packages with exact cross-language results"
+        "Companion numerical audit and verified public 0.7.0 packages with exact cross-language results",
+        "Money Flow Index finite-flow and chronological-window correction with exact companion-engine fixtures"
       ],
       "evidence": [
         "tests/indicator-statistics.test.ts",
@@ -75,7 +76,8 @@
         "tests/indicator-balance-of-power-numeric.test.ts",
         "tests/indicator-event-window-recovery.test.ts",
         "tests/seasonality-numeric-boundaries.test.ts",
-        "tests/rsi-numeric-recovery.test.ts"
+        "tests/rsi-numeric-recovery.test.ts",
+        "tests/mfi-numeric-boundaries.test.ts"
       ],
       "remaining": [
         "Missing-value and warmup contracts",
@@ -162,7 +164,9 @@
         "Native symbol, session, multiline, price and absolute timestamp inputs",
         "Atomic typed-value validation and paired exchange defaults across creation, editing and restoration",
         "Targeted price and time capture with reentrant ownership and lifecycle fences",
-        "Shared host controls with symbol search, invalid drafts and suspended modal picking"
+        "Shared host controls with symbol search, invalid drafts and suspended modal picking",
+        "Measured table cell hover details with merged geometry, independent transient identity and export suppression",
+        "Smooth screen-space study polylines with explicit open and closed interpolation, finite geometry and plot-clipped SVG output"
       ],
       "evidence": [
         "tests/indicator-visual-descriptors.test.ts",
@@ -179,23 +183,34 @@
         "tests/pick-targets.test.ts",
         "tests/widget-indicator-typed-inputs.test.ts",
         "examples/yfinance/tests/indicator-typed-inputs.test.js",
-        "tests/e2e/native-typed-inputs.spec.ts"
+        "tests/e2e/native-typed-inputs.spec.ts",
+        "tests/table-cell-tooltips.test.ts",
+        "tests/table-tooltip-hover.test.ts",
+        "tests/e2e/table-cell-tooltips.spec.ts",
+        "tests/indicator-curved-polylines.test.ts",
+        "tests/e2e/indicator-curved-polylines.spec.ts"
       ],
       "remaining": [
-        "Table hover tooltips",
-        "Drawing and marker variants"
+        "Label, box and marker typography and text-color choices",
+        "Explicit pane and scale targets for drawing, marker and background outputs"
       ]
     },
     {
       "id": "native-chart-apis",
       "status": "partial",
       "remaining": [
-        "Legacy whole-axis transfers for mixed studies and explicit overlays",
-        "Pane placement and collapse",
-        "History beyond drawing edits",
-        "Widget and navigation",
-        "Layouts and persistence",
-        "Trading and provider APIs"
+        "Pane collapse and primary-pane reorder",
+        "Interleaved action history beyond drawing edits",
+        "Independent runtime user pan and zoom enablement",
+        "Date and range navigation with missing-history loading",
+        "Viewport-anchored annotations and independent entity edit policies",
+        "Supported source, study and drawing paint-order controls",
+        "Selected-range and display-aligned data export",
+        "Reusable multi-chart grid host",
+        "Named watchlists, quote rows and native news-reader contracts",
+        "Account state and advanced trading operations",
+        "Explicit source, session and conversion variants",
+        "Price-dependent tick increments"
       ],
       "implemented": [
         "Persisted candle density in CSS pixels",
@@ -339,22 +354,22 @@
     }
   },
   "validation": {
-    "chartTests": 7480,
-    "chartTestFiles": 331,
+    "chartTests": 7547,
+    "chartTestFiles": 335,
     "compiledProgramTests": 18,
     "demoTests": 472,
     "demoTestFiles": 41,
     "browserEvidence": "This batch passed 33 browser cases across all three engines: 12 native template layout, no-plot pane and formatter cases, 18 example-host template cases and three original autofit regressions. Actual built-site checks passed 30 states across desktop and 390-pixel layouts, including all four template controls. Data, source identity, copied values, pane weights, scale ownership, ranges, axis placement and rendered pixels were checked. Final engine, host and built-site screenshots were inspected. Traffic uses fixtures rather than live brokers.",
     "website": "63 static pages built successfully; template example verified through initial state and all four controls at desktop and mobile widths in all three engines",
-    "chartOnlyBrotliKiB": 70.71,
-    "chartOnlyBudgetKiB": 70.85,
-    "baseBrotliKB": 111.49,
-    "indicatorBrotliKB": 36.0,
+    "chartOnlyBrotliKiB": 71.78,
+    "chartOnlyBudgetKiB": 71.9,
+    "baseBrotliKB": 112.55,
+    "indicatorBrotliKB": 36.07,
     "workspaceBrotliKB": 8.67,
-    "allTiersBrotliKB": 293.78,
-    "budgetChange": "Typed scalar validation, paired exchange defaults and targeted capture fences add 1025 bytes to base (110469 to 111494) and 1.12 KiB to chart-only (69.59 to 70.71). Shared typed forms and modal actions add 2032 bytes to the optional widget (60158 to 62190). Numerical window and finite-result corrections add 106 bytes to indicators (35895 to 36001). Limits: base 111.75 kB, base plus trade 119.75 kB, indicators 36.1 kB, widget 62.25 kB, terminal 251.5 kB, all 294 kB and chart-only 70.85 KiB. Other tier limits unchanged.",
+    "allTiersBrotliKB": 294.9,
+    "budgetChange": "Measured table hover details, smooth study paths and safe finite SVG serialization add 1053 bytes to base (111494 to 112547) and 1.07 KiB to chart-only (70.71 to 71.78). MFI corrections add 64 bytes to indicators (36001 to 36065). Other tier bytes are unchanged. Limits: base 112.9 kB, base plus trade 120.9 kB, terminal 252.75 kB, all 295.25 kB and chart-only 71.9 KiB; other tier limits unchanged.",
     "review": "Independent typed-input review found reentrant destruction, pane-slot replacement and context changes during pick:end. Eight actual-chart regressions failed before capture lifetime fences and now pass. No additional blocker found in scalar validation, exchange defaults, restore preflight or public exports. A final host review reproduced four failures involving constructor and __proto__ exchange keys; safe own-property defaults, patches and staged collection now preserve them through selection, Defaults, Cancel and Apply.",
-    "packageVerification": "Full verify passes lint, typecheck, 7480 unit tests, seven endurance checks, build, 472 example-host tests, declaration identity, measured size budgets and optional-tier removal checks. Installed companion 0.7.0 passes 18 compiled-program integration checks and public adapter typechecking. API documentation generates without warnings.",
+    "packageVerification": "Full verify passes lint, typecheck, 7547 unit tests, seven endurance checks, build, 472 example-host tests, declaration identity, measured size budgets and optional-tier removal checks. Installed companion 0.7.0 passes 18 compiled-program integration checks and public adapter typechecking. API documentation generates without warnings.",
     "latestEngineSourceReview": "Companion source f9ab00e4e9238b442ae0ad3639f52bc5dc45394b passes 2161 JavaScript tests, 956 Python tests and 102 conformance cases, with 19 compiler-only skips. Strict gates pass 6836 cases and 1504908 accepted calls with zero exact-bit, absence, oracle or execution differences. Both public 0.7.0 packages are published. Downloaded public artifacts pass 363 programs across all 116 keys, 124977 exact cells and 6756 independent expected cells. Archived source/build bytes and registry integrity match; attestation digest/source/workflow claims checked without cryptographic signature verification.",
     "directionalSeedAudit": "129 focused tests pass after aligning directional-movement seeds with true range. Built-package exact-value and rendered-line checks pass in all three browser engines; screenshots inspected. First-available indices and existing chart missing-value behavior are preserved. See numerical-audit.md for the independent fixture and remaining limits.",
     "hullLengthAudit": "173 focused tests and six browser cases across three engines pass. Standalone HMA now shares Hull Suite's integer half and rounded square-root windows, with length one as identity. Six compiled Hull fixtures match chart formulas and availability within 1e-12, while all fifteen audited compiled programs agree bit-for-bit between the companion engines. Chart summation order and missing-value contracts remain under audit.",
@@ -365,7 +380,12 @@
     "preferenceWebsiteEvidence": "The built website example passes 30 control states across three browser engines at 1280 and 390 CSS pixels. Primary-only versus combined extents change actual pixels and price range; collapse and expansion retain bars and calculated values. No console exceptions or control overflow. Screenshots inspected. API documentation builds without warnings and skills inventory remains 978/978.",
     "typedInputBrowserEvidence": "42 permanent cases pass across both hosts at 1100 and 390 CSS pixels in Chromium, Firefox and WebKit. Search pairs including constructor and __proto__ exchange fields, cancel/defaults, exact UTC fractions, invalid drafts, target scales, price/time capture, reload, instance removal and destruction were checked. Screenshots inspected. Browser regressions caught textarea assignment, compatibility click-through dismissal and stretched mobile rows before fixes.",
     "typedInputWebsiteEvidence": "The built example passes 30 recorded states across all three browser engines at 1280 and 390 CSS pixels. Symbol/exchange display, literal notes, session and threshold line pixels, exact fractional UTC seconds, out-of-calendar numeric timestamps, Apply/Cancel and resumed price/time picking are verified. Screenshots inspected, no page errors or horizontal overflow.",
-    "numericalBrowserEvidence": "21 numerical cases pass in Chromium, Firefox and WebKit, checking directional and Hull values, RSI seed and gap recovery, absent Balance of Power points, false and genuine WaveTrend markers, AlphaTrend recovery and finite Seasonality table pixels. Screenshots inspected."
+    "numericalBrowserEvidence": "24 numerical cases pass in Chromium, Firefox and WebKit, checking directional and Hull values, RSI seed and gap recovery, absent Balance of Power points, false and genuine WaveTrend markers, AlphaTrend recovery and finite Seasonality table pixels and MFI flow/window recovery. Screenshots inspected.",
+    "visualBrowserEvidence": "51 combined cases pass in all three engines: 24 numerical, six curved-path and 21 table-cell detail cases. Curve samples differ from chords, obey logarithmic/inverted scales, stay inside axes and preserve SVG paths. Table cases cover 1100/390 CSS pixels, DPR 1/1.5/2, actual touch release, merged and duplicate-ID targets, owner changes, resize, removal, data retention and SVG suppression.",
+    "mfiAudit": "Sixteen dedicated and 125 focused regression tests pass. Native MFI and both released engines match 22 actual compiled cases and 991 independently expected cells. Three built-browser cases pass finite/recovery values, absence at overflowing observations and forming-volume replacement.",
+    "svgFiniteCoordinateAudit": "Five failing large-finite coordinate regressions now pass, including a smooth primitive path. Existing ordinary rounding, nonfinite fallback, signed-zero and subnormal formatting remain unchanged; 56 SVG/curve tests pass.",
+    "visualWebsiteEvidence": "The built curved annotation example passes initial and panned pixel checks in six browser/width combinations. The merged-table example passes 18 plain/heading/range states across three engines at 1280 and 390 CSS pixels, with exact pixel restoration after leaving, unchanged source data and no hover detail in SVG. Representative native and site screenshots inspected; no page errors or horizontal overflow. Touch checks use browser emulation, not physical hardware.",
+    "visualReview": "Independent review verified curve geometry and found finite-coordinate overflow in shared SVG decimal rounding; five RED regressions now pass after its correction. Table review and deferred-frame tests cover stale row identities, duplicate external IDs, fractional measured cell bounds and resized export geometry. No further blocker found."
   },
   "deferred": [
     "Issue #22: higher-timeframe inputs on built-in indicators, excluded by the user on 2026-09-25"

@@ -34,6 +34,14 @@ draw a separate outer frame after the cells. `borderColor`/`borderWidth` retain
 their cell-border behavior. These fields also work in descriptor `table`/`tables`
 results; existing compiled adapters must explicitly emit new fields to use them.
 
+`TableCell.tooltip` adds plain-text hover detail, with explicit newlines and
+automatic wrapping inside the plot. A merged cell uses only its anchor's detail.
+Empty or omitted tooltips retain the existing behavior. Nonstring tooltip values
+reject before replacing rows. Hover content clears when rows, sizing or ownership
+change, and SVG exports omit it. A configured table `id` remains the click ID for
+every cell. Without an `id`, only tooltip cells become hit targets and use an
+opaque generated ID; supply an ID for stable application routing.
+
 ## `IPrimitive`
 
 ```ts
@@ -50,6 +58,7 @@ type ZOrder = 'bottom' | 'normal' | 'top';
 interface PrimitiveHost { requestUpdate(): void; }
 interface PrimitiveHit {
   externalId: string;
+  hoverKey?: string;     // optional transient subtarget identity, separate from click IDs
   zOrder: ZOrder;
   distance: number;      // media px from the cursor; smaller wins
   cursor?: string;
@@ -79,6 +88,7 @@ interface PrimitiveHit {
 | `theme` | `ChartTheme` | Palette. `theme.background` may be the literal `'transparent'`. |
 | `bars?` | `() => readonly Bar[]` | Lazy; the pane's primary price series. Optional, guard with `rc.bars?.()`. |
 | `hoverId?` | `string \| null` | `externalId` currently hovered, for hover styling. |
+| `hoverKey?` | `string \| null` | Optional hover subtarget, falling back to `externalId` for ordinary hits. |
 | `dragId?` | `string \| null` | `externalId` currently being dragged. |
 
 `pane.bindPrimitiveScale(primitive, id)` binds an attached primitive to `'left'`,
@@ -151,6 +161,7 @@ Routing, from `src/core/chart.ts`:
 - **Drag**: on pointerdown, a hit arms a drag when `hit.draggable === true`, or when `hit.cursor === 'ns-resize'` and `subscribeDrag` has a callback. The press emits `drag:start`. Moves fire `subscribeDrag(onDrag)` and a `drag` bus event `{ id, price, time, paneIndex, fromPrice, fromTime }`; release fires `onDragEnd` and `drag:end`. Listen for `drag:cancel` to discard drafts on pointer cancellation or pinch. Set `PrimitiveHit.cancelOnEscape: true` only when the consumer handles cancellation without requiring an end notification; it enables Escape rollback, including with shortcuts disabled. Pointer cancellation retains the legacy end notification after cancellation.
 - A drag that never moved is replayed as a click, so a draggable primitive is still clickable.
 - `hoverId` / `dragId` are pushed back into `PrimitiveRenderContext` each frame, which is how `PriceLine` renders its hover and dragging states without any state of its own.
+- A composite primitive can return a unique `hoverKey` for each region while keeping one `externalId`. Key changes repaint the hover state without adding duplicate public `hover` events for the same external ID. SVG export clears both hover fields.
 
 Namespacing convention used by the built-ins, one primitive, several targets:
 

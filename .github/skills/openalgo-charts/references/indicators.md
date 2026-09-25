@@ -906,6 +906,16 @@ draws: ({ bars, values, settings }) => ([
 - A `label`, and a `box` caption, split on `\n`. Marker text does too, since 1.7.1.
 - Shapes entirely off-pane are culled before any path work.
 
+Polylines accept `curve: 'linear' | 'smooth'`; omitted keeps straight segments.
+Smooth interpolates mapped screen anchors with cubic half-chord tangents, using
+one-sixth neighbor differences for its controls. Open endpoint tangents repeat
+the endpoint; closed paths wrap their neighbors. Overshoot is allowed and does
+not affect autoscale. Smooth stroke/fill is plot-clipped in canvas and SVG, with
+control-hull and stroke-width culling. Consecutive duplicates collapse, two
+surviving points stay straight, and only a closed path drops a repeated last
+endpoint. An open fill closes by a chord without closing the stroked curve.
+Nonfinite source or mapped anchors omit a whole polyline in either mode.
+
 The list is rebuilt on every recompute, exactly like `markers`. There are no retained handles to
 mutate or leak, and a symbol change cannot strand a drawing.
 

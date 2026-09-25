@@ -550,6 +550,39 @@ A descriptor can also supply `draws` for free-standing lines, boxes and labels,
 grid, and `alerts` the chart evaluates for you. See
 [Indicators](/docs/indicators) for the full contract.
 
+### Curved study annotations
+
+The orange curve interpolates the same time and price anchors as the gray
+straight path. Smoothing happens after scale mapping and can overshoot between
+anchors. It follows chart navigation and stays inside the plot when exported.
+
+<RunnableExample height={340} code={`lib.registerIndicator({
+  id: 'demo-curved-study', name: 'Curved annotation', placement: 'onchart',
+  inputs: [],
+  plots: [{ key: 'carrier', type: 'line', title: 'Anchors' }],
+  calc: bars => ({ carrier: bars.map(() => null) }),
+  draws: ({ bars }) => {
+    if (bars.length < 29) return [];
+    const points = [4, 12, 20, 28].map(index => ({
+      time: bars[index].time, price: bars[index].close,
+    }));
+    return [
+      { kind: 'polyline', points, color: '#64748b', lineWidth: 1 },
+      { kind: 'polyline', points, curve: 'smooth', color: '#f59e0b', lineWidth: 3 },
+    ];
+  },
+});
+const chart = lib.createChart(el, { branding: false, timeNavigator: false });
+const bars = Array.from({ length: 36 }, (_, index) => {
+  const close = 100 + 8 * Math.sin(index / 4);
+  return { time: 1700000000 + index * 60, open: close - 1,
+    high: close + 2, low: close - 2, close };
+});
+chart.addSeries('candlestick').setData(bars);
+chart.addIndicator('demo-curved-study');
+chart.setVisibleLogicalRange({ from: -2, to: 38 });
+return chart;`} />
+
 ### A higher timeframe from the chart's own bars
 
 `securitySeries` folds the bars in view up to a coarser interval, one value per bar, so a
@@ -1308,7 +1341,7 @@ return chart;`} />
 
 A merged heading can span several columns, while a multiline cell spans rows.
 Each cell controls its font and alignment. The outer frame is independent of the
-cell borders.
+cell borders. Hover the heading or range value to read more detail.
 
 <RunnableExample height={320} code={`const chart = lib.createChart(el);
 chart.addSeries('candlestick').setData(lib.generateBars(1700000000, 100, 3600));
@@ -1318,10 +1351,12 @@ const table = new lib.ChartTable({
   background: '#101722', fontSize: 12,
 });
 table.setRows([
-  [{ text: 'Session readings', colSpan: 3, bold: true, align: 'left' }, { text: '' }, { text: '' }],
+  [{ text: 'Session readings', colSpan: 3, bold: true, align: 'left',
+     tooltip: 'Regular session\\nReadings update with the newest bar' }, { text: '' }, { text: '' }],
   [{ text: 'Direction\\nsteady', rowSpan: 2, italic: true, verticalAlign: 'top' },
    { text: 'Open' }, { text: '102.50', fontFamily: 'ui-monospace, monospace', align: 'right' }],
-  [{ text: '' }, { text: 'Range' }, { text: '4.75', fontFamily: 'ui-monospace, monospace', align: 'right' }],
+  [{ text: '' }, { text: 'Range' }, { text: '4.75', fontFamily: 'ui-monospace, monospace', align: 'right',
+     tooltip: 'Session high minus session low' }],
 ]);
 chart.addPrimitive(table);
 chart.fitContent();

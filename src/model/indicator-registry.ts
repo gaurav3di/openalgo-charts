@@ -424,6 +424,11 @@ export type IndicatorDrawing =
   | {
       kind: 'polyline';
       points: readonly DrawAnchor[];
+      /**
+       * Straight segments by default. Smooth interpolates anchors in screen
+       * space with half-chord tangents and can overshoot their price range.
+       */
+      curve?: 'linear' | 'smooth';
       color?: string;
       lineWidth?: number;
       /** Close the path back to the first point (a triangle, a wedge). */

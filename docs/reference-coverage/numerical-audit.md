@@ -95,6 +95,19 @@ relative tolerance nor two identically absent outputs establishes agreement.
 Balance of Power now omits nonfinite numerators, ranges and ratios while
 preserving finite ordinary results and recovery on the following bar.
 
+Money Flow Index rejects nonfinite selected price flows and window totals before
+its zero-negative-flow shortcut. Each window is summed oldest first, correcting
+ordinary last-bit differences as well as recovery after expired overflow. Missing
+volume still defaults to zero; tied finite prices still contribute zero even
+when their unused price-volume product overflows. Twenty-two actual compiled
+cases and 991 independent expected cells match the native calculation and both
+released companion engines exactly. Sixteen dedicated regressions pass.
+
+This retains work proportional to bars times period. On the recorded machine,
+50,000 bars take a median 2.99 ms at period 14 and 17.72 ms at period 500, compared
+with 2.07 ms and 22.60 ms before the correction. These are observations, not
+timing guarantees or relaxed performance budgets.
+
 WaveTrend computes its signal mean from the chronological window. An incremental
 sum previously drifted enough to create a false crossing on a simple rising
 series. AlphaTrend's private mean and flow sums use the same fresh-window

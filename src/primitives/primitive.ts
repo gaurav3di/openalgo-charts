@@ -41,12 +41,16 @@ export interface PrimitiveRenderContext {
   bars?: () => readonly Bar[];
   /** externalId of the primitive hit under the pointer (hover state), if any. */
   hoverId?: string | null;
+  /** Optional subtarget identity; leaves the primitive's external click ID unchanged. */
+  hoverKey?: string | null;
   /** externalId of the line being dragged (active state), if any. */
   dragId?: string | null;
 }
 
 export interface PrimitiveHit {
   externalId: string;
+  /** Distinguishes hover regions which share one external click ID. Omission uses externalId. */
+  hoverKey?: string;
   zOrder: ZOrder;
   /** Pixel distance from the cursor (smaller wins ties before z-order). */
   distance: number;

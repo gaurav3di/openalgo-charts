@@ -126,7 +126,11 @@ const BUNDLE = new URL('../dist/openalgo-charts.mjs', import.meta.url).pathname.
 // Typed scalar validation, paired exchange defaults and targeted capture
 // lifecycle fences add 1.12 KiB (69.59 to 70.71). Base grows by 1025 bytes;
 // symbol search, editor validation and modal controls remain in the widget.
-const LIMIT_BYTES = 70.85 * 1024;
+// Native tables now measure cell hover targets and wrap their canvas details.
+// Smooth study paths add cubic geometry and local clipping, shared by SVG.
+// These remain available to raw-chart hosts without loading optional tiers.
+// The final measurement is 71.78 KiB, up 1.07 KiB from the typed-input batch.
+const LIMIT_BYTES = 71.9 * 1024;
 
 // Absent from a chart-only build. Each is a string that appears in the adapter
 // source and nowhere in the rendering core.

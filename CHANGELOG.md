@@ -4,6 +4,17 @@ All notable changes to OpenAlgo Charts.
 
 ## Unreleased
 
+- Study polylines support smooth interpolation through their time and price
+  anchors. Curves follow the selected scale, preserve open or closed paths and
+  stay clipped to the plot in canvas and SVG output.
+- Table cells can show plain-text hover details, including merged cells.
+  Measured cell targets keep existing table click IDs, and updates, removal and
+  resizing discard stale targets. Exported SVG omits transient hover details.
+- Money Flow Index omits overflowing price flows and window totals, then
+  recovers after those observations expire. Chronological sums align finite
+  rounding with the companion engines; missing volume still defaults to zero.
+- SVG export preserves very large finite coordinates when decimal rounding
+  would otherwise overflow. Ordinary coordinate formatting is unchanged.
 - Native study inputs now support symbols with paired exchanges, session
   strings, multiline notes, prices and absolute UTC timestamps. Both hosts
   validate drafts, retain fractional timestamps and support chart picking in
