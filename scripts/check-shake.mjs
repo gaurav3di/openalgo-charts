@@ -119,7 +119,11 @@ const BUNDLE = new URL('../dist/openalgo-charts.mjs', import.meta.url).pathname.
 // 0.68 KiB (67.31 to 67.99). Allow 68.25 KiB; workspace persistence stays optional.
 // Scoped restore formatting and occupied-pane preservation add 0.38 KiB
 // (67.99 to 68.37). Allow 68.5 KiB; template planning remains in the workspace tier.
-const LIMIT_BYTES = 68.5 * 1024;
+// Primary-price fitting and the persistent study-count control also serve raw
+// chart hosts. Their range selection, row geometry, state and consumed-gesture
+// handling add 1.22 KiB (68.37 to 69.59), with base growing 109.13 to 110.47 kB.
+// Allow 69.75 KiB. Settings forms and workspace parsing remain optional below.
+const LIMIT_BYTES = 69.75 * 1024;
 
 // Absent from a chart-only build. Each is a string that appears in the adapter
 // source and nowhere in the rendering core.

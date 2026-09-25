@@ -241,6 +241,8 @@ function chartState(input: Json | undefined): WorkspaceChartState {
   }
   if (source.crosshairMode !== undefined) out.crosshairMode = choice(source.crosshairMode, 'crosshairMode', ['normal', 'magnet'] as const);
   if (source.crosshairSnapToBar !== undefined) out.crosshairSnapToBar = boolean(source.crosshairSnapToBar, 'crosshairSnapToBar');
+  if (source.priceOnlyAutoScale !== undefined) out.priceOnlyAutoScale = boolean(source.priceOnlyAutoScale, 'priceOnlyAutoScale');
+  if (source.indicatorLegendCollapsed !== undefined) out.indicatorLegendCollapsed = boolean(source.indicatorLegendCollapsed, 'indicatorLegendCollapsed');
   if (source.indicators !== undefined) out.indicators = indicatorStates(source.indicators);
   if (source.alerts !== undefined) {
     try { out.alerts = parseAlertsDocument(source.alerts); }

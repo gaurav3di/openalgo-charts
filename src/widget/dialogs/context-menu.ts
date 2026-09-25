@@ -163,6 +163,13 @@ function axisEntries(ctx: WidgetContext, paneIndex: number, scaleId: PriceScaleI
   const out: MenuEntry[] = [];
   out.push({ id: 'axis-autofit', label: widgetText(ctx, 'Auto-fit to the data'), mark: 'check', on: s.autoFit, keepOpen: true,
     run: () => { const now = state(); if (now !== null) chart.setPriceAxisAutoFit(paneIndex, scaleId, !now.autoFit); } });
+  const primaryScale = (): boolean => {
+    const primary = chart.primarySeries?.();
+    return primary != null && primary.priceScale() === chart.panes()[paneIndex]?.scaleFor(scaleId);
+  };
+  if (primaryScale()) out.push({ id: 'axis-price-only', label: widgetText(ctx, 'Fit primary prices only'),
+    mark: 'check', on: chart.priceOnlyAutoScale(), keepOpen: true,
+    run: () => { if (primaryScale()) chart.setPriceOnlyAutoScale(!chart.priceOnlyAutoScale()); } });
   out.push({ id: 'axis-invert', label: widgetText(ctx, 'Invert'), mark: 'check', on: s.inverted, keepOpen: true,
     run: () => { const now = state(); if (now !== null) chart.setPriceAxisOptions(paneIndex, scaleId, { inverted: !now.inverted }); } });
   // Holding the price-per-bar ratio while the time axis zooms needs a measured

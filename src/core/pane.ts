@@ -50,6 +50,9 @@ import { DEFAULT_TIMEZONE, formatZonedCrosshairLabel } from '../feed/time';
 export interface PaneRenderContext {
   timeScale: TimeScale;
   dataLayer: DataLayer;
+  /** Restrict the primary series' scale, wherever that series is placed. */
+  priceOnlyAutoScale?: boolean;
+  primaryDataId?: SeriesRecord['dataId'];
   dpr: number;
   priceAxisWidth: number;
   /** Left inset (px) reserved chart-wide for a left price axis; 0/absent when none. */
@@ -662,14 +665,16 @@ export class Pane {
     range: { from: number; to: number },
     progress: number,
   ): boolean {
-    const match = (s: SeriesRecord): boolean => s.scaleId === scaleId;
+    const primaryOnly = ctx.priceOnlyAutoScale === true
+      && this._series.some(s => s.dataId === ctx.primaryDataId && s.scaleId === scaleId);
+    const match = (s: SeriesRecord): boolean => s.scaleId === scaleId && (!primaryOnly || s.dataId === ctx.primaryDataId);
     scale.setHeight(plotHeight);
     // Before the manual-range early-out on purpose: an axis-dragged scale still
     // has to label itself, and the gather loop below never runs for it. Guarded
     // on the mode because visibleBars allocates per series.
     const mode = scale.options.mode;
     if (mode === 'percentage' || mode === 'indexed-to-100') {
-      scale.setBaseline(this._firstVisibleValue(match, ctx, range));
+      scale.setBaseline(this._firstVisibleValue(match, ctx, range, primaryOnly));
     }
     if (!scale.autoScale) return false; // manual (axis-dragged) range: leave it
     let low = Infinity;
@@ -686,6 +691,7 @@ export class Pane {
       }
     }
     for (const p of this._primitives) {
+      if (primaryOnly) break;
       if ((this._primitiveScales.get(p) ?? 'right') !== scaleId) continue;
       const ext = p.autoscaleInfo?.();
       if (ext) {
@@ -739,10 +745,12 @@ export class Pane {
     match: (s: SeriesRecord) => boolean,
     ctx: PaneRenderContext,
     range: { from: number; to: number },
+    honorOffset = false,
   ): number | null {
     for (const s of this._series) {
       if (s.style.visible === false || !match(s)) continue;
-      for (const ib of ctx.dataLayer.visibleBars(s.dataId, range.from, range.to)) {
+      const shift = honorOffset ? s.style.barOffset ?? 0 : 0;
+      for (const ib of ctx.dataLayer.visibleBars(s.dataId, range.from - shift, range.to - shift)) {
         if (isFinite(ib.bar.close)) return ib.bar.close; // whitespace bars are NaN
       }
     }

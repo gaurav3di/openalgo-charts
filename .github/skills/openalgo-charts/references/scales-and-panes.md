@@ -525,3 +525,25 @@ tick size, precision floor, mode, inversion, auto-fit state, manual/fixed ranges
 ratio locks and study-range ownership. The right scale stays in `priceScale`;
 secondary scales use `scales[id]`. Indicator entries carry explicit study scale
 overrides. See [events-and-state](events-and-state.md).
+
+## Fit the primary prices only
+
+Use `chart.setPriceOnlyAutoScale(true)` to fit the primary series' current scale
+without including overlays or primitive extents on that scale. Read it with
+`chart.priceOnlyAutoScale()`. The constructor option is `priceOnlyAutoScale`,
+defaulting to `false`.
+
+The preference follows the actual primary series across panes and named scales.
+Other axes still fit their own data. Studies continue to calculate and draw;
+values outside the fitted range can be clipped. A hidden or empty primary does
+not substitute indicator extents. Explicit `afterAutoscale` extensions retain
+their authority to adjust the resulting range.
+
+Toggling this preference preserves manual ranges and ratio locks. Enable
+`chart.setPriceAxisAutoFit(paneIndex, scaleId, true)` separately when auto-fit is
+wanted. With auto-fit active, the primary price range follows visible bars as
+navigation changes the time window.
+
+The widget and reference host expose **Fit primary prices only** in Axes settings
+and on the primary scale's context menu. The schema key is `scales.priceOnly`.
+The preference is saved per chart in native state and portable workspaces.

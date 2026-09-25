@@ -34,6 +34,11 @@ const values = readChartSettings(chart);     // { 'symbol.upColor': '#26a69a', .
 applyChartSettings(chart, { 'canvas.grid.vertColor': '#223047' });   // one key is a valid patch
 ```
 
+Two display preferences are included: `scales.priceOnly` exposes **Fit primary
+prices only** in Axes, and `statusLine.indicatorsCollapsed` exposes **Collapse
+indicator legends** in Readout. Both default to false and participate in
+read/apply, Cancel and defaults. They remain local to each chart.
+
 A control the engine adds in a later release appears in your dialog on its own, because you
 rendered the schema rather than a list you wrote down.
 

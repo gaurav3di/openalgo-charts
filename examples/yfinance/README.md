@@ -716,3 +716,14 @@ For a prepared, editable sample of every tool, open
 prices near 23800; it does not request a live feed. Choose a tool and Show sample,
 or press Draw and place its anchors. Undo, redo and body/handle dragging use the
 packaged widget and public controller.
+
+### Primary price fitting and compact study legends
+
+Chart settings > Axes > **Fit primary prices only** excludes overlays from the
+primary scale's auto-fit. The same choice appears on that scale's context menu.
+It preserves manual ranges; enable auto-fit separately when needed.
+
+Chart settings > Readout > **Collapse indicator legends** hides study rows while
+retaining the plots and live readings. The **Indicators N** canvas control toggles
+the rows directly, including on touch screens. Both choices are per chart and
+survive ordinary reloads and named-workspace restoration.

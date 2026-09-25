@@ -6,6 +6,12 @@ Source of truth: `src/primitives/primitive.ts`, `src/primitives/*.ts`, `src/core
 
 Everything the chart draws that is not a series is a primitive: markers, event badges, price lines, the pane legend, the time navigator, the drawing layer, and the whole trading tier. One interface covers all of them.
 
+`PaneLegendOptions.visible` defaults to true. Setting it to false removes that
+row's painting and hit targets without changing the underlying series or study.
+Chart-wide `setIndicatorLegendCollapsed(true)` separately suppresses study-owned
+rows and retains a count control. Expanding restores each row's own visibility;
+host-added symbol and OHLC legends retain their visibility throughout.
+
 ## Table cells
 
 `ChartTable` stays in pane screen space. `TableCell` accepts newline-separated

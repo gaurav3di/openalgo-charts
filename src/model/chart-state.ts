@@ -161,6 +161,10 @@ export interface ChartState {
   grid?: { vertLines: boolean; horzLines: boolean };
   crosshairMode?: 'normal' | 'magnet';
   crosshairSnapToBar?: boolean;
+  /** Only the primary series contributes to its scale's auto-fit. Omission preserves the current preference. */
+  priceOnlyAutoScale?: boolean;
+  /** Collapse only study legend rows. Omission preserves the current preference. */
+  indicatorLegendCollapsed?: boolean;
   panes?: PaneState[];
   /** Informational: `restoreState` does not recreate these (it has no data). */
   series?: SeriesState[];

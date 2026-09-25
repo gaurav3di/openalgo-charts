@@ -69,6 +69,41 @@ These controls update the chart in place.
 
 ## Add indicators
 
+### Price fitting and compact study readouts
+
+The distant comparison line stays attached while primary-price fitting keeps
+candles readable. Toggle the fitting control to include its range. Collapse the
+study readouts with their count control; the average keeps calculating and drawing.
+
+<RunnableExample height={340} code={`const chart = lib.createChart(el, {
+  priceOnlyAutoScale: true,
+  legendOffset: { top: 42, left: 8 },
+});
+const bars = lib.generateBars(1700000000, 160, 3600);
+chart.addSeries('candlestick').setData(bars);
+chart.addIndicator('sma', { length: 20 });
+chart.addSeries('line', { style: { color: '#f5a623', lineWidth: 1 } })
+  .setData(bars.map(bar => ({ time: bar.time, value: bar.close * 3 })));
+chart.fitContent();
+const button = document.createElement('button');
+button.type = 'button';
+button.textContent = 'Fit primary prices: on';
+button.setAttribute('aria-pressed', 'true');
+Object.assign(button.style, {
+  position: 'absolute', top: '8px', left: '8px', zIndex: '2',
+  padding: '4px 8px', border: '1px solid #777', borderRadius: '4px',
+  background: 'Canvas', color: 'CanvasText', fontSize: '12px', cursor: 'pointer',
+});
+button.addEventListener('pointerdown', event => event.stopPropagation());
+button.addEventListener('click', () => {
+  const on = !chart.priceOnlyAutoScale();
+  chart.setPriceOnlyAutoScale(on);
+  button.textContent = 'Fit primary prices: ' + (on ? 'on' : 'off');
+  button.setAttribute('aria-pressed', String(on));
+});
+el.appendChild(button);
+return chart;`} />
+
 See a moving average on the price chart, then add RSI in its own pane.
 Each example uses the same synthetic candles to make the difference easy to see.
 

@@ -790,11 +790,14 @@ describe('contextMenuEntries', () => {
     const rig = makeRig();
     const entries = contextMenuEntries(rig.ctx, event(rig, { kind: 'price-scale', id: null, side: 'right', scaleId: 'right' }));
     expect(ids(entries)).toEqual([
-      'axis-autofit', 'axis-invert', 'axis-lock', 'axis-mode-linear', 'axis-mode-logarithmic', 'axis-mode-percentage',
+      'axis-autofit', 'axis-price-only', 'axis-invert', 'axis-lock', 'axis-mode-linear', 'axis-mode-logarithmic', 'axis-mode-percentage',
       'axis-mode-indexed-to-100', 'axis-move', 'axis-settings',
     ]);
     const by = (id: string): MenuItem => items(entries).find((i) => i.id === id) as MenuItem;
     expect(by('axis-autofit').on).toBe(true);
+    expect(by('axis-price-only').on).toBe(false);
+    by('axis-price-only').run?.();
+    expect(rig.chart.priceOnlyAutoScale()).toBe(true);
     expect(by('axis-mode-linear').on).toBe(true);
     expect(by('axis-mode-linear').mark).toBe('radio');
     expect(by('axis-lock').disabled).toBe(false);

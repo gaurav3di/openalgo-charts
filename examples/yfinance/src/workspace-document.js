@@ -6,7 +6,7 @@ import { normalizeLegendIconSize } from './chart-settings.js';
 
 const CHART_FIELDS = ['version', 'timezone', 'navigation', 'canvas', 'statusLine', 'watermark',
   'trading', 'events', 'axisChrome', 'viewport', 'barSpacing', 'grid', 'crosshairMode',
-  'crosshairSnapToBar', 'indicators', 'alerts', 'drawings', 'panes', 'series'];
+  'crosshairSnapToBar', 'priceOnlyAutoScale', 'indicatorLegendCollapsed', 'indicators', 'alerts', 'drawings', 'panes', 'series'];
 const COMPARISON_MODES = ['percentage', 'indexed-to-100', 'none'];
 const SCALE_MODES = ['linear', 'logarithmic', 'percentage', 'indexed-to-100'];
 const HOST_SETTINGS = ['reference.pfmode', 'reference.compareMode', 'reference.compareBaseMode', 'reference.whenMissing', 'reference.legendIconSize',

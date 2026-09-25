@@ -253,6 +253,16 @@ function paintAxisMenu() {
     label: 'Auto-fit to the data', on: s.autoFit, chord: AX_AUTOFIT_CHORD,
     onSelect: () => runAxis(() => setAxisAutoFit(!s.autoFit)),
   });
+  const primaryScale = () => {
+    const primary = app.chart?.primarySeries?.();
+    return primary != null && primary.priceScale() === app.chart.panes()[axTarget.paneIndex]?.scaleFor(axTarget.scaleId);
+  };
+  if (primaryScale() && typeof app.chart.setPriceOnlyAutoScale === 'function') add({
+    label: 'Fit primary prices only', on: app.chart.priceOnlyAutoScale(),
+    onSelect: () => runAxis(() => {
+      if (primaryScale()) app.chart.setPriceOnlyAutoScale(!app.chart.priceOnlyAutoScale());
+    }),
+  });
   add({
     label: 'Invert', on: s.inverted, chord: AX_INVERT_CHORD,
     onSelect: () => runAxis(() => setAxisInvert(!s.inverted)),

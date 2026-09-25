@@ -55,6 +55,8 @@ does not need to be loaded again.
 | `timeAxisHeight` | `number` | `22` | Media px, bottom pane only. |
 | `timeScale` | `Partial<TimeScaleOptions>` | `DEFAULT_TIME_SCALE_OPTIONS` | Initial spacing, offset, and spacing limits. Added in 2.1.1; use live scale setters for spacing/offset changes. |
 | `legendOffset` | `{ top?, left? }` | `{ top: 6, left: 8 }` | Where indicator legend rows start in the top-most pane. |
+| `priceOnlyAutoScale` | `boolean` | `false` | Fit the primary series' actual scale using only that series. Does not enable auto-fit. |
+| `indicatorLegendCollapsed` | `boolean` | `false` | Suppress study legend rows while retaining plots and a count toggle. |
 | `crosshairMode` | `'normal' \| 'magnet'` | `'normal'` | `magnet` snaps to O/H/L/C, price pane only. |
 | `now` | `() => number` | `performance.now` | Time source for kinetic pan / navigator fade. |
 | `animZoom` | `boolean` | `true` | Ease a wheel zoom over a few frames (`ZoomGlide`, in log space) instead of landing the whole step on one. The first frame's step is applied on the event itself, so `barSpacing` has moved by the time anything reads it synchronously, and the glide lands on exactly the single-frame result. **On by default**, which a 1.9.x host sees as a change; `false` restores the single-frame step. Not re-appliable. |

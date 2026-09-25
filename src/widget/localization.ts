@@ -8,6 +8,8 @@ export type WidgetBuiltinMessage =
   | "Alerts..."
   | "Armed"
   | "Auto-fit to the data"
+  | "Fit primary prices only"
+  | "Collapse indicator legends"
   | "Axis settings..."
   | "Bar close"
   | "Bar close evaluates confirmed values. Intrabar touch can fire on a wick that is absent from final history."

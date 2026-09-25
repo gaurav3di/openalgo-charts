@@ -158,6 +158,8 @@ export interface PaneLegendOptions {
   actions?: readonly PaneLegendAction[];
   /** Rendered as hidden (dimmed, eye hollow). */
   hidden?: boolean;
+  /** False removes this row and its hit areas. Independent of the dimmed study visibility state. */
+  visible?: boolean;
   /** Rendered as maximized (the maximize glyph becomes restore). */
   maximized?: boolean;
   /** Text size in media px. Default 11. */
@@ -216,7 +218,7 @@ const NO_SWITCHES: LegendStatusLineOptions = {};
 const NO_STATUS: LegendStatusData = {};
 
 /** One button's side in media px, held inside the range the row can carry. */
-function buttonSize(o: PaneLegendOptions): number {
+function buttonSize(o: Pick<PaneLegendOptions, 'iconSize'>): number {
   const wanted = o.iconSize;
   if (typeof wanted !== 'number' || !Number.isFinite(wanted)) return BTN;
   return Math.max(BTN_MIN, Math.min(BTN_MAX, wanted));
@@ -228,7 +230,7 @@ function buttonSize(o: PaneLegendOptions): number {
  * Both the stacking offset and the hit box are measured from this, so a taller
  * row moves the rows below it instead of drawing through them.
  */
-function rowHeight(o: PaneLegendOptions): number {
+export function paneLegendRowHeight(o: Pick<PaneLegendOptions, 'iconSize'>): number {
   return Math.max(ROW_H, buttonSize(o) + BTN_MARGIN * 2);
 }
 
@@ -411,6 +413,7 @@ export class PaneLegend implements IPrimitive {
   private _width = 0;
   private _plotWidth = 0;
   private _plotHeight = 0;
+  private _suppressed = false;
 
   public constructor(opts: PaneLegendOptions) {
     this._opts = { font: 11, left: 8, top: 6, row: 0, ...opts };
@@ -420,6 +423,19 @@ export class PaneLegend implements IPrimitive {
   public detached(): void { this._host = null; }
   public zOrder(): ZOrder { return 'top'; }
   public autoscaleInfo(): null { return null; }
+
+  /** @internal Chart display policy, kept separate from the row's own options. */
+  public setSuppressed(on: boolean): void {
+    if (this._suppressed === on) return;
+    this._suppressed = on;
+    if (on) this._clearGeometry();
+    this._host?.requestUpdate();
+  }
+
+  private _clearGeometry(): void {
+    this._buttons = [];
+    this._width = this._plotWidth = this._plotHeight = 0;
+  }
 
   /** A single live reading after the params (typically crosshair-driven). */
   public setValue(text: string, color?: string): void {
@@ -445,6 +461,7 @@ export class PaneLegend implements IPrimitive {
     if (patch.statusLine !== undefined) {
       this._opts.statusLine = { ...prev, ...patch.statusLine };
     }
+    if (this._opts.visible === false) this._clearGeometry();
     this._host?.requestUpdate();
   }
 
@@ -461,10 +478,11 @@ export class PaneLegend implements IPrimitive {
 
   public draw(ctx: CanvasRenderingContext2D, rc: PrimitiveRenderContext): void {
     const o = this._opts;
+    if (this._suppressed || o.visible === false) { this._clearGeometry(); return; }
     const dpr = rc.dpr;
     const f = (o.font ?? 11) * dpr;
     const btn = buttonSize(o);
-    const rowH = rowHeight(o);
+    const rowH = paneLegendRowHeight(o);
     const y = ((o.top ?? 6) + (o.row ?? 0) * rowH) * dpr;
     const cy = y + (rowH * dpr) / 2;
     const x0 = (o.left ?? 8) * dpr;
@@ -596,9 +614,10 @@ export class PaneLegend implements IPrimitive {
   }
 
   public hitTest(x: number, y: number): PrimitiveHit | null {
+    if (this._suppressed || this._opts.visible === false) return null;
     if (x < 0 || x >= this._plotWidth || y < 0 || y >= this._plotHeight) return null;
     const o = this._opts;
-    const rowH = rowHeight(o);
+    const rowH = paneLegendRowHeight(o);
     const top = (o.top ?? 6) + (o.row ?? 0) * rowH;
     if (y < top || y > top + rowH) return null;
     const btn = buttonSize(o);

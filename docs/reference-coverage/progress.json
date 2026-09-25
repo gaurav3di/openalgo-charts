@@ -178,9 +178,7 @@
         "History beyond drawing edits",
         "Widget and navigation",
         "Layouts and persistence",
-        "Trading and provider APIs",
-        "Issue #25: price-only autoscaling",
-        "Issue #12: collapsible indicator list"
+        "Trading and provider APIs"
       ],
       "implemented": [
         "Persisted candle density in CSS pixels",
@@ -210,7 +208,11 @@
         "Template dependency identity remapping, host-series preservation and detached validation before restore",
         "Scoped destination formatter preservation without serializing runtime callbacks",
         "Occupied no-plot study panes survive restoration and newer restore-start operations supersede older ones",
-        "Example-host template controls with guarded rollback, replay ownership and complete document round trips"
+        "Example-host template controls with guarded rollback, replay ownership and complete document round trips",
+        "Opt-in primary-only autoscaling on the actual primary scale, retaining manual ranges and ratio locks",
+        "Persistent collapsible study-count control with retained calculations, alerts and host readouts",
+        "Mouse, touch and pen control gestures isolated from viewport double-click resets",
+        "Both preferences in chart state, validated workspace documents, host settings and keyboard navigation"
       ],
       "evidence": [
         "tests/navigation-settings.test.ts",
@@ -252,7 +254,13 @@
         "examples/yfinance/tests/native-template-layouts.test.js",
         "examples/yfinance/tests/template-controls.test.js",
         "tests/e2e/native-template-layouts.spec.ts",
-        "tests/e2e/yfinance-templates.spec.ts"
+        "tests/e2e/yfinance-templates.spec.ts",
+        "tests/price-only-autoscale.test.ts",
+        "tests/price-only-host-controls.test.ts",
+        "tests/indicator-legend-collapse.test.ts",
+        "tests/indicator-legend-double-click.test.ts",
+        "tests/indicator-legend-host-controls.test.ts",
+        "tests/e2e/native-chart-preferences.spec.ts"
       ]
     },
     {
@@ -290,7 +298,6 @@
   "next": [
     "Audit all shipped numerical indicators and both script engines in parallel; fix confirmed contract deviations.",
     "Complete remaining listed fixes and native capabilities; defer issue #22.",
-    "Implement issue #25 price-only autoscaling and issue #12 collapsible indicator list.",
     "Execute the authorized chart and companion package release sequences after verification."
   ],
   "release": {
@@ -308,33 +315,35 @@
     "companion": {
       "version": "0.7.0",
       "authorized": true,
-      "status": "pending-numerical-audit",
+      "status": "pending-extreme-recovery-regressions-and-complete-chart-audit",
       "requirement": "Compare all shipped numerical indicators with equivalent calculations in both language engines, fix confirmed deviations and publish both companion packages from one versioned source."
     }
   },
   "validation": {
-    "chartTests": 7266,
-    "chartTestFiles": 317,
+    "chartTests": 7361,
+    "chartTestFiles": 324,
     "compiledProgramTests": 18,
-    "demoTests": 455,
+    "demoTests": 457,
     "demoTestFiles": 40,
     "browserEvidence": "This batch passed 33 browser cases across all three engines: 12 native template layout, no-plot pane and formatter cases, 18 example-host template cases and three original autofit regressions. Actual built-site checks passed 30 states across desktop and 390-pixel layouts, including all four template controls. Data, source identity, copied values, pane weights, scale ownership, ranges, axis placement and rendered pixels were checked. Final engine, host and built-site screenshots were inspected. Traffic uses fixtures rather than live brokers.",
     "website": "63 static pages built successfully; template example verified through initial state and all four controls at desktop and mobile widths in all three engines",
-    "chartOnlyBrotliKiB": 68.37,
-    "chartOnlyBudgetKiB": 68.5,
-    "baseBrotliKB": 109.13,
+    "chartOnlyBrotliKiB": 69.59,
+    "chartOnlyBudgetKiB": 69.75,
+    "baseBrotliKB": 110.47,
     "indicatorBrotliKB": 35.9,
-    "workspaceBrotliKB": 8.61,
-    "allTiersBrotliKB": 289.15,
-    "budgetChange": "Template layout planning and validation add 2.31 kB to the workspace bundle (6.30 to 8.61). Scoped restore formatting and occupied-pane handling add 0.26 kB to base (108.87 to 109.13) and 0.38 KiB to chart-only imports (67.99 to 68.37). Limits are 109.5 kB base, 117.5 kB base plus trade, 247 kB terminal, 8.75 kB workspace, 289.5 kB all tiers and 68.5 KiB chart-only. All optional-tier removal checks pass.",
+    "workspaceBrotliKB": 8.67,
+    "allTiersBrotliKB": 290.62,
+    "budgetChange": "Primary-price fitting, persistent study-count geometry, state validation and consumed gesture handling add 1.34 kB to base (109.13 to 110.47) and 1.22 KiB to chart-only (68.37 to 69.59). Limits are 110.75 kB base, 119 kB base plus trade, 248.5 kB terminal, 291 kB all tiers and 69.75 KiB chart-only. Optional-tier removal checks still pass. No indicator, drawing, profile, transform, WebGL, widget or workspace budget changed in this batch.",
     "review": "Independent review covered malformed layout metadata, effective overlay bindings, removed plot handles, host-bearing pane detection, nested restore ownership, rollback, primitive-only panes and destination formatter preservation. Failing regressions reproduced hidden-scale recreation and selector-array accessor defects before the fixes. Both review findings are closed.",
-    "packageVerification": "Full verify passed lint, typecheck, 7266 unit tests, seven endurance-harness checks, build, 455 example tests, declaration identity, measured size limits and tree-shake checks. Eighteen compiled-program checks and public adapter typechecking passed with the unchanged pinned engine adapter.",
-    "latestEngineSourceReview": "The companion numerical audit branches from development revision d95bd70daf598892d40a9265607537b86ce712dd. Validated commits through 568137e correct divisor crashes, finite-window history, anchored volume, partial outputs and changing-length recurrences. Both engines have additional compiled numerical fixtures. Elementary host arithmetic and overflow recovery remain under audit; full agreement is not yet certified.",
+    "packageVerification": "Full verify passed lint, typecheck, 7358 unit tests, seven endurance-harness checks, build, 457 example tests, declaration identity, measured size limits and optional-tier removal checks. A later shared row-height correction passes all 7361 unit tests, typecheck, scoped lint, build, size, tree-shake and all 18 affected browser cases. The packed 0.7.0 candidate passed 18 compiled-program integration checks and public adapter typechecking; it remains unpublished pending newly found numerical edge cases.",
+    "latestEngineSourceReview": "Candidate d5cec2210a374d12f30f5eddb1aa7e118c5e0c37 passes its complete npm and Python suites, CI, exact 3298-case numerical gate and installed-distribution probes. A broader chart composition sweep then reproduced extreme finite-input recovery differences in TSI, RSI and Ultimate Oscillator. Publication is held while permanent regressions and fixes are added. No exhaustive agreement claim is made.",
     "directionalSeedAudit": "129 focused tests pass after aligning directional-movement seeds with true range. Built-package exact-value and rendered-line checks pass in all three browser engines; screenshots inspected. First-available indices and existing chart missing-value behavior are preserved. See numerical-audit.md for the independent fixture and remaining limits.",
     "hullLengthAudit": "173 focused tests and six browser cases across three engines pass. Standalone HMA now shares Hull Suite's integer half and rounded square-root windows, with length one as identity. Six compiled Hull fixtures match chart formulas and availability within 1e-12, while all fifteen audited compiled programs agree bit-for-bit between the companion engines. Chart summation order and missing-value contracts remain under audit.",
     "widerNumericalProbe": "270 compiled cases compare selected columns from 45 of 105 descriptors over six 192-bar input patterns. Remaining descriptors and secondary outputs stay open. Both engines differ only in Gaussian weights and choppiness logarithms in this corpus (960 cells); portable elementary arithmetic remains in progress. Native results include 57 cases with absence or beyond-threshold differences requiring contract review. Differential evidence is not independent certification.",
     "apiDocumentation": "Generated with warnings treated as errors",
-    "skillsCoverage": "978 of 978 named exports and registry entries; not functional coverage"
+    "skillsCoverage": "978 of 978 named exports and registry entries; not functional coverage",
+    "preferenceBrowserEvidence": "18 cases pass across three engines at 1100 and 390 CSS pixels. Primary-only range, actual price pixels, axis controls, touch collapse, suppressed former row hits, retained live study output, keyboard settings, cancel and reload are checked. Screenshots inspected. A reproduced desktop touch double-click reset failed before consumed-primary-press tracking and passes afterward.",
+    "preferenceWebsiteEvidence": "The built website example passes 30 control states across three browser engines at 1280 and 390 CSS pixels. Primary-only versus combined extents change actual pixels and price range; collapse and expansion retain bars and calculated values. No console exceptions or control overflow. Screenshots inspected. API documentation builds without warnings and skills inventory remains 978/978."
   },
   "deferred": [
     "Issue #22: higher-timeframe inputs on built-in indicators, excluded by the user on 2026-09-25"

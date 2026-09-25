@@ -113,7 +113,8 @@ import type { IPrimitive, PrimitiveHost, PrimitiveHit, PrimitiveAnchor, Primitiv
 import { PriceLine, type PriceLineOptions } from '../primitives/price-line';
 import { SeriesMarkers } from '../primitives/markers';
 import { EventMarkers, type ChartEvent, type EventGroup, type EventMarkersOptions, type EventMarkerDetails } from '../primitives/event-markers';
-import { PaneLegend, type PaneLegendAction, type LegendStatusLineOptions } from '../primitives/pane-legend';
+import { PaneLegend, paneLegendRowHeight, type PaneLegendAction, type LegendStatusLineOptions } from '../primitives/pane-legend';
+import { IndicatorLegendToggle, INDICATOR_LEGEND_TOGGLE } from '../primitives/indicator-legend-toggle';
 import { ChartTable } from '../primitives/table';
 import { TimeNavigator, type TimeNavigatorOptions } from '../primitives/time-navigator';
 import type { ChartSettingsState } from '../model/chart-settings';
@@ -248,6 +249,10 @@ export interface ChartOptions {
   crosshairMode?: CrosshairMode;
   /** Snap the vertical crosshair to the nearest primary bar's center. Default false; independent of the price magnet. */
   crosshairSnapToBar?: boolean;
+  /** Fit the primary series' scale to that series only. Does not enable auto-fit. Default false. */
+  priceOnlyAutoScale?: boolean;
+  /** Collapse study legend rows into a count without hiding their plots or stopping calculations. Default false. */
+  indicatorLegendCollapsed?: boolean;
   /**
    * Optional chrome on the axis strips: the corner clock and the bar-close
    * countdown. Both are off unless asked for, so a chart that omits this block
@@ -727,6 +732,8 @@ export class Chart {
   // interaction state
   private _crosshairMode: CrosshairMode;
   private _crosshairSnapToBar: boolean;
+  private _priceOnlyAutoScale: boolean;
+  private _indicatorLegendCollapsed: boolean;
   private _shortcuts: ShortcutManager | null = null;
   private _trading: TradingController | null = null;
   private _pointerInside = false;
@@ -857,6 +864,13 @@ export class Chart {
   private _maximizedPane: number | null = null;
   /** Legend rows per pane, so new ones stack below existing ones. */
   private readonly _legends: { legend: PaneLegend; paneIndex: number }[] = [];
+  private readonly _studyLegends = new Set<PaneLegend>();
+  private _indicatorLegendToggle: IndicatorLegendToggle | null = null;
+  private _indicatorLegendRow = 0;
+  private _indicatorTogglePress: { pointerId: number; moved: boolean } | null = null;
+  /** Native double clicks can join a consumed count press to a newly empty plot row. */
+  private _lastPressOnIndicatorToggle = false;
+  private _previousPressOnIndicatorToggle = false;
   /** Pane holding the primary price series (only this pane gets magnet snapping). */
   private _firstPaneIndex = 0;
   private _historyLoader: (() => void) | null = null;
@@ -943,6 +957,8 @@ export class Chart {
     this._timeAxisHeight = options.timeAxisHeight ?? 22;
     this._crosshairMode = options.crosshairMode ?? 'normal';
     this._crosshairSnapToBar = options.crosshairSnapToBar === true;
+    this._priceOnlyAutoScale = options.priceOnlyAutoScale === true;
+    this._indicatorLegendCollapsed = options.indicatorLegendCollapsed === true;
     // Assigned rather than pushed through `setAxisChromeOptions`: the setter
     // asks for a repaint, and the render loop does not exist yet.
     Object.assign(this._axisChrome, options.axisChrome);
@@ -1545,6 +1561,7 @@ export class Chart {
       plotPriceScaleIds,
     );
     this._indicators.push(instance);
+    this._restackLegends();
     this._indicatorReservedIds.add(instance.id);
     this._queueIndicatorDependents(instance.id, true);
     this.emit('objects:change', {});
@@ -1668,15 +1685,17 @@ export class Chart {
     for (const entry of this._legends) entry.paneIndex = this._panes.findIndex(pane => pane.hasPrimitive(entry.legend));
     this._restackLegends();
     const owned = new Set(this._indicators.map(instance => instance.legend()));
+    const seen = new Set<number>();
     for (const entry of this._legends) {
       if (!owned.has(entry.legend)) continue;
       const options = entry.legend.options();
       const actions: PaneLegendAction[] = (options.actions ?? []).filter(action => action !== 'up' && action !== 'down' && action !== 'maximize');
-      if (entry.paneIndex > 0 && options.row === 0) {
+      if (entry.paneIndex > 0 && !seen.has(entry.paneIndex)) {
         const close = actions.indexOf('close');
         actions.splice(close < 0 ? actions.length : close, 0, 'up', 'down', 'maximize');
       }
       entry.legend.setOptions({ actions });
+      seen.add(entry.paneIndex);
     }
   }
 
@@ -1697,6 +1716,7 @@ export class Chart {
     }
     const { indicatorId, paneIndex } = this._indicators[i];
     this._indicators.splice(i, 1);
+    this._restackLegends();
     this._indicatorReservedIds.add(instanceId);
     this._indicatorRefreshes.delete(instanceId);
     this._queueIndicatorDependents(instanceId, true);
@@ -1899,10 +1919,12 @@ export class Chart {
         // _syncLegendOffsets decides which pane wears the offset, and runs on
         // every relayout; this is just the initial placement.
         const legend = new PaneLegend({ ...o, actions: paneActions });
+        this._studyLegends.add(legend);
         this._addPrimitive(o.paneIndex, legend);
         return legend;
       },
       removeIndicatorLegend: (legend): void => {
+        this._studyLegends.delete(legend);
         this.removePrimitive(legend);
         this._restackLegends();
       },
@@ -2616,6 +2638,19 @@ export class Chart {
     this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
   }
 
+  /** Whether only the primary series contributes to autoscale on its current scale. */
+  public priceOnlyAutoScale(): boolean {
+    return this._priceOnlyAutoScale;
+  }
+
+  /** Keep manual ranges and ratio locks while choosing which data auto-fit measures. */
+  public setPriceOnlyAutoScale(on: boolean): void {
+    if (typeof on !== 'boolean' || on === this._priceOnlyAutoScale) return;
+    this._priceOnlyAutoScale = on;
+    this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
+    this.emit('objects:change', {});
+  }
+
   // ── one price axis at a time (what a price-axis menu acts on) ─────────────
   // The setters above are chart-wide, which is what a settings dialog wants. A
   // menu raised on one axis strip is the other case: it names a pane and a
@@ -2792,6 +2827,20 @@ export class Chart {
     return { ...this._statusLine };
   }
 
+  /** Whether study legend rows are replaced by their applied-instance count. */
+  public indicatorLegendCollapsed(): boolean {
+    return this._indicatorLegendCollapsed;
+  }
+
+  /** A display preference only; studies retain visibility, calculation and subscription state. */
+  public setIndicatorLegendCollapsed(on: boolean): void {
+    if (typeof on !== 'boolean' || on === this._indicatorLegendCollapsed) return;
+    this._indicatorLegendCollapsed = on;
+    this._restackLegends();
+    this.invalidate(m => m.invalidateGlobal(InvalidationLevel.Cursor));
+    this.emit('objects:change', {});
+  }
+
   /**
    * How large a legend's action buttons are drawn, in media px.
    *
@@ -2804,6 +2853,7 @@ export class Chart {
     if (!Number.isFinite(size)) return;
     this._legendIconSize = size;
     for (const entry of this._legends) entry.legend.setOptions({ iconSize: size });
+    this._restackLegends();
     this.invalidate((m) => m.invalidateGlobal(InvalidationLevel.Full));
   }
 
@@ -3037,10 +3087,28 @@ export class Chart {
    */
   private _restackLegends(): void {
     const rowByPane = new Map<number, number>();
+    const top = this._topPaneIndex(), count = this._indicators.length;
+    let reserved = false;
     for (const entry of this._legends) {
-      const row = rowByPane.get(entry.paneIndex) ?? 0;
+      let row = rowByPane.get(entry.paneIndex) ?? 0;
+      const owned = this._studyLegends.has(entry.legend);
+      entry.legend.setSuppressed(owned && this._indicatorLegendCollapsed);
+      if (count > 0 && entry.paneIndex === top && owned && !reserved) {
+        this._indicatorLegendRow = row++;
+        reserved = true;
+      }
       entry.legend.setOptions({ row });
-      rowByPane.set(entry.paneIndex, row + 1);
+      const displayed = !(owned && this._indicatorLegendCollapsed) && entry.legend.options().visible !== false;
+      rowByPane.set(entry.paneIndex, row + (displayed ? 1 : 0));
+    }
+    if (!reserved) this._indicatorLegendRow = rowByPane.get(top) ?? 0;
+    if (count > 0 && this._indicatorLegendToggle === null) {
+      this._indicatorLegendToggle = new IndicatorLegendToggle();
+      this.addPrimitive(this._indicatorLegendToggle, { anchor: 'chart-top' });
+    } else if (count === 0 && this._indicatorLegendToggle !== null) {
+      const toggle = this._indicatorLegendToggle;
+      this._indicatorLegendToggle = null;
+      this.removePrimitive(toggle);
     }
     this._syncLegendOffsets();
   }
@@ -3059,17 +3127,28 @@ export class Chart {
    */
   private _syncLegendOffsets(): void {
     const layout = this._paneLayout();
+    const height = paneLegendRowHeight({ iconSize: this._legendIconSize });
+    const defaultToggleTop = this._legendOffset.top + this._indicatorLegendRow * height;
+    let toggleTop = defaultToggleTop;
     for (const entry of this._legends) {
-      if (!entry.legend.options().id.startsWith('indicator:')) continue;
+      const options = entry.legend.options();
+      if (this._studyLegends.has(entry.legend) || entry.paneIndex !== this._topPaneIndex()
+        || options.visible === false || (options.row ?? 0) >= this._indicatorLegendRow) continue;
+      toggleTop = Math.max(toggleTop, (options.top ?? DEFAULT_LEGEND_TOP) + ((options.row ?? 0) + 1) * paneLegendRowHeight(options));
+    }
+    for (const entry of this._legends) {
+      if (!this._studyLegends.has(entry.legend)) continue;
       // A collapsed pane above still occupies a fraction of a pixel, so "at the
       // top" is a tolerance rather than an equality.
       const atTop = (layout[entry.paneIndex]?.top ?? Number.POSITIVE_INFINITY) <= LEGEND_TOP_EPS;
       entry.legend.setOptions(
         atTop
-          ? { top: this._legendOffset.top, left: this._legendOffset.left }
+          ? { top: this._legendOffset.top + (this._indicatorLegendToggle ? toggleTop - defaultToggleTop : 0), left: this._legendOffset.left }
           : { top: DEFAULT_LEGEND_TOP, left: DEFAULT_LEGEND_LEFT },
       );
     }
+    this._indicatorLegendToggle?.setOptions({ count: this._indicators.length, collapsed: this._indicatorLegendCollapsed,
+      left: this._legendOffset.left, top: toggleTop, height });
   }
 
   /** A host for the (lazy-loaded) trade layer to attach/detach its primitives on a pane. */
@@ -3416,6 +3495,8 @@ export class Chart {
       events: this.eventOptions(),
       crosshairMode: this._crosshairMode,
       crosshairSnapToBar: this._crosshairSnapToBar,
+      priceOnlyAutoScale: this._priceOnlyAutoScale,
+      indicatorLegendCollapsed: this._indicatorLegendCollapsed,
       panes,
       series,
       indicators: this._indicators.map((i) => ({
@@ -3463,6 +3544,14 @@ export class Chart {
     const preservedFormats = new Map<Pane, Set<PriceScaleId>>();
     const reservedIds = new Set<string>();
     try {
+      const priceOnly = Object.getOwnPropertyDescriptor(s, 'priceOnlyAutoScale');
+      if (priceOnly && (!('value' in priceOnly) || (priceOnly.value !== undefined && typeof priceOnly.value !== 'boolean'))) {
+        throw new Error('Invalid price-only autoscale preference');
+      }
+      const collapsed = Object.getOwnPropertyDescriptor(s, 'indicatorLegendCollapsed');
+      if (collapsed && (!('value' in collapsed) || (collapsed.value !== undefined && typeof collapsed.value !== 'boolean'))) {
+        throw new Error('Invalid indicator legend preference');
+      }
       const plain = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object'
         && [Object.prototype, null].includes(Object.getPrototypeOf(value))
         && Object.values(Object.getOwnPropertyDescriptors(value)).every(property => 'value' in property);
@@ -3544,6 +3633,8 @@ export class Chart {
     this._reserveAlertStudyIds(alerts, reservedIds);
     for (const id of reservedIds) this._indicatorReservedIds.add(id);
     const generation = ++this._restoreGeneration;
+    const previousPriceOnly = this._priceOnlyAutoScale;
+    const previousLegendCollapsed = this._indicatorLegendCollapsed;
     this.emit('state:restore:start', {});
     const before = this._timeScale.visibleRange();
     try {
@@ -3551,7 +3642,12 @@ export class Chart {
       if (generation !== this._restoreGeneration) {
         return { applied: false, series: [], indicators: 0, reason: 'superseded by a newer chart restore' };
       }
-      return this._mutateTimeScale(() => this._restoreState(s, alerts, reservedIds, panes, studies, preservedFormats));
+      const report = this._mutateTimeScale(() => this._restoreState(s, alerts, reservedIds, panes, studies, preservedFormats));
+      if (report.applied && generation === this._restoreGeneration && (previousPriceOnly !== this._priceOnlyAutoScale
+        || previousLegendCollapsed !== this._indicatorLegendCollapsed)) {
+        this.emit('objects:change', {});
+      }
+      return report;
     }
     finally {
       preservedFormats.clear();
@@ -3582,6 +3678,11 @@ export class Chart {
     if (s.events) this.setEventOptions(s.events);
     if (s.crosshairMode) this._crosshairMode = s.crosshairMode;
     if (typeof s.crosshairSnapToBar === 'boolean') this._crosshairSnapToBar = s.crosshairSnapToBar;
+    const priceOnly = Object.getOwnPropertyDescriptor(s, 'priceOnlyAutoScale');
+    if (priceOnly && typeof priceOnly.value === 'boolean') this._priceOnlyAutoScale = priceOnly.value;
+    const collapsed = Object.getOwnPropertyDescriptor(s, 'indicatorLegendCollapsed');
+    if (collapsed && typeof collapsed.value === 'boolean') this._indicatorLegendCollapsed = collapsed.value;
+    this._restackLegends();
     // A saved zone is data of unknown provenance, so an unrecognised name is
     // skipped rather than thrown: the rest of the layout is still restorable,
     // and a whole saved workspace should not be lost to one stale zone name.
@@ -3814,7 +3915,7 @@ export class Chart {
     }
     this._syncTimeNavPane();
     // Weights just changed, so the pane at the chart's top may have too.
-    this._syncLegendOffsets();
+    this._restackLegends();
     const dpr = this._pixelRatio();
     const total = this._weightTotal();
     const topPane = this._topPaneIndex();
@@ -4056,6 +4157,10 @@ export class Chart {
    * Returns true when the id was ours and was handled.
    */
   private _handleLegendAction(externalId: string): boolean {
+    if (externalId === INDICATOR_LEGEND_TOGGLE) {
+      this.setIndicatorLegendCollapsed(!this._indicatorLegendCollapsed);
+      return true;
+    }
     const sep = externalId.lastIndexOf('::');
     if (sep < 0) return false;
     const action = externalId.slice(sep + 2);
@@ -4099,6 +4204,12 @@ export class Chart {
         return true;
       default: return false;
     }
+  }
+
+  private _indicatorLegendHit(paneIndex: number, x: number, y: number): boolean {
+    return this._indicatorLegendToggle !== null
+      && this._panes[paneIndex]?.hasPrimitive(this._indicatorLegendToggle) === true
+      && this._indicatorLegendToggle.hitTest(x - this._leftAxisWidth, y) !== null;
   }
 
   /** Cumulative top + height of each pane, by weight (the source of truth for hit-testing). */
@@ -4159,6 +4270,8 @@ export class Chart {
     return {
       timeScale: this._timeScale,
       dataLayer: this._dataLayer,
+      priceOnlyAutoScale: this._priceOnlyAutoScale,
+      primaryDataId: this._primary?.record.dataId,
       dpr: this._pixelRatio(),
       priceAxisWidth: this._rightAxisWidth,
       axisColumnWidth: this._axisColumnWidth,
@@ -4514,6 +4627,8 @@ export class Chart {
     // menu) also fires pointerdown, and its pointerup is often swallowed by the
     // menu — arming the drag state then makes the chart pan with no button held.
     if ((e.pointerType === 'mouse' || e.pointerType === 'pen') && e.button !== 0) return;
+    this._previousPressOnIndicatorToggle = this._lastPressOnIndicatorToggle;
+    this._lastPressOnIndicatorToggle = false;
     this._endedPointers.delete(e.pointerId);
     this._stopKinetic();
     // Taking hold of the chart ends a zoom glide too: the viewport is the
@@ -4577,6 +4692,14 @@ export class Chart {
       this._axisStartCoord = p.x;
       this._axisStartSpacing = this._timeScale.barSpacing;
       this._dragging = false;
+      return;
+    }
+
+    if (this._indicatorLegendHit(p.pane, p.x, p.localY)) {
+      this._lastPressOnIndicatorToggle = true;
+      this._indicatorTogglePress = { pointerId: e.pointerId, moved: false };
+      this._dragging = false;
+      this._pointerMoved = false;
       return;
     }
 
@@ -4648,8 +4771,9 @@ export class Chart {
     // Safety: if the primary button is no longer held (missed pointerup — e.g.
     // released over a context menu or outside the window), end any drag now.
     if ((e.pointerType === 'mouse' || e.pointerType === 'pen') && (e.buttons & 1) === 0
-      && (this._dragging || this._dragId !== null || this._axisDrag !== null || this._brandingPress !== null)) {
+      && (this._dragging || this._dragId !== null || this._axisDrag !== null || this._brandingPress !== null || this._indicatorTogglePress !== null)) {
       if (this._brandingPress !== null) this._brandingPress.moved = true;
+      if (this._indicatorTogglePress !== null) this._indicatorTogglePress.moved = true;
       this._onPointerUp(e);
       // Marked after the fact, not before: the recovery IS this pointer's one
       // real end, so it has to run. What must be swallowed is the release that
@@ -4661,6 +4785,12 @@ export class Chart {
     if (this._pointers.has(e.pointerId)) this._pointers.set(e.pointerId, { x: p.x, y: p.y, pane: p.pane });
     if (this._pinch !== null) { this._updatePinch(); return; }
     if (this._axisDrag === 'empty') return;
+    if (this._indicatorTogglePress !== null) {
+      if (Math.abs(p.x - this._downX) > 3 || Math.abs(p.localY - this._downLocalY) > 3 || p.pane !== this._downPane) {
+        this._indicatorTogglePress.moved = true;
+      }
+      return;
+    }
     if (this._brandingPress !== null) {
       if (Math.abs(p.x - this._downX) > 3 || Math.abs(p.localY - this._downLocalY) > 3
         || p.pane !== this._downPane || (e.pointerType === 'mouse' && (e.buttons & 1) === 0)) {
@@ -4772,6 +4902,8 @@ export class Chart {
 
   private readonly _onPointerUp = (e: PointerEvent): void => {
     if (this._pointers.size > 0 && !this._pointers.has(e.pointerId)) return;
+    const togglePress = this._indicatorTogglePress?.pointerId === e.pointerId ? this._indicatorTogglePress : null;
+    if (togglePress) this._indicatorTogglePress = null;
     try { this._container.releasePointerCapture?.(e.pointerId); } catch { /* already released */ }
     // A gesture ends once. `_onPointerMove` calls this directly when it finds the
     // button already released, because a release over a context menu or outside
@@ -4782,6 +4914,15 @@ export class Chart {
     // `subscribeClick` doubles: a legend's hide toggles twice and looks dead.
     if (this._endedPointers.has(e.pointerId)) { this._endedPointers.delete(e.pointerId); return; }
     this._pointers.delete(e.pointerId);
+    if (togglePress) {
+      const p = this._localPoint(e);
+      this._endedPointers.add(e.pointerId);
+      if (!togglePress.moved && p.pane === this._downPane && Math.abs(p.x - this._downX) <= 3
+        && Math.abs(p.localY - this._downLocalY) <= 3 && this._indicatorLegendHit(p.pane, p.x, p.localY)) {
+        this._handleLegendAction(INDICATOR_LEGEND_TOGGLE);
+      }
+      return;
+    }
     if (this._brandingPress?.pointerId === e.pointerId) {
       const press = this._brandingPress;
       this._brandingPress = null;
@@ -4937,10 +5078,16 @@ export class Chart {
     this._cancelPrimitiveDrag('pointercancel');
     if (this._dragging) this._pointerMoved = true;
     if (this._brandingPress?.pointerId === e.pointerId) this._brandingPress.moved = true;
+    if (this._indicatorTogglePress?.pointerId === e.pointerId) this._indicatorTogglePress.moved = true;
     this._onPointerUp(e);
   };
 
   private readonly _onLostPointerCapture = (e: PointerEvent): void => {
+    if (this._indicatorTogglePress?.pointerId === e.pointerId) {
+      this._indicatorTogglePress.moved = true;
+      this._onPointerUp(e);
+      return;
+    }
     // Another element can take capture before release. Abandon the pan without a click or fling.
     if (!this._dragging || !this._pointers.has(e.pointerId)) return;
     this._dragging = false;
@@ -5109,7 +5256,12 @@ export class Chart {
   }
 
   private readonly _onDblClick = (e: { clientX: number; clientY: number }): void => {
+    // A count-control press cannot participate in a chart double click. The
+    // browser counts clicks on the canvas even when the first collapsed a row;
+    // two later plot or axis presses retain the normal double-click action.
+    if (this._lastPressOnIndicatorToggle || this._previousPressOnIndicatorToggle) return;
     const p = this._localPoint(e);
+    if (this._indicatorLegendHit(p.pane, p.x, p.localY)) return;
     if (this._brandingHit(p.pane, p.x, p.localY)) return;
     const ev: DoubleClickEvent = { paneIndex: p.pane, x: p.x, y: p.y, handled: false };
     this.emit('dblclick', ev);
@@ -5126,6 +5278,7 @@ export class Chart {
   private _beginPinch(): void {
     this._cancelPrimitiveDrag('pinch');
     this._brandingPress = null;
+    this._indicatorTogglePress = null;
     const pts = [...this._pointers.values()];
     this._pinch = pinchState(pts[0], pts[1]);
     this._pinchPane = pts[0].pane;

@@ -467,6 +467,11 @@ function readoutControls(chart: Chart): Control[] {
     ),
     statusSwitch('lastDayChange', 'Change since previous close', 'Show'),
     statusSwitch('lastValueLabel', 'Indicator values', 'Show'),
+    boolCtl(
+      'statusLine.indicatorsCollapsed', 'Collapse indicator legends', 'Show', false,
+      (c) => c.indicatorLegendCollapsed(),
+      (c, v) => c.setIndicatorLegendCollapsed(v),
+    ),
     // The plate is the one switch that is off by default: the row has never had
     // one, so turning it on has to be a deliberate choice.
     boolCtl(
@@ -575,6 +580,11 @@ function axesControls(chart: Chart): Control[] {
       'scales.autoScale', 'Auto (fits data to screen)', 'Price scale', true,
       (c) => c.panes()[0].priceScale.autoScale,
       (c, v) => c.setAutoScale(v),
+    ),
+    boolCtl(
+      'scales.priceOnly', 'Fit primary prices only', 'Price scale', false,
+      (c) => c.priceOnlyAutoScale(),
+      (c, v) => c.setPriceOnlyAutoScale(v),
     ),
     boolCtl(
       'scales.inverted', 'Invert scale', 'Price scale', false,

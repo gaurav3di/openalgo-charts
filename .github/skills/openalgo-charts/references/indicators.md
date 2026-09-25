@@ -1631,3 +1631,26 @@ the returned cleanup, and use `retryData()` for explicit retry. The chart bus em
 Custom attach hooks can use optional `dataContext()`, `subscribeDataChanges()`,
 `setDataStatus()` and `setDataRetry()` from `IndicatorAttachContext`; the lifetime
 signal is aborted on removal. Keep these optional for older synthetic hosts.
+
+## Collapse indicator legends
+
+```ts
+chart.setIndicatorLegendCollapsed(true);
+chart.indicatorLegendCollapsed(); // true
+```
+
+The constructor option `indicatorLegendCollapsed` defaults to `false`. Collapse
+suppresses study legend rows and their hit areas across panes. The persistent
+**Indicators N** control in the top visible pane expands them with a click or
+touch. The count includes every applied study, including individually hidden
+ones, and disappears when no studies remain. Expanded legends retain a control
+for collapsing them again.
+
+Plots, study visibility, calculations, live subscriptions and alerts stay active.
+Host OHLC and custom legend rows retain their display. The count respects the
+reserved `legendOffset` and follows the top visible pane when a pane is maximized.
+
+Both hosts expose **Collapse indicator legends** in Readout settings for keyboard
+access. The stable schema key is `statusLine.indicatorsCollapsed`. Native chart
+state and portable workspaces retain this chart-local preference; study templates
+do not replace it and appearance linking does not synchronize it.

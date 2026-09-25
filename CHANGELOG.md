@@ -4,6 +4,14 @@ All notable changes to OpenAlgo Charts.
 
 ## Unreleased
 
+- Primary-only auto-fit follows the actual primary series across panes and scales,
+  keeping distant overlays from compressing price candles when enabled. The
+  setting preserves manual ranges and ratio locks, and is available in both hosts.
+- Study legends can collapse to a persistent count while plots, calculations and
+  alerts continue. Touch can expand the count without a prior hover; Readout
+  settings provide keyboard access. Both preferences persist independently for
+  each chart in saved layouts and portable workspaces.
+
 - ADX now seeds directional movement and true range over the same first complete
   change window. This removes an initial bias in both directional readings and
   the strength calculation. The first available bars are unchanged.
