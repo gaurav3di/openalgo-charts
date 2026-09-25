@@ -121,6 +121,8 @@ export type {
   IndicatorAlertContext,
   IndicatorAlertPayload,
   IndicatorDrawing,
+  IndicatorMarker,
+  IndicatorOutputTarget,
   DrawAnchor,
 } from './model/indicator-registry';
 export type { IndicatorApi, IndicatorHost } from './model/indicator-instance';

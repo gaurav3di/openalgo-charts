@@ -28,6 +28,7 @@ import { initBracket, attachBracketLines, setBracketPrice, updateBracket, remove
 import { initIndicators, fillIndicatorPicker, renderIndicatorChips, openSettings, rememberIndicators } from './indicators.js';
 import { chartDecorationsForRebuild, initChartSettings, normalizeLegendIconSize, restorePrimaryStyle } from './chart-settings.js';
 import { bindIndicatorSource, initIndicatorSource } from './indicator-source.js';
+import { initRoutedStudy } from './routed-study.js';
 import { initCompare, attachComparison, invalidateComparisons, syncComparisons, restoreComparisons } from './compare.js';
 import { initSnapshot } from './snapshot.js';
 import { initReplay, exitReplay, attachReplay, syncReplayAlertPause } from './replay.js';
@@ -515,6 +516,7 @@ initOrders(app);
 initBracket(app);
 initIndicators(app);
 initIndicatorSource();
+initRoutedStudy();
 
 // The operator keypad lives beside the symbol field. Mounted once: it writes
 // into the field and the ordinary Enter handler does the loading, so nothing

@@ -687,6 +687,9 @@ the rules in [primitives-and-plugins](./primitives-and-plugins.md).
 - `IndicatorDrawings` - the primitive behind a descriptor's `draws` hook. One
   primitive holds the whole shape list, because a descriptor rebuilds its shapes on
   every recompute and per-shape primitives would re-sort z-order on every live tick.
+  `new IndicatorDrawings(priceScale?)` optionally measures prices on the scale the
+  callback returns each frame, given that frame's `PrimitiveRenderContext`, instead
+  of the pane's binding for the layer.
 
 **Calendar boundaries, zone-aware.** The `zone` argument defaults to
 `DEFAULT_TIMEZONE`; never let it fall through to the browser's local zone.

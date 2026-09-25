@@ -330,7 +330,9 @@ Both retain explicit price-overlay overrides; clear those individually with null
 
 Fills follow their common endpoint scale. Levels, unbound price drawings and
 attached price primitives follow the first local plot, as does study-owned range
-intent. Plot markers follow their series. Tables and background shading remain
+intent. A drawing that names a `plot` follows that plot's scale, and a price-pane
+drawing (`overlay: true`) follows the scale pane 0 quotes prices on, the candles' own, without binding one. Plot markers,
+including marker groups that name a plot, follow their series. Tables and background shading remain
 in screen coordinates. Handles, data, settings and provider attachments survive
 assignment changes; no calculation or alert evaluation is required.
 

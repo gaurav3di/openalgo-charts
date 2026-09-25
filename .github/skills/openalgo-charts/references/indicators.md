@@ -517,14 +517,14 @@ The three shapes actually used by the built-ins:
 
 ## Signal markers
 
-`IndicatorDescriptor.markers` is an optional hook returning bar-anchored `SeriesMarker[]`. It runs after every `calc` and reads the values `calc` just produced, so it recomputes nothing.
+`IndicatorDescriptor.markers` is an optional hook returning bar-anchored `IndicatorMarker[]` (a `SeriesMarker` that may also carry an `IndicatorOutputTarget`, so a plain `SeriesMarker[]` still type-checks). It runs after every `calc` and reads the values `calc` just produced, so it recomputes nothing.
 
 ```ts
 markers?(ctx: {
   bars: readonly Bar[];
   values: IndicatorValues;
   settings: Readonly<IndicatorSettings>;
-}): readonly SeriesMarker[];
+}): readonly IndicatorMarker[];
 ```
 
 A plot cannot express this: a plot is a column of prices drawn as a line or a histogram, whereas a signal is a discrete named event at one bar.
@@ -536,6 +536,14 @@ A plot cannot express this: a plot is a column of prices drawn as a line or a hi
 - Missing or NaN plot values use the instrument bar at the same time only when the indicator is on pane 0 and its marker series shares the primary series' price scale. Finite plot points retain precedence. Own-pane oscillators and independent scales never receive instrument-price fallback; without an anchor their bar-relative marker is skipped.
 - `series.createMarkers(fallbackBars)` and `new SeriesMarkers(seriesId, fallbackBars, priceScale)` accept optional callbacks. `fallbackBars` returns current `readonly Bar[]`; the optional constructor `priceScale` returns the current `PriceScale`. Series-created layers supply that scale callback automatically, including after an axis move. Missing shared-axis times are skipped even when a fallback bar exists. `atPrice`, `paneTop` and `paneBottom` do not require a series bar.
 - **Markers are a separate primitive from the plots.** `setVisible(false)` hides both because the runtime re-runs the hook with an empty result, but a plot-level style patch does not touch them.
+- **Marker groups.** A marker can name an `IndicatorOutputTarget`: `overlay: true` anchors it to the instrument's candles on the price pane (so `belowBar` sits under the low) even from a study in its own pane, and `plot: key` anchors it to that declared plot's series, pane and scale. Each target is its own `SeriesMarkers` layer created on that series: it follows the series through `setPlotPriceScales`, `setPriceScale` and `moveIndicator` (a price-pane group stays on pane 0), is cleared while the study is hidden and refilled in place when shown, is released when a visible pass returns nothing for it, and goes with the study or its pane. A target that resolves to the series the study's own marks anchor to (`overlay: true` from an on-price study with `markerAnchor: 'price'`, or `plot` naming the first plot) is not a separate layer: those marks join the study's own layer in the order returned, so marks at one bar stack, and they split out again if a move changes that anchor. A `plot` group fills a missing or NaN value from the instrument bar whenever that plot is on pane 0 and shares the primary series' price scale, whether or not it is the first plot, so marks naming an `overlay` first plot of a study in its own pane keep a layer of their own: the study's own marks there never take the instrument bar. A study's layers stack as: its own marks, its marker groups, its own shapes, its drawing targets, each kind's targets in target order (price pane, then plots in declaration order), which is also the order a pass creates them in. A group created after the first pass (a target returned again, or for the first time) is restacked through the host's `resourcesChanged`, called from inside the pass: during that call every instance reports its targeted layers alone, so the host puts the targeted layers on each pane back in study order, each study's in the order above, and moves nothing else. The runtime republishes no study's bar colours during that call, since study order has not changed. A study's own layer created on a later pass is never restacked, and neither is anything of a study that names no target, even when another study routes on the same pass: it stays where it landed, exactly as before targets. Marks with no target keep `markerAnchor` and the first plot byte for byte. An overlay group waits for a primary series. An unknown plot, or `plot` together with `overlay: true`, throws before any marker layer changes, and so does an invalid style on any mark: `addIndicator` throws, and a later pass publishes an error status while every marker layer keeps the last good pass. The rest of the pass is not rolled back: a pass syncs plots and fills, markers, the table, drawings, then background, bar colours, levels and alerts, so outputs before the failing one stay applied and those after it wait for the next good pass. Marks in groups on different series (the candles and a plot, or two plots) do not stack against each other at a shared bar: each is measured against a different value.
+
+```ts
+markers: ({ bars, values }) => crossings(values.momentum).map(i => ({
+  time: bars[i].time, position: 'belowBar', shape: 'labelUp', size: 'small',
+  color: '#26a69a', text: 'Buy', overlay: true,        // on the candles
+})),
+```
 
 `MarkerShape` includes two label shapes for named signals: `labelUp` and `labelDown` are rounded text plates with a tail that points **at** the anchor price, so the body sits clear of the bar. `labelUp`'s tail is on the top edge and its body hangs below the anchor; `labelDown` is the mirror. Both require `text`. The renderer is exported as `drawLabel(ctx, up, cx, anchorY, text, color, fontPx)` alongside `drawShape`, `markerSizePx` and `effectiveMarkerPx`, all in bitmap px with dpr already applied by the caller.
 
@@ -749,7 +757,7 @@ registerIndicator({
 chart.addIndicator('my-momentum', { length: 14 });
 ```
 
-Optional descriptor members: `fills`, `markers`, `markerAnchor` / `hasSource` (2.4.6), `levels`, `range`, `attach`, `calcTail`, `table`, `tables`, `draws` (1.7.1), and `background` / `barColors` / `alerts` (1.7.1), plus `colorBy` (per-bar colour), `priceScaleId` / `overlay`, and `ohlc` (1.8.1) on an individual plot.
+Optional descriptor members: `fills`, `markers`, `markerAnchor` / `hasSource` (2.4.6), `levels`, `range`, `attach`, `calcTail`, `table`, `tables`, `draws` (1.7.1), and `background` / `barColors` / `alerts` (1.7.1), plus `colorBy` (per-bar colour), `priceScaleId` / `overlay`, and `ohlc` (1.8.1) on an individual plot. Returned drawings and markers can carry `overlay` / `plot` output targets (see the markers and drawings sections).
 
 ### Assigning scales to study plots
 
@@ -771,6 +779,7 @@ Move both fill endpoints in one patch to keep their pane and scale identical.
 Unknown keys, invalid IDs, accessors, incompatible fills and empty/unchanged
 patches return false without moving resources. Invalid creation maps throw before
 allocation. Levels and unbound price drawings follow the first local plot;
+drawings that name a `plot` follow that plot, and price-pane drawings stay on the candles' scale;
 plot markers follow their bound series. The operation keeps handles, values and
 provider attachments, and does not recalculate or evaluate alerts.
 
@@ -951,6 +960,45 @@ Nonfinite source or mapped anchors omit a whole polyline in either mode.
 
 The list is rebuilt on every recompute, exactly like `markers`. There are no retained handles to
 mutate or leak, and a symbol change cannot strand a drawing.
+
+### Drawing targets
+
+Every `IndicatorDrawing` also accepts the `IndicatorOutputTarget` fields. With neither set the shape
+stays in the study's own layer on its first local plot's scale, exactly as before.
+
+- `overlay: true` draws the shape on pane 0 in the instrument's units, measured on the scale that
+  pane quotes prices on (`PrimitiveRenderContext.readoutPriceScale`: its first visible price series,
+  the candles, on whichever axis or overlay scale that is). It is read from pane 0 itself, so a host
+  that puts its candles on another pane gets pane 0's own scale, never a scale from another pane. The layer binds no scale, so it
+  never reserves an axis column and never stops `movePriceAxis` or `setSeriesPriceScale` from moving
+  the candles; the shape goes with them. It stays on pane 0 through `moveIndicator` and ignores
+  whole-study scale moves.
+- `plot: key` draws it on that declared plot's pane and effective scale (per-plot assignment, then
+  whole-study override, then descriptor, then `right`), and rebinds it when `setPlotPriceScales` or
+  `setPriceScale` changes that plot's scale. An `overlay` plot takes the shape to the price pane.
+- Each target is its own `IndicatorDrawings` layer owned by the instance: hidden with the study,
+  released when a pass returns nothing for it, released on `remove()` or when the study's pane is
+  removed, and recreated on `restoreState` from the descriptor (targets are descriptor data, not
+  saved state). A layer created after the first pass is restacked into its study's place among the
+  targeted layers on its pane, and nothing else moves (see the marker groups bullet for the order).
+  Hit ids and tooltips report on the pane and scale the shape is drawn on.
+- An unknown plot, or `plot` together with `overlay: true`, throws before any drawing layer changes,
+  and so does an invalid style on any shape. Only the drawing layers are protected: the plots,
+  fills, markers and table synced earlier in that pass stay applied, and the background, bar colours,
+  levels and alerts wait for the next good pass. The error is published as the study's status.
+- `new IndicatorDrawings(priceScale?)` takes an optional
+  `(rc: PrimitiveRenderContext) => PriceScale | null | undefined`, read on every frame with that
+  frame's context; without it, or when it returns nothing, the layer uses the scale its pane binds it
+  to. The runtime passes `rc => rc.readoutPriceScale` for price-pane targets. A host can pass
+  `() => series.priceScale()` to follow one series on that series' own pane.
+
+```ts
+draws: ({ bars }) => [
+  { kind: 'box', from: { time: t0, price: hi }, to: { time: t1, price: lo },
+    fillColor: '#26a69a', id: 'range', overlay: true },               // on the candles
+  { kind: 'label', at: { time: t1, price: last }, text: 'Now', plot: 'momentum' },  // on that plot's axis
+]
+```
 
 ## The calc context (1.8.1)
 
