@@ -8,7 +8,8 @@
  * they meant. A result that is not a clean placement keeps the panel open
  * with the reason, since the next thing the user does is change the date.
  * Bars a day or longer are named by their date alone, so their panel has no
- * time fields: a time could not change which bar a date names.
+ * time fields: a time could not change which bar a date names. Both choices
+ * hold for one interval and one zone, so a change to either closes the panel.
  */
 import { utcSecondsToZonedParts, zonedWallClockToUtcSeconds } from 'openalgo-charts';
 import type { WidgetContext } from './context';
@@ -20,9 +21,10 @@ export interface DateNavigationDialogOptions {
   /** Run one request. The panel reports the result and closes once it is placed. */
   navigate(target: DateNavigationTarget): Promise<DateNavigationResult>;
   /**
-   * Abandon the panel's request. Called when the panel is dismissed while that
-   * request is still loading, so the view cannot jump after the user has moved
-   * on; not called when the panel closed because its chart was destroyed.
+   * Abandon the panel's request. Called when the panel closes while that
+   * request is still loading (dismissed, or closed by an interval or timezone
+   * change), so the view cannot jump after the user has moved on; not called
+   * when the panel closed because its chart was destroyed.
    */
   cancel?(): void;
   /**
@@ -45,7 +47,8 @@ export function openDateNavigation(ctx: WidgetContext, anchor: HTMLElement | und
   const doc = ctx.document;
   const chart = ctx.chart;
   const zone = chart.timezone();
-  const buckets = timeBuckets(ctx.interval());
+  const interval = ctx.interval();
+  const buckets = timeBuckets(interval);
   const intraday = buckets?.mode === 'interval' && buckets.seconds < 86400;
   const format = new Intl.DateTimeFormat(ctx.locale, { timeZone: zone, dateStyle: 'medium', ...(intraday ? { timeStyle: 'short' } : {}) });
   const when = (time: number): string => format.format(new Date(time * 1000));
@@ -178,7 +181,9 @@ export function openDateNavigation(ctx: WidgetContext, anchor: HTMLElement | und
     go.disabled = busy = true;
     let result: DateNavigationResult;
     try { result = await work; } finally { if (mine === request) go.disabled = busy = false; }
-    if (closed || mine !== request || result.status === 'cancelled') return;
+    if (closed || mine !== request) return;
+    // Taken over by a context change or a move of the view: no longer loading.
+    if (result.status === 'cancelled') { message.textContent = ''; return; }
     const text = describe(result, target);
     const failed = result.status === 'error' || result.status === 'unsupported';
     ctx.status(text, failed ? 'error' : 'info');
@@ -189,7 +194,7 @@ export function openDateNavigation(ctx: WidgetContext, anchor: HTMLElement | und
   function close(): void {
     if (closed) return;
     closed = true;
-    offDestroy();
+    for (const off of offs) off();
     panel?.close();
     options.onClose?.();
     // Decided once the closing task has run: a host rebuilding its chart
@@ -197,7 +202,8 @@ export function openDateNavigation(ctx: WidgetContext, anchor: HTMLElement | und
     // then the host's to finish rather than one the user walked away from.
     if (busy) void Promise.resolve().then(() => { if (!chart.isDestroyed) options.cancel?.(); });
   }
-  const offDestroy = chart.on('destroy', close);
+  const offs = [chart.on('destroy', close), chart.on('timezone:changed', close),
+    chart.on('data:context', () => { if (ctx.interval() !== interval) close(); })];
   panel = openPanel(ctx, frame.el, { anchor, placement: 'below', initialFocus: start.date }, close);
   if (closed) panel.close();
   else if (pending !== undefined) void follow(pending.target, pending.result);

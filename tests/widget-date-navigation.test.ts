@@ -421,6 +421,55 @@ describe('widget go-to panel', () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
+  it('closes when the interval or the timezone changes under it, and stays for a symbol change', async () => {
+    const off = registerInterval({ code: 'T50', bucketing: { mode: 'ticks', count: 50 } });
+    try {
+      for (const [interval, change] of [
+        ['1h', (widget: Widget) => { widget.setInterval('1d'); }],
+        ['1d', (widget: Widget) => { widget.setInterval('1h'); }],
+        ['1d', (widget: Widget) => { widget.setInterval('T50'); }],
+        ['1d', (widget: Widget) => { widget.restoreState({ symbol: 'NIFTY', exchange: 'NSE', interval: '1h' }); }],
+        ['1d', (widget: Widget) => { widget.chart.setTimezone('America/New_York'); }],
+      ] as const) {
+        const { widget, root } = make({ interval, feed: rangeFeed([]) });
+        await flush();
+        widget.openDateNavigation();
+        const panel = root.querySelector('.oac-goto')!;
+        widget.setSymbol('BANKNIFTY');
+        await flush();
+        expect(root.querySelector('.oac-goto')).toBe(panel);
+        change(widget);
+        await flush();
+        // Its fields were built for the old interval and zone: time fields on
+        // daily bars, or dates read on a clock the axis no longer shows.
+        expect(root.querySelector('.oac-goto')).toBeNull();
+        expect(panel.isConnected).toBe(false);
+      }
+    } finally { off(); }
+  });
+
+  it('clears its loading line when a context change cancels its request', async () => {
+    const requests: BarsRequest[] = [];
+    const { feed, release } = gatedFeed(requests);
+    const { widget, root } = make({ feed });
+    await flush();
+    widget.openDateNavigation();
+    const panel = root.querySelector('.oac-goto')!;
+    panel.querySelectorAll('input')[0].value = '2023-10-16';
+    const go = panel.querySelector('[data-action="go-to"]')!;
+    go.click();
+    await flush();
+    const message = panel.querySelector('.oac-goto__message')!;
+    expect(message.textContent).toBe('Loading history');
+    expect(go.disabled).toBe(true);
+    widget.setSymbol('BANKNIFTY');
+    await flush();
+    expect(root.querySelector('.oac-goto')).toBe(panel);
+    expect(message.textContent).toBe('');
+    expect(go.disabled).toBe(false);
+    release();
+  });
+
   it('reports nothing once closed, even when its host lets the request finish', async () => {
     const { widget, root } = make({ feed: rangeFeed([]) });
     await flush();

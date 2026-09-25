@@ -188,6 +188,23 @@ test('widget go-to panel closed while loading leaves the view where the user lef
   expect(errors).toEqual([]);
 });
 
+test('widget go-to panel closes when the interval changes under it', async ({ page }, info) => {
+  const errors = await mountWidget(page, 1100, { interval: '1h' });
+  let panel = await openPanel(page, 1100);
+  await expect(panel.locator('input[type=time]').first()).toBeVisible();
+  // Changed through the API: no press lands outside the panel to close it.
+  await page.evaluate(() => new Promise<void>(resolve => {
+    window.__goto.widget.on('data', () => resolve());
+    window.__goto.widget.setInterval('1d');
+  }));
+  await expect(page.locator('.oac-goto')).toHaveCount(0);
+  panel = await openPanel(page, 1100);
+  await expect(panel.locator('input[type=time]').first()).toBeHidden();
+  await expect(panel.locator('.oac-goto__hint')).toHaveText('Dates are in Asia/Kolkata.');
+  await page.screenshot({ path: info.outputPath('interval-changed.png') });
+  expect(errors).toEqual([]);
+});
+
 test('widget go-to panel offers a time on an intraday chart in the light theme', async ({ page }, info) => {
   const errors = await mountWidget(page, 1100, { interval: '1h', theme: 'light' });
   const panel = await openPanel(page, 1100);
