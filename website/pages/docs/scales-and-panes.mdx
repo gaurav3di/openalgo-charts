@@ -594,7 +594,9 @@ clears the whole-study override and restores local descriptor defaults. Explicit
 price-overlay overrides survive both calls and can be cleared individually.
 
 Levels, unbound price drawings, attached price primitives and study-owned range
-intent follow the first local plot. Plot markers follow their series. The move
+intent follow the first local plot. A drawing that names a `plot` follows that
+plot's scale; a price-pane drawing stays on the price pane's right scale. Plot
+markers, including marker groups that name a plot, follow their series. The move
 preserves handles and data without recalculation. Target ranges stay intact;
 formatting is shared by plots assigned to the same ID. Explicit plot formats
 apply in descriptor order on a destination scale. A price format restores the

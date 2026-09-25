@@ -31,6 +31,7 @@ const INIT = {
   'persist.js': 'initPersist',
   'rail.js': 'initRail',
   'replay.js': 'initReplay',
+  'routed-study.js': 'initRoutedStudy',
   'snapshot.js': 'initSnapshot',
   'split.js': 'initSplit',
   'status.js': 'initStatus',
@@ -47,7 +48,7 @@ describe('demo modules', () => {
       'alerts.js', 'axis-chrome.js', 'bracket.js', 'chart-data-controls.js', 'chart-data.js', 'chart-settings.js', 'clipboard.js', 'compare.js',
       'drawing.js', 'expression.js', 'feed.js', 'hover.js', 'indicator-input-controls.js', 'indicator-source.js', 'indicator-templates.js', 'indicators.js', 'inspection.js', 'intervals.js', 'level-editor.js',
       'link.js', 'menus.js', 'orders.js', 'pane-target.js', 'persist.js', 'properties.js', 'rail-flyout.js',
-      'rail.js', 'replay-timing.js', 'replay.js', 'snapshot.js', 'split.js', 'status.js', 'symbol-search.js', 'templates.js', 'text-editor.js',
+      'rail.js', 'replay-timing.js', 'replay.js', 'routed-study.js', 'snapshot.js', 'split.js', 'status.js', 'symbol-search.js', 'templates.js', 'text-editor.js',
       'timeline.js', 'timezone.js', 'toolbar.js', 'transforms.js', 'ui.js', 'volume.js', 'workspace-catalog.js', 'workspace-document.js', 'workspace-host.js', 'workspace-transition.js', 'workspaces.js',
     ]);
   });

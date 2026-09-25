@@ -550,6 +550,59 @@ A descriptor can also supply `draws` for free-standing lines, boxes and labels,
 grid, and `alerts` the chart evaluates for you. See
 [Indicators](/docs/indicators) for the full contract.
 
+### Signals from a study pane onto the candles
+
+The momentum histogram lives in its own pane, but its Buy and Sell plates and the
+blue range box are drawn on the candles: those outputs name the price pane with
+`overlay: true`. The dots and the "Now" label stay with the histogram. Move or hide
+the study and every layer follows. See
+[drawing and marker targets](/docs/indicators#drawing-and-marker-targets).
+
+<RunnableExample height={420} code={`lib.registerIndicator({
+  id: 'demo-routed-signals', name: 'Routed signals', category: 'Custom',
+  placement: 'pane',
+  inputs: [{ key: 'length', type: 'number', label: 'Length', default: 10, min: 2, max: 50, step: 1 }],
+  plots: [{ key: 'momentum', type: 'histogram', title: 'Momentum', style: { color: '#64748b' } }],
+  calc(bars, s) {
+    const n = Math.max(2, s.length | 0);
+    return { momentum: bars.map((b, i) => (i < n ? null : b.close - bars[i - n].close)) };
+  },
+  markers({ bars, values }) {
+    const out = [];
+    for (let i = 1; i < bars.length; i++) {
+      const a = values.momentum[i - 1], b = values.momentum[i];
+      if (a == null || b == null || Math.sign(a) === Math.sign(b)) continue;
+      const up = b > 0, color = up ? '#26a69a' : '#ef5350';
+      // On the candles, measured against the bar that fired.
+      out.push({ time: bars[i].time, position: up ? 'belowBar' : 'aboveBar', overlay: true,
+        shape: up ? 'labelUp' : 'labelDown', size: 'small', color, text: up ? 'Buy' : 'Sell' });
+      // No target: a dot on the histogram in the study's own pane.
+      out.push({ time: bars[i].time, position: 'atPrice', price: b, shape: 'circle', size: 'tiny', color });
+    }
+    return out;
+  },
+  draws({ bars, values }) {
+    const last = bars.length - 1;
+    if (last < 30) return [];
+    const recent = bars.slice(last - 30);
+    return [
+      { kind: 'box', overlay: true, color: '#4f8cff', fillColor: '#4f8cff', opacity: 0.08,
+        from: { time: recent[0].time, price: Math.max(...recent.map((b) => b.high)) },
+        to: { time: bars[last].time, price: Math.min(...recent.map((b) => b.low)) },
+        text: '30-bar range', verticalAlign: 'top', id: 'range', tooltip: 'Range the latest signals ran in' },
+      { kind: 'label', plot: 'momentum', align: 'left', color: '#64748b', text: 'Now',
+        at: { time: bars[last].time, price: values.momentum[last] ?? 0 } },
+    ];
+  },
+});
+
+const chart = lib.createChart(el);
+const bars = lib.generateBars(1700000000, 160, 3600);
+chart.addSeries('candlestick').setData(bars);
+chart.addIndicator('demo-routed-signals');
+chart.timeScale.fitContent(bars.length);
+return chart;`} />
+
 ### Curved study annotations
 
 The orange curve interpolates the same time and price anchors as the gray
