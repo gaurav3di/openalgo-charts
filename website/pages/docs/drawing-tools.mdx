@@ -277,9 +277,11 @@ interface DrawingChartHost {
   drawingState(): unknown;
   setDrawingState(state: unknown): void;
   setPlacementMode?(active: boolean): void;
-  // Optional, and used only by paste: the first two make its vertical nudge a screen
-  // translation that survives a log scale, the third keeps a drawing copied out of an
-  // indicator pane from conjuring an empty pane in a chart that has fewer.
+  // Optional. The first two make a paste or nudge offset a screen translation that
+  // survives a log scale, and place a drawing for its alert values. The third keeps a
+  // drawing copied out of an indicator pane from conjuring an empty pane in a chart
+  // that has fewer, and lets an alert read a drawing on a pane collapsed to its header
+  // strip, where the first two return null, through that pane's own scale.
   priceToCoordinate?(price: number, paneIndex?: number): number | null;
   coordinateToPrice?(y: number, paneIndex?: number): number | null;
   panes?(): readonly unknown[];

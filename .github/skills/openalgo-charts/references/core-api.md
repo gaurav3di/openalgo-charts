@@ -464,8 +464,8 @@ The widget defaults to 8 CSS pixels per bar unless a count or spacing is supplie
 |---|---|---|
 | `timeToCoordinate(time)` | UTC seconds -> container x, media px | Interpolates and extrapolates past the right edge. |
 | `coordinateToTime(x)` | container x -> UTC seconds | |
-| `priceToCoordinate(price, paneIndex = 0)` | price -> container y, media px \| `null` | `null` when the pane does not exist. Uses the pane's **readout** scale, which is the one its first visible price series maps to, so it is right on a pane whose axis was moved to the left strip. |
-| `coordinateToPrice(y, paneIndex = 0)` | container y -> price \| `null` | Same scale as above. |
+| `priceToCoordinate(price, paneIndex = 0)` | price -> container y, media px \| `null` | `null` when the pane does not exist or is collapsed to its header strip (`setPaneCollapsed`), which plots no price. Uses the pane's **readout** scale, which is the one its first visible price series maps to, so it is right on a pane whose axis was moved to the left strip. |
+| `coordinateToPrice(y, paneIndex = 0)` | container y -> price \| `null` | Same scale, and `null` on the same panes. |
 
 Both price conversions force an autoscale pass first, so they are correct before the first paint.
 
