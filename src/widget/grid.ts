@@ -27,7 +27,7 @@
  */
 import {
   applyChartSettings, createLinkGroup, isKnownInterval, readChartSettings, registeredChartTypes, registeredIndicators,
-  type ChartTheme, type LinkChart, type LinkOptions, type ResolvedLinkOptions,
+  type ChartTheme, type DataFeed, type LinkChart, type LinkOptions, type ResolvedLinkOptions,
 } from 'openalgo-charts';
 import type { WorkspaceChartState, WorkspacePane, WorkspacePayload } from 'openalgo-charts/workspace';
 import { WidgetBus, WidgetStorage, defaultStorage, h, type StorageLike } from './context';
@@ -43,7 +43,13 @@ export const CHART_GRID_PRESETS: Readonly<Record<ChartGridPreset, readonly [rows
   '1x1': [1, 1], '1x2': [1, 2], '1x3': [1, 3], '2x1': [2, 1], '3x1': [3, 1], '2x2': [2, 2],
 };
 
-export interface ChartGridOptions extends Omit<WidgetOptions, 'persist' | 'storage' | 'keyboardRoute'> {
+export interface ChartGridOptions extends Omit<WidgetOptions, 'persist' | 'storage' | 'keyboardRoute' | 'feed'> {
+  /**
+   * Where the charts load bars: one feed for every chart, or a function that
+   * builds each chart's feed from its pane id and the `historyPeriod` its
+   * workspace pane carries, for a host whose source answers by period.
+   */
+  feed?: DataFeed | ((chart: { readonly id: string; readonly historyPeriod?: string }) => DataFeed);
   /** The layout to start with when nothing is restored. Default `1x1`. */
   preset?: ChartGridPreset;
   /** Link channels to start with. Default: crosshair and viewport on, the rest off. */
@@ -66,6 +72,12 @@ export interface ChartGridCell {
   readonly column: number;
   readonly rowSpan: number;
   readonly columnSpan: number;
+  /**
+   * The host's name for how much history the chart loads, from the applied
+   * workspace pane or the active chart a preset copied. The grid only keeps it
+   * and writes it back; a `feed` function is what honours it.
+   */
+  readonly historyPeriod?: string;
 }
 
 export interface ChartGridLayout {
@@ -134,13 +146,14 @@ interface Cell {
   column: number;
   rowSpan: number;
   columnSpan: number;
+  historyPeriod?: string;
   member: LinkChart;
   offs: Array<() => void>;
   /** Bars across the window the chart showed last, 0 while it had no plot. */
   span: number;
 }
 
-interface Source { symbol?: string; exchange?: string; interval?: string; chartType?: string }
+interface Source { symbol?: string; exchange?: string; interval?: string; chartType?: string; historyPeriod?: string }
 type Axis = 'row' | 'column';
 
 /** Pixels between tracks, and the track a splitter sits in. */
@@ -179,7 +192,8 @@ function check(p: WorkspacePayload): string {
   for (const pane of p.panes) {
     if (!isRecord(pane) || typeof pane.id !== 'string' || pane.id === '' || ids.has(pane.id)) return 'invalid or duplicate chart id';
     ids.add(pane.id);
-    if (typeof pane.symbol !== 'string' || typeof pane.exchange !== 'string' || !isRecord(pane.chart)) return `${pane.id}: invalid chart`;
+    if (typeof pane.symbol !== 'string' || typeof pane.exchange !== 'string' || !isRecord(pane.chart)
+      || !['string', 'undefined'].includes(typeof pane.historyPeriod)) return `${pane.id}: invalid chart`;
     if (!isKnownInterval(pane.interval)) return `${pane.id}: unknown interval ${String(pane.interval)}`;
     if (!registeredChartTypes().includes(pane.chartType)) return `${pane.id}: unknown chart type ${String(pane.chartType)}`;
     if (Array.isArray(pane.comparisons) && pane.comparisons.length > 0) return `${pane.id}: comparison symbols are not supported in a grid chart`;
@@ -453,11 +467,13 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
     const element = h(doc, 'div', 'oac-grid__cell', { role: 'group' });
     element.dataset.paneId = id;
     parent.appendChild(element);
-    const cell = { id, element, row: 0, column: 0, rowSpan: 1, columnSpan: 1, offs: [], span: 0 } as unknown as Cell;
+    const { historyPeriod } = source, feed = options.feed;
+    const cell = { id, element, row: 0, column: 0, rowSpan: 1, columnSpan: 1, offs: [], span: 0, historyPeriod } as unknown as Cell;
     try {
       cell.widget = createWidget(element, {
         ...cellOptions, theme: cellTheme, symbol: source.symbol, exchange: source.exchange, interval: source.interval,
         chartType: source.chartType, keyboardRoute: () => route(cell),
+        feed: typeof feed === 'function' ? feed({ id, historyPeriod }) : feed,
       });
     } catch (error) {
       element.remove();
@@ -614,7 +630,7 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
       const before = active;
       const from = active?.widget;
       const source: Source = from === undefined ? options
-        : { symbol: from.symbol(), exchange: from.exchange(), interval: from.interval(), chartType: from.chartType() };
+        : { symbol: from.symbol(), exchange: from.exchange(), interval: from.interval(), chartType: from.chartType(), historyPeriod: active?.historyPeriod };
       const made: Cell[] = [];
       try {
         while (keep.length + made.length < r * c) {
@@ -673,7 +689,7 @@ export function createChartGrid(container: HTMLElement | string, options: ChartG
           // it saves neither rather than claim a preference it cannot show.
           return { id: c.id, symbol: s.symbol, exchange: s.exchange, interval: s.interval, chartType: s.chartType,
             chart: s.chart as WorkspaceChartState, settings: { [THEME_SETTING]: s.theme }, volume: false,
-            magnet: s.rail?.magnet ?? 'off', stay: s.rail?.stay ?? false, comparisons: [], comparisonMode: 'percent' };
+            magnet: s.rail?.magnet ?? 'off', stay: s.rail?.stay ?? false, comparisons: [], comparisonMode: 'percent', historyPeriod: c.historyPeriod };
         }),
         activePaneId: (active as Cell).id,
         sync: { crosshair: o.crosshair, viewport: o.viewport, symbol: o.symbol, interval: o.interval, appearance: o.appearance },

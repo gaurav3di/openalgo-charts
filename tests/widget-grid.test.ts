@@ -574,6 +574,58 @@ describe('chart grid workspaces', () => {
   });
 });
 
+describe('chart grid history periods', () => {
+  /** A feed function that records what each chart was built from and where its requests went. */
+  function periodFeeds() {
+    const built: Array<{ id: string; historyPeriod?: string }> = [];
+    const asked: string[] = [];
+    const feed = (chart: { readonly id: string; readonly historyPeriod?: string }): DataFeed => {
+      built.push({ ...chart });
+      return { getBars: async request => { asked.push(`${request.symbol}:${chart.historyPeriod ?? 'default'}`); return []; } };
+    };
+    return { feed, built, asked };
+  }
+
+  it('builds each chart feed from its saved period and writes the period back', async () => {
+    const { feed, built, asked } = periodFeeds();
+    const { grid } = makeGrid({ feed, preset: '1x2' });
+    expect(built.map(chart => chart.historyPeriod)).toEqual([undefined, undefined]);
+    const payload = grid.getWorkspace();
+    expect(payload.panes.every(pane => !('historyPeriod' in pane))).toBe(true);
+    payload.panes = [{ ...payload.panes[0], id: 'long', symbol: 'LLL', historyPeriod: '5y' }, { ...payload.panes[1], id: 'plain', symbol: 'PPP' }];
+    payload.layout.slots = [{ ...payload.layout.slots[0], paneId: 'long' }, { ...payload.layout.slots[1], paneId: 'plain' }];
+    payload.activePaneId = 'long';
+    expect(grid.applyWorkspace(parseWorkspacePayload(JSON.stringify(payload)))).toEqual({ applied: true });
+    await flush();
+    expect(built.slice(2)).toEqual([{ id: 'long', historyPeriod: '5y' }, { id: 'plain', historyPeriod: undefined }]);
+    expect(asked).toContain('LLL:5y');
+    expect(asked).toContain('PPP:default');
+    expect(grid.cells().map(cell => cell.historyPeriod)).toEqual(['5y', undefined]);
+    const saved = parseWorkspacePayload(JSON.stringify(grid.getWorkspace()));
+    expect(saved.panes.map(pane => pane.historyPeriod)).toEqual(['5y', undefined]);
+  });
+
+  it('gives a chart a larger preset adds the active chart period with its instrument', () => {
+    const { feed, built } = periodFeeds();
+    const { grid } = makeGrid({ feed, preset: '1x1' });
+    const payload = grid.getWorkspace();
+    payload.panes[0].historyPeriod = '1y';
+    expect(grid.applyWorkspace(payload)).toEqual({ applied: true });
+    grid.setPreset('1x2');
+    expect(grid.cells()[1].historyPeriod).toBe('1y');
+    expect(built[built.length - 1]).toEqual({ id: grid.cells()[1].id, historyPeriod: '1y' });
+  });
+
+  it('refuses a period that is not text before any chart changes', () => {
+    const { grid } = makeGrid({ preset: '1x1' });
+    const before = grid.cells()[0].widget;
+    const payload = grid.getWorkspace();
+    (payload.panes[0] as unknown as { historyPeriod: unknown }).historyPeriod = 5;
+    expect(grid.applyWorkspace(payload)).toEqual({ applied: false, reason: `${payload.panes[0].id}: invalid chart` });
+    expect(grid.cells()[0].widget).toBe(before);
+  });
+});
+
 describe('chart grid linked exchanges', () => {
   it('carries an exchange-only change to linked charts, so the saved desk restores whole', async () => {
     vi.useFakeTimers();
