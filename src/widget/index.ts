@@ -5,6 +5,7 @@
  * indicators, capture, settings, theme), the drawing rail, a status line, a
  * keymap and the dialogs, in one call. It is the one tier that ships DOM,
  * because a toolbar is DOM; the engine underneath still ships none.
+ * `createChartGrid` lays several widgets out as one linked workspace.
  *
  * ```ts
  * import { createWidget } from 'openalgo-charts/widget';
@@ -28,6 +29,9 @@ export type { WidgetBuiltinMessage, WidgetMessageKey, WidgetMessageValues, Widge
 
 export { createWidget, stripView, resolveTheme, loadWindow, DEFAULT_INTERVALS, DEFAULT_LOOKBACK_BARS, SAVE_DEBOUNCE_MS, STATE_KEY, WIDGET_STATE_VERSION } from './widget';
 export type { Widget, WidgetOptions, WidgetState, WidgetChartState, WidgetRestoreReport, WidgetEventName } from './widget';
+export { createChartGrid, CHART_GRID_PRESETS } from './grid';
+export type { ChartGrid, ChartGridOptions, ChartGridCell, ChartGridLayout, ChartGridPreset, ChartGridApplyReport, ChartGridEvents, ChartGridEventName } from './grid';
+export { CHART_GRID_CSS } from './grid-styles';
 export { mountObjectsPanel, createObjectsPanelContent, OBJECTS_PANEL_CSS } from './objects-panel';
 export type { ObjectsPanelOptions, ObjectsPanelContent } from './objects-panel';
 export { readDataWindow, mountDataWindow, DATA_WINDOW_CSS } from './data-window';

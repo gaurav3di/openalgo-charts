@@ -1,0 +1,514 @@
+/**
+ * The chart grid: several widgets under one layout, one active cell, splitters,
+ * linked navigation and the portable workspace payload. Runs against the fake
+ * DOM with measured charts and a synchronous raf, like the widget shell tests.
+ */
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { Chart, type Bar, type BarsRequest, type DataFeed } from '../src/index';
+import '../src/indicators/index';
+import { parseWorkspacePayload, type WorkspacePayload } from '../src/workspace/index';
+import { createChartGrid, CHART_GRID_PRESETS, type ChartGrid, type ChartGridOptions, type StorageLike } from '../src/widget/index';
+import { ensureWindowGlobal, fakeContainer, fakeWidgetDocument, fire, fireKey, type FakeDocument, type FakeElement } from './helpers/fake-dom-widget';
+
+beforeAll(ensureWindowGlobal);
+
+const live: ChartGrid[] = [];
+afterEach(() => {
+  for (const grid of live.splice(0)) grid.destroy();
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
+
+const flush = async (): Promise<void> => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+const bars = (count: number, base = 100, t0 = 60): Bar[] => Array.from({ length: count }, (_, i) => {
+  const close = base + Math.sin(i / 4) * 5;
+  return { time: t0 + i * 60, open: close - 1, high: close + 2, low: close - 2, close };
+});
+
+class MemoryStorage implements StorageLike {
+  public readonly map = new Map<string, string>();
+  public getItem(k: string): string | null { return this.map.get(k) ?? null; }
+  public setItem(k: string, v: string): void { this.map.set(k, v); }
+  public removeItem(k: string): void { this.map.delete(k); }
+}
+
+/** A size observer the test fires by hand, installed as the document's window. */
+class FakeResizeObserver {
+  public static all: FakeResizeObserver[] = [];
+  public readonly targets: unknown[] = [];
+  public constructor(private readonly cb: () => void) { FakeResizeObserver.all.push(this); }
+  public observe(target: unknown): void { this.targets.push(target); }
+  public unobserve(): void {}
+  public disconnect(): void { this.targets.length = 0; }
+  public static fire(target: unknown): void {
+    for (const o of FakeResizeObserver.all) if (o.targets.includes(target)) o.cb();
+  }
+}
+
+function withWindow(doc: FakeDocument): FakeDocument {
+  (doc as unknown as { defaultView: unknown }).defaultView = {
+    ResizeObserver: FakeResizeObserver, addEventListener: () => {}, removeEventListener: () => {},
+  };
+  return doc;
+}
+
+interface Pending { request: BarsRequest; resolve(bars: Bar[]): void; reject(error: Error): void }
+function pendingFeed(): { feed: DataFeed; requests: Pending[] } {
+  const requests: Pending[] = [];
+  const feed: DataFeed = { getBars: request => new Promise<Bar[]>((resolve, reject) => { requests.push({ request, resolve, reject }); }) };
+  return { feed, requests };
+}
+
+function makeGrid(options: ChartGridOptions = {}, doc: FakeDocument = fakeWidgetDocument()) {
+  const container = fakeContainer(doc, 1200, 800);
+  const grid = createChartGrid(container as unknown as HTMLElement, {
+    document: doc as unknown as Document, pixelRatio: () => 1,
+    raf: { schedule: cb => { cb(); return 1; }, cancel: () => {} },
+    symbol: 'AAA', exchange: 'NSE', interval: '1m', now: () => 60_000_000, rail: false, ...options,
+  });
+  live.push(grid);
+  measure(grid);
+  return { grid, doc, container, root: grid.root as unknown as FakeElement };
+}
+
+/** Give every chart a plot so logical ranges mean something. */
+function measure(grid: ChartGrid): void {
+  for (const cell of grid.cells()) cell.widget.chart.applySize(600, 400);
+}
+
+const chartEl = (grid: ChartGrid, index: number): FakeElement =>
+  (grid.cells()[index].widget.root as unknown as FakeElement).querySelector('.oac-chart')!;
+
+describe('chart grid presets and lifecycle', () => {
+  it('builds one widget per preset cell and destroys only the cells a smaller preset drops', () => {
+    const created = vi.spyOn(Chart.prototype, 'addSeries');
+    const destroyed = vi.spyOn(Chart.prototype, 'destroy');
+    const { grid, root, container } = makeGrid({ preset: '1x1' });
+    expect(created).toHaveBeenCalledTimes(1);
+    const first = grid.cells()[0].widget;
+    grid.setPreset('2x2');
+    expect(created).toHaveBeenCalledTimes(4);
+    expect(grid.cells()).toHaveLength(4);
+    expect(grid.cells()[0].widget).toBe(first);
+    expect(grid.cells().map(cell => [cell.row, cell.column])).toEqual([[0, 0], [0, 1], [1, 0], [1, 1]]);
+    expect(grid.cells().map(cell => cell.widget.symbol())).toEqual(['AAA', 'AAA', 'AAA', 'AAA']);
+    expect(root.querySelectorAll('.oac-widget')).toHaveLength(4);
+    const kept = grid.cells().slice(0, 2).map(cell => cell.widget);
+    const dropped = grid.cells().slice(2).map(cell => cell.widget);
+    grid.setPreset('1x2');
+    expect(created).toHaveBeenCalledTimes(4);
+    expect(destroyed).toHaveBeenCalledTimes(2);
+    expect(grid.cells().map(cell => cell.widget)).toEqual(kept);
+    expect(dropped.every(widget => widget.isDestroyed)).toBe(true);
+    expect(root.querySelectorAll('.oac-grid__cell')).toHaveLength(2);
+    expect(grid.layout()).toEqual({ rows: 1, columns: 2, preset: '1x2', rowWeights: [1], columnWeights: [1, 1] });
+    grid.destroy();
+    expect(destroyed).toHaveBeenCalledTimes(4);
+    expect(kept.every(widget => widget.isDestroyed)).toBe(true);
+    expect(container.children).toHaveLength(0);
+    expect(grid.isDestroyed).toBe(true);
+  });
+
+  it('offers every row and column preset and refuses one it does not know', () => {
+    const { grid } = makeGrid();
+    for (const [name, [rows, columns]] of Object.entries(CHART_GRID_PRESETS)) {
+      grid.setPreset(name as keyof typeof CHART_GRID_PRESETS);
+      expect(grid.cells()).toHaveLength(rows * columns);
+      expect(grid.layout()).toMatchObject({ rows, columns, preset: name });
+    }
+    expect(() => grid.setPreset('4x4' as never)).toThrow(/preset/);
+  });
+
+  it('keeps the active chart when it survives a smaller preset and moves to the first when it does not', () => {
+    const { grid } = makeGrid({ preset: '2x2' });
+    grid.setActive(grid.cells()[1].id);
+    grid.setPreset('1x2');
+    expect(grid.active().id).toBe(grid.cells()[1].id);
+    grid.setPreset('2x2');
+    grid.setActive(grid.cells()[3].id);
+    grid.setPreset('1x2');
+    expect(grid.active().id).toBe(grid.cells()[0].id);
+  });
+});
+
+describe('chart grid data loading', () => {
+  it('cancels a removed chart request and never lets its late answer land', async () => {
+    const { feed, requests } = pendingFeed();
+    const { grid } = makeGrid({ feed, preset: '1x2' });
+    // Identical requests share one feed call across the two charts.
+    expect(requests).toHaveLength(1);
+    grid.cells()[1].widget.setSymbol('BBB');
+    expect(requests.map(entry => entry.request.symbol)).toEqual(['AAA', 'BBB']);
+    const survivor = grid.cells()[0].widget;
+    grid.setPreset('1x1');
+    expect(requests[1].request.signal?.aborted).toBe(true);
+    expect(requests[0].request.signal?.aborted).toBe(false);
+    requests[1].resolve(bars(10, 500));
+    requests[0].resolve(bars(20));
+    await flush();
+    expect(survivor.series.getData()).toHaveLength(20);
+    expect(survivor.series.getData()[0].close).toBeLessThan(200);
+    survivor.setSymbol('DDD');
+    expect(requests[2].request.symbol).toBe('DDD');
+    grid.destroy();
+    expect(requests[2].request.signal?.aborted).toBe(true);
+  });
+
+  it('switches a linked follower to the new instrument and drops the stale answer for the old one', async () => {
+    const { feed, requests } = pendingFeed();
+    const { grid } = makeGrid({ feed, preset: '1x2', links: { symbol: true } });
+    const [leader, follower] = grid.cells().map(cell => cell.widget);
+    const symbolEvents = [0, 0];
+    leader.on('symbol', () => symbolEvents[0]++);
+    follower.on('symbol', () => symbolEvents[1]++);
+    leader.setSymbol('CCC', 'BSE');
+    expect(symbolEvents).toEqual([1, 1]);
+    expect(follower.symbol()).toBe('CCC');
+    expect(follower.exchange()).toBe('BSE');
+    expect(requests.map(entry => entry.request.symbol)).toEqual(['AAA', 'CCC']);
+    expect(requests[0].request.signal?.aborted).toBe(true);
+    requests[0].resolve(bars(5, 900));
+    await flush();
+    expect(leader.series.getData()).toEqual([]);
+    expect(follower.series.getData()).toEqual([]);
+    requests[1].resolve(bars(12));
+    await flush();
+    expect(follower.series.getData()).toHaveLength(12);
+    expect(follower.chart.getDataContext()).toMatchObject({ symbol: 'CCC', exchange: 'BSE' });
+  });
+
+  it('follows a linked interval once in each chart without an echo', () => {
+    const { grid } = makeGrid({ preset: '1x3', links: { interval: true } });
+    const widgets = grid.cells().map(cell => cell.widget);
+    const counts = widgets.map(() => 0);
+    widgets.forEach((widget, i) => widget.on('interval', () => counts[i]++));
+    widgets[2].setInterval('5m');
+    expect(widgets.map(widget => widget.interval())).toEqual(['5m', '5m', '5m']);
+    expect(counts).toEqual([1, 1, 1]);
+  });
+});
+
+describe('chart grid linked navigation', () => {
+  it('mirrors a pan once, without echoing back to the leader', async () => {
+    const { grid } = makeGrid({ preset: '1x2', links: { viewport: true, crosshair: false } });
+    const [a, b] = grid.cells().map(cell => cell.widget.chart);
+    grid.cells()[0].widget.series.setData(bars(200));
+    grid.cells()[1].widget.series.setData(bars(200));
+    await flush();
+    const followerSet = vi.spyOn(b, 'setVisibleLogicalRange');
+    const leaderSet = vi.spyOn(a, 'setVisibleLogicalRange');
+    a.setVisibleLogicalRange({ from: 40, to: 90 });
+    expect(followerSet).toHaveBeenCalledTimes(1);
+    expect(leaderSet).toHaveBeenCalledTimes(1);
+    expect(b.getVisibleLogicalRange()).toEqual(a.getVisibleLogicalRange());
+  });
+
+  it('keeps a view set by freshly loaded bars local until the next real navigation', async () => {
+    const { feed, requests } = pendingFeed();
+    const { grid } = makeGrid({ feed, preset: '1x2', links: { viewport: true, crosshair: false } });
+    const [a, b] = grid.cells().map(cell => cell.widget.chart);
+    requests[0].resolve(bars(300));
+    await flush();
+    a.setVisibleLogicalRange({ from: 100, to: 160 });
+    expect(b.getVisibleLogicalRange()).toEqual(a.getVisibleLogicalRange());
+    const before = a.getVisibleLogicalRange();
+    grid.cells()[1].widget.setSymbol('BBB');
+    requests[1].resolve(bars(120, 400, 60 + 180 * 60));
+    await flush();
+    // The follower fitted its new instrument; the leader kept its window.
+    expect(b.getVisibleLogicalRange()).not.toEqual(before);
+    expect(a.getVisibleLogicalRange()).toEqual(before);
+    b.setVisibleLogicalRange({ from: 20, to: 70 });
+    expect(a.getVisibleLogicalRange()).not.toEqual(before);
+  });
+});
+
+describe('chart grid theme', () => {
+  it('restyles every chart when one chart switches theme, and says so once', () => {
+    const { grid, root } = makeGrid({ preset: '1x3' });
+    const themes: string[] = [];
+    grid.on('theme', ({ theme }) => themes.push(theme));
+    grid.cells()[1].widget.setTheme('light');
+    expect(grid.cells().map(cell => cell.widget.theme())).toEqual(['light', 'light', 'light']);
+    expect(grid.theme()).toBe('light');
+    expect(root.dataset.theme).toBe('light');
+    expect(themes).toEqual(['light']);
+  });
+});
+
+describe('chart grid focus and keyboard routing', () => {
+  it('sends chords only to the active chart, even with the pointer over another', async () => {
+    const { grid, doc } = makeGrid({ preset: '1x2', links: { viewport: false, crosshair: false } });
+    const cells = grid.cells();
+    for (const cell of cells) cell.widget.series.setData(bars(200));
+    await flush();
+    const hits = [0, 0];
+    cells.forEach((cell, i) => cell.widget.context.keymap.register('x', () => { hits[i]++; return true; }, 'widget'));
+    const activated: string[] = [];
+    grid.on('active', ({ id }) => activated.push(id));
+    expect(grid.setActive(cells[1].id, { focus: true })).toBe(true);
+    expect(activated).toEqual([cells[1].id]);
+    expect(doc.activeElement).toBe(chartEl(grid, 1));
+    expect((cells[1].element as unknown as FakeElement).dataset.active).toBe('true');
+    expect((cells[0].element as unknown as FakeElement).dataset.active).toBe('false');
+    // The pointer rests on the inactive chart while the focus is in the active one.
+    fire(cells[0].widget.root as unknown as FakeElement, 'pointerenter');
+    fire(chartEl(grid, 0), 'pointerenter');
+    fireKey(doc.activeElement, 'x');
+    expect(hits).toEqual([0, 1]);
+    const [a, b] = cells.map(cell => cell.widget.chart.getVisibleLogicalRange());
+    fireKey(doc.activeElement, 'ArrowLeft', { code: 'ArrowLeft' });
+    expect(cells[0].widget.chart.getVisibleLogicalRange()).toEqual(a);
+    expect(cells[1].widget.chart.getVisibleLogicalRange()).not.toEqual(b);
+  });
+
+  it('routes a key pressed with the focus on the page to the active chart', async () => {
+    const { grid, doc, root } = makeGrid({ preset: '1x2', links: { viewport: false, crosshair: false } });
+    const cells = grid.cells();
+    for (const cell of cells) cell.widget.series.setData(bars(200));
+    await flush();
+    const hits = [0, 0];
+    cells.forEach((cell, i) => cell.widget.context.keymap.register('x', () => { hits[i]++; return true; }, 'widget'));
+    grid.setActive(cells[1].id);
+    fire(root, 'pointerenter');
+    fire(cells[0].widget.root as unknown as FakeElement, 'pointerenter');
+    fireKey(doc.body, 'x');
+    expect(hits).toEqual([0, 1]);
+    const before = cells[1].widget.chart.getVisibleLogicalRange();
+    fireKey(doc.body, 'ArrowLeft', { code: 'ArrowLeft' });
+    expect(cells[1].widget.chart.getVisibleLogicalRange()).not.toEqual(before);
+    fire(root, 'pointerleave');
+    fireKey(doc.body, 'x');
+    expect(hits).toEqual([0, 1]);
+  });
+
+  it('activates the chart a pointer presses or the focus enters', () => {
+    const { grid } = makeGrid({ preset: '1x2' });
+    const cells = grid.cells();
+    fire(chartEl(grid, 1), 'pointerdown', { button: 0 });
+    expect(grid.active().id).toBe(cells[1].id);
+    chartEl(grid, 0).focus();
+    expect(grid.active().id).toBe(cells[0].id);
+    expect((cells[0].element as unknown as FakeElement).getAttribute('aria-current')).toBe('true');
+  });
+});
+
+describe('chart grid splitters and resizing', () => {
+  it('resizes neighbouring tracks by pointer and keyboard within bounds', () => {
+    const { grid, root } = makeGrid({ preset: '1x2' });
+    const body = root.querySelector('.oac-grid__cells')!;
+    body.rect = { left: 0, top: 0, width: 1004, height: 600 };
+    const split = root.querySelector('.oac-grid__split')!;
+    expect(split.getAttribute('role')).toBe('separator');
+    expect(split.getAttribute('aria-orientation')).toBe('vertical');
+    expect(split.getAttribute('aria-valuenow')).toBe('50');
+    const reasons: string[] = [];
+    grid.on('layout', ({ reason }) => reasons.push(reason));
+    fire(split, 'pointerdown', { button: 0, clientX: 500 });
+    fire(split, 'pointermove', { clientX: 700 });
+    fire(split, 'pointerup', { clientX: 700 });
+    expect(grid.layout().columnWeights[0]).toBeCloseTo(1.4, 3);
+    expect(grid.layout().columnWeights[1]).toBeCloseTo(0.6, 3);
+    expect(split.getAttribute('aria-valuenow')).toBe('70');
+    expect(body.style.gridTemplateColumns).toBe('minmax(0,1.4fr) 4px minmax(0,0.6fr)');
+    fire(split, 'pointerdown', { button: 0, clientX: 700 });
+    fire(split, 'pointermove', { clientX: -2000 });
+    fire(split, 'pointerup');
+    expect(grid.layout().columnWeights).toEqual([0.3, 1.7]);
+    const range = grid.cells()[0].widget.chart.getVisibleLogicalRange();
+    split.focus();
+    const key = fireKey(split, 'ArrowRight');
+    expect(key.defaultPrevented).toBe(true);
+    expect(grid.layout().columnWeights).toEqual([0.4, 1.6]);
+    expect(grid.cells()[0].widget.chart.getVisibleLogicalRange()).toEqual(range);
+    fire(split, 'dblclick');
+    expect(grid.layout().columnWeights).toEqual([1, 1]);
+    expect(reasons.every(reason => reason === 'weights')).toBe(true);
+    expect(grid.getWorkspace().layout.columnWeights).toEqual([1, 1]);
+  });
+
+  it('names the charts, splitters and tabs through the host translator', () => {
+    const translate = (key: string, fallback: string): string => ({
+      'Resize columns {first} and {second}': 'Ajustar columnas {first} y {second}', 'Chart {index}': 'Grafico {index}', Charts: 'Graficos',
+    } as Record<string, string>)[key] ?? fallback;
+    const { grid, root } = makeGrid({ preset: '1x2', translate });
+    expect(root.querySelector('.oac-grid__split')!.getAttribute('aria-label')).toBe('Ajustar columnas 1 y 2');
+    expect(grid.cells().map(cell => (cell.element as unknown as FakeElement).getAttribute('aria-label'))).toEqual(['Grafico 1', 'Grafico 2']);
+    expect(root.querySelector('.oac-grid__tabs')!.getAttribute('aria-label')).toBe('Graficos');
+  });
+
+  it('draws a row splitter only where no spanning chart crosses the boundary', () => {
+    const { grid, root } = makeGrid();
+    const payload = grid.getWorkspace();
+    const pane = payload.panes[0];
+    payload.layout = { rows: 2, columns: 2, slots: [
+      { paneId: 'wide', row: 0, column: 0, rowSpan: 1, columnSpan: 2 },
+      { paneId: 'left', row: 1, column: 0, rowSpan: 1, columnSpan: 1 },
+      { paneId: 'right', row: 1, column: 1, rowSpan: 1, columnSpan: 1 },
+    ] };
+    payload.panes = ['wide', 'left', 'right'].map(id => ({ ...pane, id }));
+    payload.activePaneId = 'left';
+    expect(grid.applyWorkspace(payload)).toEqual({ applied: true });
+    const splits = root.querySelectorAll('.oac-grid__split');
+    expect(splits.map(split => [split.dataset.axis, split.style.gridArea])).toEqual([
+      ['column', '3 / 2 / 4 / 3'],
+      ['row', '2 / 1 / 3 / 4'],
+    ]);
+    expect((grid.cells()[0].element as unknown as FakeElement).style.gridArea).toBe('1 / 1 / 2 / 4');
+  });
+
+  it('shows only the active chart with tabs below the compact width and restores the grid above it', () => {
+    FakeResizeObserver.all = [];
+    const { grid, root } = makeGrid({ preset: '2x2' }, withWindow(fakeWidgetDocument()));
+    const reasons: string[] = [];
+    grid.on('layout', ({ reason }) => reasons.push(reason));
+    grid.cells()[2].widget.setSymbol('ZZZ');
+    root.rect = { left: 0, top: 0, width: 1100, height: 700 };
+    FakeResizeObserver.fire(root);
+    expect(grid.compact()).toBe(false);
+    root.rect = { left: 0, top: 0, width: 420, height: 700 };
+    FakeResizeObserver.fire(root);
+    expect(grid.compact()).toBe(true);
+    expect(root.dataset.compact).toBe('true');
+    expect(grid.cells().map(cell => (cell.element as unknown as FakeElement).hidden)).toEqual([false, true, true, true]);
+    expect(root.querySelectorAll('.oac-grid__split').every(split => split.hidden)).toBe(true);
+    const tabs = root.querySelectorAll('.oac-grid__tab');
+    expect(tabs.map(tab => tab.textContent)).toEqual(['AAA 1m', 'AAA 1m', 'ZZZ 1m', 'AAA 1m']);
+    tabs[2].click();
+    expect(grid.active().id).toBe(grid.cells()[2].id);
+    expect(grid.cells().map(cell => (cell.element as unknown as FakeElement).hidden)).toEqual([true, true, false, true]);
+    expect(root.querySelectorAll('.oac-grid__tab')[2].getAttribute('aria-selected')).toBe('true');
+    root.rect = { left: 0, top: 0, width: 900, height: 700 };
+    FakeResizeObserver.fire(root);
+    expect(grid.compact()).toBe(false);
+    expect(grid.cells().every(cell => !(cell.element as unknown as FakeElement).hidden)).toBe(true);
+    expect((root.querySelector('.oac-grid__tabs') as FakeElement).hidden).toBe(true);
+    expect(reasons).toEqual(['compact', 'compact']);
+  });
+});
+
+describe('chart grid workspaces', () => {
+  function desk(): ChartGrid {
+    const { grid } = makeGrid({ preset: '2x2', links: { crosshair: true, viewport: false } });
+    grid.cells().forEach((cell, i) => cell.widget.setSymbol(['AAA', 'BBB', 'CCC', 'DDD'][i]));
+    grid.cells()[3].widget.setInterval('5m');
+    grid.cells()[1].widget.chart.addIndicator('ema', { period: 9 });
+    grid.setActive(grid.cells()[2].id);
+    grid.setTheme('light');
+    return grid;
+  }
+
+  it('writes a payload the workspace parser accepts and applies it to another grid', () => {
+    const source = desk();
+    const payload = parseWorkspacePayload(JSON.stringify(source.getWorkspace()));
+    expect(payload.layout).toMatchObject({ rows: 2, columns: 2, preset: '2x2', rowWeights: [1, 1], columnWeights: [1, 1] });
+    expect(payload.sync).toMatchObject({ crosshair: true, viewport: false, symbol: false, interval: false });
+    expect(payload.panes.map(pane => [pane.symbol, pane.interval, pane.settings['widget.theme']])).toEqual([
+      ['AAA', '1m', 'light'], ['BBB', '1m', 'light'], ['CCC', '1m', 'light'], ['DDD', '5m', 'light'],
+    ]);
+    const { grid: target } = makeGrid();
+    expect(target.applyWorkspace(payload)).toEqual({ applied: true });
+    expect(target.cells().map(cell => cell.widget.symbol())).toEqual(['AAA', 'BBB', 'CCC', 'DDD']);
+    expect(target.cells()[3].widget.interval()).toBe('5m');
+    expect(target.active().id).toBe(payload.activePaneId);
+    expect(target.theme()).toBe('light');
+    expect(target.linkOptions()).toMatchObject({ crosshair: true, viewport: false, symbol: false, interval: false });
+    expect(target.cells()[1].widget.chart.getState().indicators).toHaveLength(1);
+    const again = parseWorkspacePayload(JSON.stringify(target.getWorkspace()));
+    expect(again.layout).toEqual(payload.layout);
+    expect(again.panes.map(pane => pane.id)).toEqual(payload.panes.map(pane => pane.id));
+  });
+
+  it('persists the workspace and restores it on the next construction', () => {
+    vi.useFakeTimers();
+    const storage = new MemoryStorage();
+    const { grid } = makeGrid({ persist: 'desk', storage, preset: '1x2' });
+    grid.cells()[1].widget.setSymbol('BBB');
+    grid.setActive(grid.cells()[1].id);
+    grid.setLinks({ viewport: false });
+    vi.advanceTimersByTime(300);
+    const saved = JSON.parse(storage.map.get('oac-widget:desk:grid')!) as WorkspacePayload;
+    expect(saved.panes.map(pane => pane.symbol)).toEqual(['AAA', 'BBB']);
+    expect(saved.activePaneId).toBe(grid.cells()[1].id);
+    grid.destroy();
+    const { grid: restored } = makeGrid({ persist: 'desk', storage });
+    expect(restored.cells().map(cell => cell.widget.symbol())).toEqual(['AAA', 'BBB']);
+    expect(restored.active().id).toBe(saved.activePaneId);
+    expect(restored.linkOptions().viewport).toBe(false);
+    storage.map.set('oac-widget:desk:grid', '{"layout":7}');
+    const { grid: fallback } = makeGrid({ persist: 'desk', storage, preset: '1x3' });
+    expect(fallback.cells()).toHaveLength(3);
+  });
+
+  it('rolls back a failed import: the old charts stay and the staged ones are cancelled', () => {
+    const { feed, requests } = pendingFeed();
+    const { grid, root } = makeGrid({ feed, preset: '1x2', links: { crosshair: true, viewport: true } });
+    const before = grid.cells().map(cell => cell.widget);
+    grid.setActive(grid.cells()[1].id);
+    const payload = grid.getWorkspace();
+    payload.panes = [
+      { ...payload.panes[0], id: 'n0', symbol: 'NEW1' },
+      { ...payload.panes[0], id: 'n1', symbol: 'NEW2' },
+      { ...payload.panes[0], id: 'n2', symbol: 'NEW3', chart: { ...payload.panes[0].chart, version: 99 } as never },
+    ];
+    payload.layout = { rows: 1, columns: 3, slots: payload.panes.map((pane, column) => ({ paneId: pane.id, row: 0, column, rowSpan: 1, columnSpan: 1 })) };
+    payload.activePaneId = 'n0';
+    const destroyed = vi.spyOn(Chart.prototype, 'destroy');
+    const report = grid.applyWorkspace(payload);
+    expect(report.applied).toBe(false);
+    expect(report.reason).toMatch(/n2/);
+    expect(destroyed).toHaveBeenCalledTimes(3);
+    expect(requests.filter(entry => entry.request.symbol.startsWith('NEW')).every(entry => entry.request.signal?.aborted)).toBe(true);
+    expect(grid.cells().map(cell => cell.widget)).toEqual(before);
+    expect(before.some(widget => widget.isDestroyed)).toBe(false);
+    expect(root.querySelectorAll('.oac-widget')).toHaveLength(2);
+    expect(grid.active().id).toBe(grid.cells()[1].id);
+    expect(grid.layout()).toMatchObject({ rows: 1, columns: 2 });
+    expect(requests[0].request.signal?.aborted).toBe(false);
+  });
+
+  it.each([
+    ['an unknown interval', (p: WorkspacePayload) => { p.panes[0].interval = '7q'; }, /interval/],
+    ['an unknown chart type', (p: WorkspacePayload) => { p.panes[0].chartType = 'nope'; }, /chart type/],
+    ['an unavailable study', (p: WorkspacePayload) => { p.panes[0].chart.indicators = [{ indicatorId: 'missing-study', settings: {}, paneIndex: 0 }]; }, /study/],
+    ['comparison symbols', (p: WorkspacePayload) => { p.panes[0].comparisons = [{ id: 'c', symbol: 'X', exchange: '', visible: true }]; }, /comparison/],
+    ['conflicting linked symbols', (p: WorkspacePayload) => { p.sync.symbol = true; p.panes[1].symbol = 'OTHER'; }, /linked/],
+    ['overlapping slots', (p: WorkspacePayload) => { p.layout.slots[1].column = 0; }, /slot/],
+    ['a missing active chart', (p: WorkspacePayload) => { p.activePaneId = 'gone'; }, /active/],
+  ])('refuses %s before building anything', (_name, change, reason) => {
+    const { grid } = makeGrid({ preset: '1x2' });
+    const payload = grid.getWorkspace();
+    change(payload);
+    const created = vi.spyOn(Chart.prototype, 'addSeries');
+    const report = grid.applyWorkspace(payload);
+    expect(report.applied).toBe(false);
+    expect(report.reason).toMatch(reason);
+    expect(created).not.toHaveBeenCalled();
+    expect(grid.cells()).toHaveLength(2);
+  });
+
+  it('links the applied charts on their own saved instrument, not the one the grid showed before', () => {
+    const { grid } = makeGrid({ preset: '1x2', links: { symbol: true, interval: true } });
+    const payload = grid.getWorkspace();
+    for (const pane of payload.panes) { pane.symbol = 'ZZZ'; pane.interval = '5m'; }
+    expect(grid.applyWorkspace(payload)).toEqual({ applied: true });
+    expect(grid.cells().map(cell => [cell.widget.symbol(), cell.widget.interval()])).toEqual([['ZZZ', '5m'], ['ZZZ', '5m']]);
+    grid.cells()[0].widget.setSymbol('YYY');
+    expect(grid.cells()[1].widget.symbol()).toBe('YYY');
+  });
+
+  it('keeps each saved chart on its own instrument when the workspace links viewports', async () => {
+    const { feed, requests } = pendingFeed();
+    const { grid } = makeGrid({ feed, preset: '1x2' });
+    const payload = grid.getWorkspace();
+    payload.panes[0].symbol = 'LEFT';
+    payload.panes[1].symbol = 'RIGHT';
+    payload.panes[1].interval = '5m';
+    payload.sync = { crosshair: true, viewport: true, symbol: false, interval: false };
+    const count = requests.length;
+    expect(grid.applyWorkspace(payload).applied).toBe(true);
+    expect(requests.slice(count).map(entry => [entry.request.symbol, entry.request.interval])).toEqual([['LEFT', '1m'], ['RIGHT', '5m']]);
+    expect(grid.cells().map(cell => cell.widget.symbol())).toEqual(['LEFT', 'RIGHT']);
+    expect(requests.slice(0, count).every(entry => entry.request.signal?.aborted)).toBe(true);
+  });
+});
