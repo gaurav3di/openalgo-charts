@@ -8,7 +8,9 @@ All notable changes to OpenAlgo Charts.
   it had, through `chart.setPaneCollapsed(index, collapsed)`,
   `chart.paneCollapsed(index)`, a collapse button on the pane's first legend row
   and the `paneCollapsed` event. A collapsed pane keeps its data, studies,
-  drawings, scales and weight, and draws and hit-tests only its legend row, so no
+  drawings, scales and weight, and draws and hit-tests only one legend row, its
+  first study row, which leads the strip above any row the host placed there and
+  gains the collapse button when closing the study above it makes it first, so no
   drawing, price alert or pick lands on it; `priceToCoordinate` and
   `coordinateToPrice` return `null` for it, while alerts on its studies and
   drawings keep firing. Pane 0 stays open, the time axis stays at the foot of the

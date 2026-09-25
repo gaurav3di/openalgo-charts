@@ -286,9 +286,11 @@ chart.paneCollapsed(rsi.paneIndex);            // true
 chart.setPaneCollapsed(rsi.paneIndex, false);  // back to its former height
 ```
 
-The strip shows the pane's first legend row, and that row's collapse button opens it
-again. Nothing else on the strip paints or answers the pointer: no plot, grid, price
-ladder or crosshair. `click`, `crosshair:move` and `contextmenu` report no price there,
+The strip shows one legend row: the pane's first study row, and that row's collapse
+button opens it again. The study row leads the strip even when the host placed its own
+row on the pane first, and a study that becomes first because the one above it was
+closed gains the button. Nothing else on the strip paints or answers the pointer: no
+plot, grid, price ladder or crosshair. `click`, `crosshair:move` and `contextmenu` report no price there,
 and `priceToCoordinate` and `coordinateToPrice` return `null` for the pane, so a drawing
 tool, a price alert or a host overlay cannot land on a pane nobody can see. Alerts on the
 pane's studies and drawings keep firing while it is folded.
