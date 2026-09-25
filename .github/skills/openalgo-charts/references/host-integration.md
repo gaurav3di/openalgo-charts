@@ -10,6 +10,9 @@ replay controls, broker execution and teardown.
 Prefer `DataLoadingController` for history, stream repair, paging and state.
 `load(req)` changes source; `refresh()` repairs the current window. `loadMore()`
 uses optional `BarsPageRequest` / `BarsPage` or bounded backward date windows.
+`loadMore(until)` widens the first date window to reach `until` (UTC seconds) in
+one request; a paged feed still returns one `countBack` page per call. Empty
+windows, exhaustion and retention behave exactly as for a gesture.
 `getState()` reports display bars; `bars()` is the live store. Methods resolve
 retained bars on managed errors, so check state before claiming freshness.
 `subscribe()` is changes-only and does not emit an initial snapshot.

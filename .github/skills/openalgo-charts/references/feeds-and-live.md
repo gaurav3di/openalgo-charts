@@ -443,6 +443,8 @@ Base exports: `DataLoadingController`, `DataLoadingOptions`, `DataLoadingSnapsho
 `requestPool` is supplied. Defaults: `pageSize: 500`, `maxEmptyPages: 4`,
 `maxBars: 100_000`, `pollIntervalMs: 0`; `timeoutMs` defaults to the pool's 15 s.
 `pageWindowSec` defaults to the initial range width; `now` returns UTC seconds.
+`loadMore(until?)` pages older history; `until` (UTC seconds) widens the first
+date window so a far date costs one request instead of one per default window.
 Primary states: idle/loading/ready/empty/refreshing/stale/error. History states:
 idle/loading/error/exhausted/limited. `hasMore: null` means unknown; never turn
 an empty weekend window into permanent exhaustion. `limited` is local retention.

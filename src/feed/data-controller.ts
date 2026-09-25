@@ -401,7 +401,8 @@ export class DataLoadingController {
     this._repairTimer = null;
   }
 
-  public loadMore(): Promise<readonly Bar[]> {
+  /** One older page; `until` (UTC seconds) widens a date window to reach it in one request. */
+  public loadMore(until?: number): Promise<readonly Bar[]> {
     if (this._pageWork) return this._pageWork;
     if (this._destroyed || !this._state.request || this._loadWork || this._state.paused || this._state.hasMore === false) return Promise.resolve(this._bars);
     if (this._bars.length >= this._options.maxBars!) {
@@ -412,14 +413,14 @@ export class DataLoadingController {
     let complete!: (bars: readonly Bar[]) => void;
     const work = new Promise<readonly Bar[]>(resolve => { complete = resolve; });
     this._pageWork = work;
-    void this._loadMore(generation).then(complete);
+    void this._loadMore(generation, until).then(complete);
     void work.then(() => { if (this._pageWork === work) this._pageWork = null; });
     return work;
   }
 
-  private async _loadMore(generation: number): Promise<readonly Bar[]> {
+  private async _loadMore(generation: number, until?: number): Promise<readonly Bar[]> {
     const req = this._state.request!;
-    const window = this._options.pageWindowSec ?? Math.max(1, (req.to ?? 0) - (req.from ?? 0) || 86400);
+    const pageWindow = this._options.pageWindowSec ?? Math.max(1, (req.to ?? 0) - (req.from ?? 0) || 86400);
     const abort = new AbortController();
     this._pageAbort = abort;
     this._publish('state', { historyStatus: 'loading', historyError: undefined });
@@ -427,6 +428,7 @@ export class DataLoadingController {
       for (let attempt = 0; attempt < this._options.maxEmptyPages!; attempt++) {
         const before = this._before ?? this._bars[0]?.time ?? req.from;
         if (before === undefined) throw new Error('Older history needs a starting time');
+        const window = Math.max(pageWindow, Number.isFinite(until) ? before - until! : 0);
         const request = { ...req, from: before - window, to: before - 0.000001, before,
           countBack: this._options.pageSize!, signal: abort.signal };
         const page = this._feed.getBarsPage ? await this._pool.getBarsPage(request)
