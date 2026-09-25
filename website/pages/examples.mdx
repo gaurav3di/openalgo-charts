@@ -1018,6 +1018,109 @@ for (const [label, id] of [['Right', 'right'], ['Left', 'left'], ['Hidden', 'ove
 }
 return chart;`} />
 
+## Assign scales to individual study plots
+
+One study calculates a small signal, a percent band and a guide on the price
+pane. Their independent scales keep the units readable. Move the band endpoints
+together; attempting to split them is rejected. A whole-study assignment clears
+local plot overrides while the explicit price overlay keeps its own assignment.
+Save a layout, change the assignments, then restore it.
+
+<RunnableExample height={600} caption="Plot assignments change coordinates, not the calculated values. The price guide remains on the price pane." code={`el.style.display = 'flex';
+el.style.flexDirection = 'column';
+const controls = document.createElement('div');
+controls.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;padding:8px 64px 8px 8px';
+controls.addEventListener('pointerdown', event => event.stopPropagation());
+el.appendChild(controls);
+const status = document.createElement('div');
+status.setAttribute('role', 'status');
+status.style.cssText = 'padding:0 8px 8px;font:12px/1.5 sans-serif;overflow-wrap:anywhere';
+el.appendChild(status);
+const host = document.createElement('div');
+host.style.cssText = 'flex:1;min-height:200px;width:100%';
+el.appendChild(host);
+lib.registerIndicator({
+  id: 'demo-plot-scale-assignments', name: 'Signal and percent band', placement: 'pane', inputs: [],
+  plots: [
+    { key: 'signal', type: 'line', title: 'Signal', style: { color: '#e8a23a', lineWidth: 2 },
+      priceFormat: { type: 'price', precision: 2 } },
+    { key: 'upper', type: 'line', title: 'Upper', priceScaleId: 'overlay:band',
+      style: { color: '#26a69a' }, priceFormat: { type: 'percent', precision: 0 } },
+    { key: 'lower', type: 'line', title: 'Lower', priceScaleId: 'overlay:band',
+      style: { color: '#4f8cff' }, priceFormat: { type: 'percent', precision: 0 } },
+    { key: 'price', type: 'line', title: 'Price guide', overlay: true,
+      style: { color: '#b16bdf', lineWidth: 2 }, priceFormat: { type: 'price', precision: 2 } },
+  ],
+  fills: [{ between: ['upper', 'lower'], colorUp: '#26a69a', opacity: 0.18 }],
+  levels: () => [{ price: 0.3, title: 'Signal reference', color: '#e8a23a', dashed: true }],
+  calc: bars => ({
+    signal: bars.map((bar, i) => 0.2 + (i % 16) / 100),
+    upper: bars.map((bar, i) => 60 + i % 8),
+    lower: bars.map((bar, i) => 40 + i % 8),
+    price: bars.map(bar => bar.close),
+  }),
+});
+const chart = lib.createChart(host, { priceAxisWidth: 58, branding: false });
+const palette = chart.theme();
+status.style.color = palette.axisText;
+chart.addSeries('candlestick').setData(Array.from({ length: 64 }, (_, i) => ({
+  time: 1700000000 + i * 60, open: 99.75 + i / 4, high: 100.5 + i / 4,
+  low: 99.5 + i / 4, close: 100 + i / 4, volume: 1000 + i * 10,
+})));
+let study = chart.addIndicator('demo-plot-scale-assignments');
+chart.setPaneWeight(study.paneIndex, 1.2);
+chart.setPriceAxisPlacement(study.paneIndex, 'overlay:band', 'left');
+chart.fitContent();
+let saved = null;
+let result = 'Ready';
+function render() {
+  const values = study.values();
+  const last = key => values[key][values[key].length - 1].toFixed(2);
+  const overrides = Object.entries(study.plotPriceScaleIds())
+    .map(([key, id]) => key + '=' + id).join(', ') || 'none';
+  status.textContent = 'Signal: ' + study.plotPriceScaleId('signal')
+    + ' | Band: ' + study.plotPriceScaleId('upper') + ' / ' + study.plotPriceScaleId('lower')
+    + ' | Price: ' + study.plotPriceScaleId('price')
+    + '. Last: ' + ['signal', 'upper', 'lower', 'price'].map(last).join(' / ')
+    + '. Overrides: ' + overrides + '. ' + result;
+}
+for (const [label, action] of [
+  ['Signal left', () => study.setPlotPriceScales({ signal: 'left' })],
+  ['Move band pair', () => {
+    const changed = study.setPlotPriceScales({ upper: 'overlay:band-right', lower: 'overlay:band-right' });
+    chart.setPriceAxisPlacement(study.paneIndex, 'overlay:band-right', 'right');
+    return changed;
+  }],
+  ['Reject split band', () => {
+    const other = study.plotPriceScaleId('lower') === 'left' ? 'right' : 'left';
+    return study.setPlotPriceScales({ upper: other });
+  }],
+  ['Price overlay left', () => study.setPlotPriceScales({ price: 'left' })],
+  ['Clear signal override', () => study.setPlotPriceScales({ signal: null })],
+  ['Whole study left', () => study.setPriceScale('left')],
+  ['Descriptor defaults', () => study.setPriceScale(null)],
+  ['Save layout', () => { saved = chart.getState(); return 'saved'; }],
+  ['Restore layout', () => {
+    if (!saved) return 'save a layout first';
+    const id = study.id;
+    const report = chart.restoreState(saved);
+    if (!report.applied) throw new Error(report.reason);
+    study = chart.indicators().find(item => item.id === id);
+    return 'restored';
+  }],
+]) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = label;
+  button.style.cssText = 'padding:5px 9px;border:1px solid ' + palette.axisLine
+    + ';border-radius:4px;background:' + palette.background + ';color:' + palette.axisText
+    + ';font:12px sans-serif;cursor:pointer';
+  button.onclick = () => { result = label + ': ' + action(); render(); };
+  controls.appendChild(button);
+}
+render();
+return chart;`} />
+
 ## Computed fills and multiple summary grids
 
 A descriptor can color each part of a band and publish several tables. The fill

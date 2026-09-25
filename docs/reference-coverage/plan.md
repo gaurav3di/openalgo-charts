@@ -29,6 +29,8 @@ The implemented whole-study transaction follows [scale ownership](scale-ownershi
 
 [Multiple price axes](multiple-price-axes.md) separates stable scale IDs from visible columns. It covers native placement, rendering, exact input routing, host menus and full-layout persistence. Axis metadata in indicator templates remains a separate task.
 
+[Per-plot scale assignments](plot-scale-assignments.md) defines the prerequisite for copying mixed-scale studies and explicit price-pane plots without losing their bindings.
+
 ## Authorized release sequence
 
 The reported right-axis autoscale issue is fixed and verified on the example host in three browser engines. Retain that regression check for the final candidate. After completing the native capability work, validate the package, bump it to 2.5.4, update the example host, website, API documentation and changelog, commit and push, publish the package and website, and create the matching release. Verify the published artifacts against the tested build. Publication is authorized by the user; incomplete capability work is not a release candidate.

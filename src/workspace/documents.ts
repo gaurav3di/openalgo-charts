@@ -39,6 +39,13 @@ function metadata(input: Record<string, Json>, kind: WorkspaceKind): DocumentMet
     createdAt, updatedAt: number(input.updatedAt, 'updatedAt', createdAt) };
 }
 
+function priceScaleId(input: Json, label: string): PriceScaleId {
+  if (typeof input !== 'string' || (input !== 'right' && input !== 'left' && input !== '' && !input.startsWith('overlay:'))) {
+    throw new WorkspaceDocumentError(`Invalid ${label}`);
+  }
+  return input as PriceScaleId;
+}
+
 function indicatorStates(input: Json | undefined, preserveIdentity = true): IndicatorState[] {
   const ids = new Set<string>();
   return list(input, 'indicators', 256).map(item => {
@@ -66,11 +73,12 @@ function indicatorStates(input: Json | undefined, preserveIdentity = true): Indi
     }
     if (entry.visible !== undefined) out.visible = boolean(entry.visible, 'indicator visibility');
     if (entry.priceScaleId !== undefined) {
-      const id = entry.priceScaleId;
-      if (typeof id !== 'string' || (id !== 'right' && id !== 'left' && id !== '' && !id.startsWith('overlay:'))) {
-        throw new WorkspaceDocumentError('Invalid indicator priceScaleId');
-      }
-      out.priceScaleId = id as PriceScaleId;
+      out.priceScaleId = priceScaleId(entry.priceScaleId, 'indicator priceScaleId');
+    }
+    if (entry.plotPriceScaleIds !== undefined) {
+      const assignments = record(entry.plotPriceScaleIds, 'indicator plotPriceScaleIds');
+      const entries = Object.entries(assignments).map(([key, value]) => [key, priceScaleId(value, 'indicator plot priceScaleId')] as const);
+      if (entries.length) out.plotPriceScaleIds = Object.fromEntries(entries);
     }
     if (preserveIdentity && entry.instanceId !== undefined) {
       out.instanceId = string(entry.instanceId, 'indicator instanceId');

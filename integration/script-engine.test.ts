@@ -53,6 +53,34 @@ function makeChart(data: Bar[], now: number, updatesOnly = false) {
 const bar = (time: number, close: number): Bar => ({ time, open: 1, high: close + 1, low: 0, close });
 
 describe('compiled script engine on an actual Chart', () => {
+  it('keeps compiled plots independent through per-plot reassignment and restoration', () => {
+    const compiled = compile(`version 1
+study("Separate plot units", overlay = true)
+plot(close, "Price")
+plot(close * 100, "Scaled")
+`);
+    registerIndicator(compiled);
+    const { chart, series } = makeChart([1, 3, 5].map((close, index) => bar(index * 60, close)), 130);
+    const [price, scaled] = compiled.plots.map(plot => plot.key);
+    const study = chart.addIndicator(compiled.id, {}, { plotPriceScaleIds: { [scaled]: 'overlay:compiled-units' } });
+    expect(study.values()[price]).toEqual([1, 3, 5]);
+    expect(study.values()[scaled]).toEqual([100, 300, 500]);
+    expect(study.series(price)!.priceScale()).toBe(series.priceScale());
+    expect(study.series(scaled)!.priceScale()).not.toBe(series.priceScale());
+    const values = study.values(), plot = study.series(scaled);
+    expect(study.setPlotPriceScales({ [scaled]: 'left' })).toBe(true);
+    expect(study.values()).toBe(values);
+    expect(study.series(scaled)).toBe(plot);
+    expect(study.series(price)!.priceScale()).toBe(series.priceScale());
+    expect(chart.restoreState(chart.getState()).applied).toBe(true);
+    const restored = chart.indicators()[0];
+    expect(restored.plotPriceScaleIds()).toEqual({ [scaled]: 'left' });
+    expect(restored.series(scaled)!.priceScale()).toBe(chart.panes()[0].scaleFor('left'));
+    series.update(bar(120, 7));
+    expect(restored.values()[price]).toEqual([1, 3, 7]);
+    expect(restored.values()[scaled]).toEqual([100, 300, 700]);
+  });
+
   it('keeps compiled study outputs and scale identity through native axis placement and restoration', () => {
     const compiled = compile(`version 1
 study("Independent output", overlay = true)

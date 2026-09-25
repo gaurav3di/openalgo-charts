@@ -449,8 +449,8 @@ Without an explicit format or precision, the target keeps its formatter.
 A successful move repaints and publishes one `objects:change`, without resetting
 data or recalculating studies. The method returns `false` before mutation for an
 unchanged assignment, invalid ID, removed or foreign handle, destroyed chart, or
-indicator-owned plot. Use the study's `setPriceScale` to move its resources
-together. To move every series and bound primitive on one visible axis along
+indicator-owned plot. Use the study's `setPriceScale` to move its local resources
+together, or `setPlotPriceScales` for selected plots. To move every series and bound primitive on one visible axis along
 with that axis's configuration, use `movePriceAxis`.
 
 ### Reassign a whole study
@@ -465,7 +465,7 @@ study.setPriceScale(null);               // restore declared plot assignments
 
 All local plots, fills, levels, drawings and attached price primitives move in
 one transaction. Plot markers follow their series. Explicit `overlay: true`
-resources retain their price-pane placement and declared scale; price-anchored
+resources retain their price-pane placement and effective scale; price-anchored
 markers retain their primary-series binding. Tables and background shading stay
 in screen space. A fill whose endpoints would use different panes or scales
 rejects the request before any resource moves.
@@ -487,13 +487,15 @@ If settings change the same owner's declared range, the fit default updates whil
 the current manual view remains in force until auto-fit is enabled again.
 
 `movePriceAxis` has a narrower scope: it refuses studies with mixed local scale
-assignments or explicit price overlays, because a single saved study override
-cannot represent a partial move. `priceAxisState().movable` reflects this boundary.
+assignments or explicit price overlays. This conservative guard belongs to the
+legacy operation; saved state can represent mixed plot bindings.
+`priceAxisState().movable` reflects this boundary.
 Uniform local studies and primitive-only studies adopt the moved side.
 `study.setPriceScale` still moves every local resource while retaining explicit
 price overlays.
 
-Saved `IndicatorState.priceScaleId` carries an explicit override; omission keeps
+Saved `IndicatorState.priceScaleId` carries a whole-study override, and
+`plotPriceScaleIds` carries explicit plot overrides. Without either, plots use
 descriptor defaults. Saved scales may include
 `indicatorRange: { instanceId, manual }`, identifying a study-owned fixed range
 and any later manual view intent. Preserve that metadata with the scale state so
@@ -501,6 +503,52 @@ restoring a layout can distinguish the study default from a host range with the
 same endpoints. Source data and runtime formatter callbacks remain host-owned.
 
 See the [whole-study scale example](/examples#move-a-whole-study-between-scales).
+
+### Reassign individual study plots
+
+Use one instance for related calculations even when its outputs have different
+units. Assign its declared plots independently:
+
+```ts
+const study = chart.addIndicator('my-mixed-study', {}, {
+  plotPriceScaleIds: { upper: 'overlay:band', lower: 'overlay:band' },
+});
+study.plotPriceScaleId('upper'); // effective scale ID
+study.plotPriceScaleIds();      // detached map of explicit overrides
+study.setPlotPriceScales({ upper: 'left', lower: 'left' });
+study.setPlotPriceScales({ upper: null, lower: null }); // remove these overrides
+```
+
+The patch is partial and atomic: omitted keys stay unchanged, while null removes
+an override. A fill's endpoints must share a pane and scale, so move the pair in
+one patch. Unknown plots, invalid IDs, accessors and incompatible fills return
+false before mutation. Empty and unchanged patches also return false.
+`plotPriceScaleId` returns null for an unknown plot. Invalid creation options or
+known-descriptor restore assignments fail before chart resources change.
+
+Precedence is per-plot override, local whole-study override, descriptor scale,
+then `right`. Explicit `overlay: true` plots remain on the price pane and ignore
+the whole-study override. Their per-plot overrides still select a scale there.
+A successful `setPriceScale(id)` clears local plot overrides; passing null also
+clears the whole-study override and restores local descriptor defaults. Explicit
+price-overlay overrides survive both calls and can be cleared individually.
+
+Levels, unbound price drawings, attached price primitives and study-owned range
+intent follow the first local plot. Plot markers follow their series. The move
+preserves handles and data without recalculation. Target ranges stay intact;
+formatting is shared by plots assigned to the same ID. Explicit plot formats
+apply in descriptor order on a destination scale. A price format restores the
+chart's price formatter, replacing a prior percent or volume formatter. To expose a
+named scale's column, call `setPriceAxisPlacement` for the plot's pane.
+
+Chart state, workspace documents and legacy study templates retain
+`IndicatorState.plotPriceScaleIds`. Restore checks declared plots and fills when
+the descriptor is registered. Portable template pane metadata and ownership of
+copied scales are separate concerns. Source data and formatter callbacks remain
+host-owned.
+
+Try [individual plot assignments](/examples#assign-scales-to-individual-study-plots),
+including a rejected split fill, whole-study reset and saved-layout restore.
 
 ### Bind a custom price primitive
 

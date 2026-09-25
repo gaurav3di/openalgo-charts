@@ -145,6 +145,8 @@ export interface IndicatorState {
   studyInputs?: readonly string[];
   /** Whole-study scale override. Omission retains the descriptor's plot assignments. */
   priceScaleId?: PriceScaleId;
+  /** Explicit plot assignments, including plots drawn on the price pane. */
+  plotPriceScaleIds?: Readonly<Record<string, PriceScaleId>>;
   settings: IndicatorSettings;
   paneIndex: number;
   /** Omitted by older layouts, which restore the indicator as visible. */

@@ -147,7 +147,8 @@ formatting remains unchanged. The change updates axis columns, repaints and emit
 one `objects:change` without replacing data or recalculating studies. It returns
 false for an unchanged assignment, invalid ID, foreign or removed handle,
 destroyed chart, or indicator-owned plot. Use the study's `setPriceScale` to move
-its resources together. See [scales-and-panes](scales-and-panes.md#reassign-a-whole-study).
+its local resources together, or `setPlotPriceScales` for declared plots. See
+[scales-and-panes](scales-and-panes.md#reassign-individual-study-plots).
 
 `chart.setSeriesType(series, type): boolean` switches a registered renderer on a
 live series. The handle, data, pane, price scale, primary ownership, explicit
@@ -222,10 +223,10 @@ study.setPriceScale('overlay:momentum');  // true when the assignment changes
 study.setPriceScale(null);               // restore each descriptor assignment
 ```
 
-`chart.addIndicator(id, settings?, { paneIndex?, priceScaleId? })` returns
+`chart.addIndicator(id, settings?, { paneIndex?, priceScaleId?, plotPriceScaleIds? })` returns
 `IndicatorApi`. Its scale override moves local plots, fills, levels, drawings and
 attached price primitives together. Plot-bound markers follow their series;
-explicit price-pane overlays keep their declared scales. Screen-space tables and
+explicit price-pane overlays keep their effective scales. Screen-space tables and
 background shading retain their placement. Invalid, unchanged or removed requests
 return false; incompatible fill endpoints also reject the whole move.
 
@@ -233,13 +234,36 @@ The move preserves plot handles, data and lifecycle attachments, updates legend
 formatting and axis columns, and emits one `objects:change` without recalculation.
 Native plot renderer changes through `setSettings({ 'plotKey:type': 'area' })`
 also retain the plot handle, scale and marker binding. Transform data stays
-host-owned. `IndicatorState.priceScaleId` stores only an explicit override;
-omission restores descriptor defaults. See [scales-and-panes](scales-and-panes.md#reassign-a-whole-study)
+host-owned. A successful `setPriceScale`, including null, clears local per-plot
+overrides and retains explicit price-overlay overrides. `IndicatorState.priceScaleId`
+stores the whole-study override and `plotPriceScaleIds` stores explicit plot
+overrides. Omission restores descriptor defaults. See [scales-and-panes](scales-and-panes.md#reassign-a-whole-study)
 for shared formatting, fixed-range ownership and saved scales.
 `movePriceAxis` refuses mixed local study assignments and explicit price overlays;
-its `priceAxisState().movable` result reflects that limit. Uniform local and
+its `priceAxisState().movable` result reflects that conservative legacy-operation
+limit, even though saved state can represent mixed plot assignments. Uniform local and
 primitive-only studies adopt a successful whole-axis move. `setPriceScale` remains
 the operation for moving all local study resources while keeping overlays fixed.
+
+### Per-plot scale assignment
+
+`study.plotPriceScaleId(plotKey)` reads a declared plot's effective `PriceScaleId`,
+or null for an unknown key. `study.plotPriceScaleIds()` returns a detached map of
+explicit overrides. `study.setPlotPriceScales(patch)` applies a partial
+`Readonly<Record<string, PriceScaleId | null>>` atomically; null clears one
+override. Unknown keys, invalid IDs, accessor properties, empty/unchanged patches
+and incompatible fill endpoints return false without moving resources.
+
+Precedence is per-plot override, local whole-study override, descriptor scale,
+then `right`. Explicit `overlay: true` plots ignore the whole-study override but
+accept per-plot assignments on the price pane. Move both endpoints of a fill in
+one patch so they retain the same pane and scale. Levels and unbound price
+drawings follow the first local plot; plot-bound markers follow their series.
+
+Creation's `plotPriceScaleIds` map accepts scale IDs, with omission meaning no
+overrides. Invalid maps or conflicting fills throw before chart resources are
+allocated. Chart restore validates known descriptors before mutation; workspace
+and legacy template parsing retain structurally valid maps for later validation.
 
 ## Lifecycle and sizing
 

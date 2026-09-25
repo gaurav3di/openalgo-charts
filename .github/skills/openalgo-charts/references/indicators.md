@@ -701,6 +701,36 @@ chart.addIndicator('my-momentum', { length: 14 });
 
 Optional descriptor members: `fills`, `markers`, `markerAnchor` / `hasSource` (2.4.6), `levels`, `range`, `attach`, `calcTail`, `table`, `tables`, `draws` (1.7.1), and `background` / `barColors` / `alerts` (1.7.1), plus `colorBy` (per-bar colour), `priceScaleId` / `overlay`, and `ohlc` (1.8.1) on an individual plot.
 
+### Assigning scales to study plots
+
+`chart.addIndicator(id, settings, { priceScaleId, plotPriceScaleIds })` accepts an
+optional whole-study scale and an optional map of declared plot keys to
+`PriceScaleId`. The handle exposes `plotPriceScaleId(key)` for the effective ID
+(null for an unknown plot), `plotPriceScaleIds()` for a detached override map,
+and `setPlotPriceScales(patch)` for an atomic partial update. A null patch value
+clears one override; omitted keys are unchanged.
+
+Precedence is per-plot override, local whole-study override, descriptor scale,
+then `right`. An explicit `overlay: true` plot ignores the whole-study override
+and stays on the price pane, where its per-plot assignment still applies. A
+successful `setPriceScale(id)` clears local per-plot overrides, including when
+id is null to restore local descriptor defaults. Explicit price-overlay
+overrides survive; clear them individually with `setPlotPriceScales`.
+
+Move both fill endpoints in one patch to keep their pane and scale identical.
+Unknown keys, invalid IDs, accessors, incompatible fills and empty/unchanged
+patches return false without moving resources. Invalid creation maps throw before
+allocation. Levels and unbound price drawings follow the first local plot;
+plot markers follow their bound series. The operation keeps handles, values and
+provider attachments, and does not recalculate or evaluate alerts.
+
+`IndicatorState.plotPriceScaleIds` saves explicit overrides. Known descriptors
+are validated before chart restore mutates resources; workspace and legacy
+template parsing retain structurally valid maps. Use `setPriceAxisPlacement`
+to expose a named scale's column without changing its ID. See
+[scales and panes](scales-and-panes.md#reassign-individual-study-plots) for shared
+formatting, range ownership and the conservative legacy `movePriceAxis` guard.
+
 ### Computed fills and multiple grids
 
 `IndicatorFillSpec.colorBy({ index, a, b, values, settings })` returns a per-bar

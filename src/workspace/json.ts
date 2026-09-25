@@ -24,7 +24,7 @@ export function readJson(input: unknown): Json {
   let nodes = 0;
   let characters = 0;
   const ancestors = new Set<object>();
-  const visit = (value: unknown, depth: number, opaque = false): Json => {
+  const visit = (value: unknown, depth: number, opaque = false, plotScales = false): Json => {
     if (++nodes > 100000) throw new WorkspaceDocumentError('Document node limit exceeded');
     if (depth > 32) throw new WorkspaceDocumentError('Document depth limit exceeded');
     if (value === null || typeof value === 'boolean') return value;
@@ -39,13 +39,13 @@ export function readJson(input: unknown): Json {
     if (!Array.isArray(value) && ![Object.prototype, null].includes(Object.getPrototypeOf(value))) {
       throw new WorkspaceDocumentError('Document objects must be plain records');
     }
-    if (opaque) {
+    if (opaque || plotScales) {
       for (const key of Reflect.ownKeys(value)) {
         if (Array.isArray(value) && key === 'length') continue;
         const property = Object.getOwnPropertyDescriptor(value, key)!;
         if (typeof key !== 'string' || !property.enumerable
           || (Array.isArray(value) && (!/^(0|[1-9]\d*)$/.test(key) || Number(key) >= value.length))) {
-          throw new WorkspaceDocumentError('Opaque payload properties must survive JSON');
+          throw new WorkspaceDocumentError(`${plotScales ? 'Plot scale map' : 'Opaque payload'} properties must survive JSON`);
         }
       }
     }
@@ -62,9 +62,13 @@ export function readJson(input: unknown): Json {
       result = out;
     } else {
       const out: Record<string, Json> = {};
+      const settings = Object.getOwnPropertyDescriptor(value, 'settings')?.value;
+      const indicator = !opaque && typeof Object.getOwnPropertyDescriptor(value, 'indicatorId')?.value === 'string'
+        && typeof Object.getOwnPropertyDescriptor(value, 'paneIndex')?.value === 'number'
+        && settings !== null && typeof settings === 'object' && !Array.isArray(settings);
       for (const key of Object.keys(value)) {
         const normalized = key.toLowerCase().replace(/[^a-z0-9_]/g, '').replace(/_/g, '');
-        if (privateKeys.has(key) || privateKeys.has(normalized)) {
+        if (!plotScales && (privateKeys.has(key) || privateKeys.has(normalized))) {
           if (opaque) throw new WorkspaceDocumentError('Opaque payload contains a private workspace field');
           continue;
         }
@@ -72,7 +76,15 @@ export function readJson(input: unknown): Json {
         if (characters > MAX_DOCUMENT_BYTES) throw new WorkspaceDocumentError('Document size limit exceeded');
         const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
         if (!('value' in descriptor)) throw new WorkspaceDocumentError('Document accessors are not allowed');
-        out[key] = visit(descriptor.value, depth + 1, opaque || key === 'payload');
+        if (plotScales && (typeof descriptor.value !== 'string' ||
+          (descriptor.value !== 'right' && descriptor.value !== 'left' && descriptor.value !== '' && !descriptor.value.startsWith('overlay:')))) {
+          throw new WorkspaceDocumentError('Invalid indicator plot priceScaleId');
+        }
+        // Plot names are descriptor-owned keys, including names also used for private
+        // workspace fields. Only this flat, validated scale map keeps those names.
+        const copied = visit(descriptor.value, depth + 1, opaque || key === 'payload', indicator && key === 'plotPriceScaleIds');
+        if (plotScales) Object.defineProperty(out, key, { value: copied, enumerable: true, configurable: true, writable: true });
+        else out[key] = copied;
       }
       result = out;
     }

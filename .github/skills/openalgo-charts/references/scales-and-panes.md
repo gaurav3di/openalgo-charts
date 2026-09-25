@@ -235,7 +235,8 @@ emits one `objects:change`, with no data reset or indicator recalculation.
 It returns false before mutation for an invalid ID, unchanged assignment,
 foreign or removed handle, destroyed chart, or indicator-owned plot. A study's
 plots, fills, levels and other scale-bound visuals move together through its
-`setPriceScale` method; independent plot reassignment is unsupported.
+`setPriceScale` method. Use `setPlotPriceScales` for individual declared plots,
+including related fill endpoints in the same patch.
 The legacy `movePriceAxis` reassigns every series and explicitly bound primitive
 on the source `'left'` or `'right'` ID to the other ID, carrying its scale object
 and configuration. The destination ID must be unused; other named columns on
@@ -271,7 +272,7 @@ study.setPriceScale(null);               // restore declared plot scale IDs
 
 An explicit override applies to all local plots and their fills, levels, drawings
 and attached price primitives. Markers bound to plots follow those plots. Explicit
-`overlay: true` plots and fills retain their price-pane placement and declared
+`overlay: true` plots and fills retain their price-pane placement and effective
 scale; price-anchored markers keep their primary-series binding. Tables and
 background shading remain screen-space resources. Fill endpoints must share a
 pane and scale, or the request returns false before changing anything. Unplotted
@@ -295,11 +296,52 @@ When settings change the same owner's declared range, its fit default updates;
 an existing manual view stays in force until auto-fit is enabled again.
 
 `IndicatorState.priceScaleId` saves the override; omission restores descriptor
-defaults. `PriceScaleState.indicatorRange: { instanceId, manual }` distinguishes
+defaults when no per-plot override is present. `IndicatorState.plotPriceScaleIds`
+saves explicit plot overrides. `PriceScaleState.indicatorRange: { instanceId, manual }` distinguishes
 a study-owned default from an equal-valued host range and records later manual
 view intent. Preserve this metadata with saved scales. Restore reconnects it to
 the matching live study; custom formatter callbacks and source data are not
 serialized.
+
+### Reassign individual study plots
+
+```ts
+const study = chart.addIndicator('my-mixed-study', {}, {
+  plotPriceScaleIds: { upper: 'overlay:band', lower: 'overlay:band' },
+});
+study.plotPriceScaleId('upper'); // effective ID; null for an unknown plot
+study.plotPriceScaleIds();      // detached explicit override map
+study.setPlotPriceScales({ upper: 'left', lower: 'left' });
+study.setPlotPriceScales({ upper: null, lower: null }); // clear both overrides
+```
+
+`setPlotPriceScales` applies a partial map atomically. A missing key is untouched;
+null clears that key's override. Empty or unchanged patches return false, as do
+unknown plots, invalid scale IDs, accessors and fill endpoints that would use
+different panes or scales. Construction and known-descriptor state restore
+validate complete assignments before allocating or replacing chart resources.
+
+Effective precedence is the per-plot override, the local whole-study override,
+the descriptor's `priceScaleId`, then `right`. An explicit `overlay: true` plot
+ignores the whole-study override, but its own override selects a scale in pane 0.
+A successful `setPriceScale(id)` clears local plot overrides. `setPriceScale(null)`
+also clears the whole-study override, restoring local descriptor defaults.
+Both retain explicit price-overlay overrides; clear those individually with null.
+
+Fills follow their common endpoint scale. Levels, unbound price drawings and
+attached price primitives follow the first local plot, as does study-owned range
+intent. Plot markers follow their series. Tables and background shading remain
+in screen coordinates. Handles, data, settings and provider attachments survive
+assignment changes; no calculation or alert evaluation is required.
+
+Scale identity remains separate from column placement. Use
+`setPriceAxisPlacement(study.paneIndex, id, side)` to expose a named scale after
+assigning it. Target formatting is shared, so plots with different units normally
+need different IDs. Explicit formats apply in descriptor order at the destination;
+a price format restores the chart's price formatter in place of a prior percent
+or volume formatter. Saved chart state and workspace documents retain the explicit
+map. Legacy study templates retain that map too; portable pane placement and
+scale-copy ownership are separate template concerns.
 
 ## TimeScaleOptions
 
@@ -407,7 +449,7 @@ chart.setPriceAxisPlacement(paneIndex, scaleId, 'left'); // retains the scale ID
 `PriceAxisState` is `{ paneIndex, scaleId, side, active, autoFit, inverted, mode, scaled, lockRatio, movable }`, and `PRICE_SCALE_MODES` lists the four modes in menu order. Use the exact `scaleId` from a `contextmenu` target, including named or empty overlays explicitly exposed as columns. `side` reports right for hidden placement for compatibility; use `priceAxisPlacement` to distinguish hidden state. `movable` describes only the legacy reassignment method.
 
 - **Placement preserves identity.** `setPriceAxisPlacement` moves or reorders a column even when other scales use that side. The legacy `movePriceAxis(pane, from, to)` instead swaps the built-in side scale objects and reassigns their resources to the destination ID. It requires an unused destination ID and resets both placements to their named sides. A `priceAxisMoved` event follows a successful legacy move.
-- **Whole-axis study moves require one local assignment.** `movePriceAxis` refuses a study with mixed local scale assignments or explicit price overlays, since one saved override cannot represent a partial study move. `priceAxisState().movable` reports that restriction. Uniform local studies and primitive-only studies adopt the moved side. Use `study.setPriceScale` to move all local resources while leaving explicit overlays untouched.
+- **Whole-axis study moves require one local assignment.** `movePriceAxis` conservatively refuses a study with mixed local scale assignments or explicit price overlays. This is a guard on the legacy operation, not a saved-state limitation. `priceAxisState().movable` reports that restriction. Uniform local studies and primitive-only studies adopt the moved side. Use `study.setPriceScale` for all local resources or `study.setPlotPriceScales` for selected plots.
 - **The ratio lock pins price-per-bar.** The pane remembers the geometry the lock was taken at and rescales the visible span by height over bar spacing each frame, in transformed space, so a logarithmic axis keeps its angle too. Auto-fit and `resetScale` release it, and it is refused on a scale nothing has measured (`scaled: false`), because there is no ratio to hold.
 - **`active: false`** means no series or explicitly bound primitive maps to that scale. It is a row to render disabled with its state showing, not one to leave out.
 

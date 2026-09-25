@@ -52,6 +52,63 @@ import {
 const num = (v: unknown, fallback: number): number =>
   (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
 
+function isPriceScaleId(value: unknown): value is PriceScaleId {
+  return typeof value === 'string' && (value === 'right' || value === 'left' || value === '' || value.startsWith('overlay:'));
+}
+
+function plotScaleEntries(descriptor: IndicatorDescriptor, input: unknown, clear: boolean): [string, PriceScaleId | null][] {
+  if (!input || typeof input !== 'object' || Array.isArray(input)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(input))) throw new TypeError('Invalid indicator plot price scale map');
+  const keys = new Set(descriptor.plots.map(plot => plot.key));
+  return Reflect.ownKeys(input).map(key => {
+    const property = Object.getOwnPropertyDescriptor(input, key)!;
+    if (typeof key !== 'string' || !keys.has(key) || !property.enumerable || !('value' in property)
+      || !(isPriceScaleId(property.value) || (clear && property.value === null))) {
+      throw new TypeError('Invalid indicator plot price scale assignment');
+    }
+    return [key, property.value as PriceScaleId | null];
+  });
+}
+
+/** Internal construction and restore validation, without evaluating caller accessors. */
+export function parseIndicatorPlotPriceScales(descriptor: IndicatorDescriptor, input: unknown): Record<string, PriceScaleId> {
+  return input === undefined ? {} : Object.fromEntries(plotScaleEntries(descriptor, input, false)) as Record<string, PriceScaleId>;
+}
+
+function plotPriceScale(plot: IndicatorPlot, whole: PriceScaleId | null, assignments: Readonly<Record<string, PriceScaleId>>): PriceScaleId {
+  return (Object.prototype.hasOwnProperty.call(assignments, plot.key) ? assignments[plot.key] : undefined)
+    ?? (plot.overlay === true ? null : whole) ?? plot.priceScaleId ?? 'right';
+}
+
+function localPriceScale(descriptor: IndicatorDescriptor, whole: PriceScaleId | null, assignments: Readonly<Record<string, PriceScaleId>>): PriceScaleId {
+  const first = descriptor.plots.find(plot => plot.overlay !== true);
+  return first ? plotPriceScale(first, whole, assignments) : whole ?? 'right';
+}
+
+function fillPriceScale(descriptor: IndicatorDescriptor, fill: IndicatorFillSpec, whole: PriceScaleId | null,
+  assignments: Readonly<Record<string, PriceScaleId>>, paneIndex: number): PriceScaleId | null {
+  const a = descriptor.plots.find(plot => plot.key === fill.between[0]);
+  const b = descriptor.plots.find(plot => plot.key === fill.between[1]);
+  const pane = fill.overlay === true ? 0 : paneIndex;
+  if ((a && (a.overlay === true ? 0 : paneIndex) !== pane) || (b && (b.overlay === true ? 0 : paneIndex) !== pane)) return null;
+  // Calculated fill columns without plot series follow the first local plot.
+  const fallback = fill.overlay === true ? 'right' : localPriceScale(descriptor, whole, assignments);
+  const scale = a ? plotPriceScale(a, whole, assignments) : fallback;
+  return scale === (b ? plotPriceScale(b, whole, assignments) : fallback) ? scale : null;
+}
+
+/** Internal preflight shared by construction and Chart restore before resources change. */
+export function validateIndicatorScaleAssignment(descriptor: IndicatorDescriptor, priceScaleId: PriceScaleId | undefined,
+  plotPriceScaleIds: Readonly<Record<string, PriceScaleId>> | undefined, paneIndex: number): void {
+  if (priceScaleId !== undefined && !isPriceScaleId(priceScaleId)) throw new TypeError('Invalid indicator price scale');
+  const assignments = parseIndicatorPlotPriceScales(descriptor, plotPriceScaleIds);
+  // Omitted assignments retain the legacy descriptor-only fill behavior.
+  if (priceScaleId === undefined && Object.keys(assignments).length === 0) return;
+  if ((descriptor.fills ?? []).some(fill => fillPriceScale(descriptor, fill, priceScaleId ?? null, assignments, paneIndex) === null)) {
+    throw new RangeError('Indicator fill endpoints must share their pane and price scale');
+  }
+}
+
 /** Defaults for the generated per-plot appearance settings. */
 function styleDefaults(descriptor: IndicatorDescriptor): IndicatorSettings {
   const out: IndicatorSettings = {};
@@ -252,6 +309,12 @@ export interface IndicatorApi {
   priceScaleId(): PriceScaleId | null;
   /** Move local price resources together; null restores descriptor assignments. */
   setPriceScale(scaleId: PriceScaleId | null): boolean;
+  /** Effective scale for a declared plot, or null for an unknown key. */
+  plotPriceScaleId(plotKey: string): PriceScaleId | null;
+  /** Detached explicit per-plot assignments, before descriptor and study defaults. */
+  plotPriceScaleIds(): Readonly<Record<string, PriceScaleId>>;
+  /** Atomically patch plot assignments; null clears an override. Invalid patches return false. */
+  setPlotPriceScales(assignments: Readonly<Record<string, PriceScaleId | null>>): boolean;
   /** External data state, or null for a study without a managed lifecycle. */
   dataStatus(): Readonly<IndicatorDataStatus> | null;
   /** Observe changes; immediately receives the current managed status, if any. */
@@ -310,6 +373,7 @@ export class IndicatorInstance implements IndicatorApi {
   private readonly _ownPane: boolean;
   private _settings: IndicatorSettings;
   private _scaleOverride: PriceScaleId | null;
+  private _plotScaleOverrides: Record<string, PriceScaleId>;
   /** Memo for `_descriptorSettings`, keyed on the zone and the settings identity. */
   private _zoned: { zone: string; base: IndicatorSettings; merged: IndicatorSettings } | null = null;
   private readonly _series = new Map<string, SeriesApi>();
@@ -383,10 +447,12 @@ export class IndicatorInstance implements IndicatorApi {
     instanceId?: string,
     reservedIds?: ReadonlySet<string>,
     priceScaleId?: PriceScaleId,
+    plotPriceScaleIds?: Readonly<Record<string, PriceScaleId>>,
   ) {
     this._host = host;
     this._d = descriptor;
     this._scaleOverride = priceScaleId ?? null;
+    this._plotScaleOverrides = parseIndicatorPlotPriceScales(descriptor, plotPriceScaleIds);
     this.indicatorId = descriptor.id;
     this.name = descriptor.name;
     this._alertPolicy = new IndicatorAlertPolicy(descriptor.alerts ?? []);
@@ -413,9 +479,8 @@ export class IndicatorInstance implements IndicatorApi {
       this._ownPane = true;
     }
 
-    if (priceScaleId !== undefined && (descriptor.fills ?? []).some(fill => this._fillScale(fill, this._scaleOverride) === null)) {
-      throw new RangeError('Indicator fill endpoints must share their pane and price scale');
-    }
+    validateIndicatorScaleAssignment(descriptor, priceScaleId,
+      plotPriceScaleIds === undefined ? undefined : this._plotScaleOverrides, this.paneIndex);
 
     for (const plot of descriptor.plots) {
       const type = this._plotType(plot);
@@ -469,57 +534,106 @@ export class IndicatorInstance implements IndicatorApi {
     return plot.overlay === true ? 0 : this.paneIndex;
   }
 
-  private _plotScale(plot: IndicatorPlot, override = this._scaleOverride): PriceScaleId {
-    return (plot.overlay === true ? null : override) ?? plot.priceScaleId ?? 'right';
+  private _plotScale(plot: IndicatorPlot, override = this._scaleOverride, assignments = this._plotScaleOverrides): PriceScaleId {
+    return plotPriceScale(plot, override, assignments);
   }
 
-  private _localScale(override = this._scaleOverride): PriceScaleId {
-    const first = this._d.plots.find(plot => plot.overlay !== true);
-    return first ? this._plotScale(first, override) : override ?? 'right';
+  private _localScale(override = this._scaleOverride, assignments = this._plotScaleOverrides): PriceScaleId {
+    return localPriceScale(this._d, override, assignments);
   }
 
-  private _fillScale(fill: IndicatorFillSpec, override: PriceScaleId | null, paneIndex = this.paneIndex): PriceScaleId | null {
-    const a = this._d.plots.find(plot => plot.key === fill.between[0]);
-    const b = this._d.plots.find(plot => plot.key === fill.between[1]);
-    const pane = fill.overlay === true ? 0 : paneIndex;
-    if ((a && (a.overlay === true ? 0 : paneIndex) !== pane) || (b && (b.overlay === true ? 0 : paneIndex) !== pane)) return null;
-    // A band can use calculated columns without creating visible plot series.
-    const fallback = fill.overlay === true ? 'right' : this._localScale(override);
-    const scale = a ? this._plotScale(a, override) : fallback;
-    return scale === (b ? this._plotScale(b, override) : fallback) ? scale : null;
+  private _fillScale(fill: IndicatorFillSpec, override: PriceScaleId | null, paneIndex = this.paneIndex,
+    assignments = this._plotScaleOverrides): PriceScaleId | null {
+    return fillPriceScale(this._d, fill, override, assignments, paneIndex);
   }
 
   public priceScaleId(): PriceScaleId | null { return this._scaleOverride; }
+
+  public plotPriceScaleId(plotKey: string): PriceScaleId | null {
+    const plot = this._d.plots.find(item => item.key === plotKey);
+    return plot ? this._plotScale(plot) : null;
+  }
+
+  public plotPriceScaleIds(): Readonly<Record<string, PriceScaleId>> { return { ...this._plotScaleOverrides }; }
 
   public canRelocate(paneIndex: number): boolean {
     return (this._d.fills ?? []).every(fill => this._fillScale(fill, this._scaleOverride, paneIndex) !== null);
   }
 
   /** Keep a uniform study assignment synchronized with a whole-axis move. */
-  public adoptPriceScale(scaleId: PriceScaleId): void { this._scaleOverride = scaleId; }
+  public adoptPriceScale(scaleId: PriceScaleId): void {
+    this._scaleOverride = scaleId;
+    this._plotScaleOverrides = this._overlayScaleOverrides();
+  }
+
+  private _overlayScaleOverrides(): Record<string, PriceScaleId> {
+    return Object.fromEntries(this._d.plots.filter(plot => plot.overlay === true
+      && Object.prototype.hasOwnProperty.call(this._plotScaleOverrides, plot.key)).map(plot => [plot.key, this._plotScaleOverrides[plot.key]]));
+  }
 
   public setPriceScale(scaleId: PriceScaleId | null): boolean {
-    if (this._removed || scaleId === this._scaleOverride || (scaleId !== null &&
-      (typeof scaleId !== 'string' || (scaleId !== 'right' && scaleId !== 'left' && scaleId !== '' && !scaleId.startsWith('overlay:'))))) return false;
-    const series = this._d.plots.flatMap(plot => {
-      if (plot.overlay === true) return [];
+    if (this._removed || (scaleId !== null && !isPriceScaleId(scaleId))) return false;
+    const assignments = this._overlayScaleOverrides();
+    if (scaleId === this._scaleOverride && Object.keys(assignments).length === Object.keys(this._plotScaleOverrides).length) return false;
+    return this._assignPriceScales(scaleId, assignments, false);
+  }
+
+  public setPlotPriceScales(assignments: Readonly<Record<string, PriceScaleId | null>>): boolean {
+    if (this._removed) return false;
+    let patch: [string, PriceScaleId | null][];
+    try { patch = plotScaleEntries(this._d, assignments, true); } catch { return false; }
+    const next = new Map(Object.entries(this._plotScaleOverrides));
+    let changed = false;
+    for (const [key, value] of patch) {
+      if (value === null) changed = next.delete(key) || changed;
+      else if (next.get(key) !== value) { next.set(key, value); changed = true; }
+    }
+    return changed && this._assignPriceScales(this._scaleOverride, Object.fromEntries(next), true);
+  }
+
+  private _assignPriceScales(scaleId: PriceScaleId | null, assignments: Record<string, PriceScaleId>, overlays: boolean): boolean {
+    const plots = this._d.plots.filter(plot => overlays || plot.overlay !== true);
+    const destinations = new Map<number, Set<PriceScaleId>>();
+    for (const plot of plots) {
+      const target = this._plotScale(plot, scaleId, assignments);
+      if (target === this._plotScale(plot)) continue;
+      const pane = this._plotPane(plot), scales = destinations.get(pane) ?? new Set<PriceScaleId>();
+      scales.add(target); destinations.set(pane, scales);
+    }
+    // Reapply target peers in descriptor order, without touching unrelated or
+    // metadata-only assignments and their host-configured formatters.
+    const series = plots.flatMap(plot => {
+      const target = this._plotScale(plot, scaleId, assignments);
+      if (!destinations.get(this._plotPane(plot))?.has(target)) return [];
       const api = this._series.get(plot.key);
-      return api ? [{ api, scaleId: this._plotScale(plot, scaleId) }] : [];
+      return api ? [{ api, scaleId: target }] : [];
     });
     const primitives: { primitive: IPrimitive; scaleId: PriceScaleId }[] = [];
     for (let i = 0; i < this._fills.length; i++) {
-      const scale = this._fillScale(this._d.fills![i], scaleId);
+      const scale = this._fillScale(this._d.fills![i], scaleId, this.paneIndex, assignments);
       if (scale === null) return false;
-      if (this._d.fills![i].overlay !== true) primitives.push({ primitive: this._fills[i], scaleId: scale });
+      if ((overlays || this._d.fills![i].overlay !== true)
+        && scale !== this._fillScale(this._d.fills![i], this._scaleOverride)) primitives.push({ primitive: this._fills[i], scaleId: scale });
     }
-    for (const primitive of [...this._levels, this._draws, ...this._attachedPrimitives]) {
-      if (primitive !== null) primitives.push({ primitive, scaleId: this._localScale(scaleId) });
+    const local = this._localScale(scaleId, assignments);
+    if (local !== this._localScale()) for (const primitive of [...this._levels, this._draws, ...this._attachedPrimitives]) {
+      if (primitive !== null) primitives.push({ primitive, scaleId: local });
     }
-    return this._host.assignIndicatorScale?.(this.id, series, primitives, () => {
+    // Descriptor code can fail or reenter. Resolve it before moving resources,
+    // then let a newer settings, pane or assignment owner keep its result.
+    const settings = this._settings, previous = this._plotScaleOverrides, whole = this._scaleOverride, paneIndex = this.paneIndex;
+    const range = this._host.setIndicatorRange || this._ownPane ? this._d.range?.(this._descriptorSettings()) ?? null : null;
+    if (this._removed || settings !== this._settings || previous !== this._plotScaleOverrides
+      || whole !== this._scaleOverride || paneIndex !== this.paneIndex) return false;
+    const applied = this._host.assignIndicatorScale?.(this.id, series, primitives, () => {
       this._scaleOverride = scaleId;
-      this._applyRange();
-      this.updateLegendValues(this._host.legendIndex?.());
+      this._plotScaleOverrides = assignments;
+      this._applyRange(range);
     }) ?? false;
+    // A host formatter may throw; geometry and ownership notifications must
+    // already describe the completed assignment when that happens.
+    if (applied) this.updateLegendValues(this._host.legendIndex?.());
+    return applied;
   }
 
   /**
@@ -1497,17 +1611,18 @@ export class IndicatorInstance implements IndicatorApi {
     }
   }
 
-  private _applyRange(): void {
+  private _applyRange(range?: { min: number; max: number } | null): void {
     if (this._host.setIndicatorRange) {
       const local = this._d.plots.filter(plot => plot.overlay !== true).flatMap(plot => {
         const series = this._series.get(plot.key);
         return series ? [series] : [];
       });
-      this._host.setIndicatorRange(this.id, this.paneIndex, this._localScale(), this._d.range?.(this._descriptorSettings()) ?? null, local);
+      this._host.setIndicatorRange(this.id, this.paneIndex, this._localScale(),
+        range === undefined ? this._d.range?.(this._descriptorSettings()) ?? null : range, local);
       return;
     }
     if (!this._ownPane) return; // a shared pane belongs to whoever created it
-    this._host.setPaneRange(this.paneIndex, this._d.range?.(this._descriptorSettings()) ?? null);
+    this._host.setPaneRange(this.paneIndex, range === undefined ? this._d.range?.(this._descriptorSettings()) ?? null : range);
   }
 
   public remove(): void {

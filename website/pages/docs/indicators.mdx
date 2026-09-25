@@ -696,12 +696,50 @@ absent filter means every day. Whitespace around the parts is ignored.
 | `settings()` | `IndicatorSettings` | Current settings, as a copy. |
 | `setSettings(patch)` | `void` | Merge a patch, recompute, and restyle. |
 | `series(plotKey)` | `SeriesApi \| undefined` | The series behind one plot, for direct styling. |
+| `priceScaleId()` | `PriceScaleId \| null` | Whole-study override, or null for descriptor defaults. Per-plot overrides can still apply. |
+| `setPriceScale(id)` | `boolean` | Assign local resources together and clear their per-plot overrides. Null restores local descriptor defaults. |
+| `plotPriceScaleId(plotKey)` | `PriceScaleId \| null` | Effective scale of a declared plot, or null for an unknown key. |
+| `plotPriceScaleIds()` | `Readonly<Record<string, PriceScaleId>>` | Detached map of explicit per-plot overrides. |
+| `setPlotPriceScales(patch)` | `boolean` | Apply selected plot assignments atomically. Null values remove those overrides. |
 | `values()` | `IndicatorValues` | Latest computed columns. |
 | `remove()` | `void` | Remove every series and level it created. |
 
 `chart.indicators()` lists the live instances; `chart.removeIndicator(id)` removes one by id.
 Removing an indicator also prunes the pane it emptied, so a host UI cannot strand a blank
 pane under the chart.
+
+### Plot scale assignments
+
+Plots with different units can share a calculation while using independent
+scales. Pass `plotPriceScaleIds` in the third argument to `addIndicator`, or
+change the handle later:
+
+```ts
+study.setPlotPriceScales({ upper: 'overlay:band', lower: 'overlay:band' });
+chart.setPriceAxisPlacement(study.paneIndex, 'overlay:band', 'left');
+study.setPlotPriceScales({ upper: null, lower: null });
+```
+
+Only declared plot keys are accepted. A patch keeps omitted keys unchanged and
+removes an override for each null. A fill's endpoints must share a pane and
+scale, so move the pair together. Invalid IDs, unknown plots, accessor properties,
+incompatible fills and empty/unchanged patches return false without mutation.
+Invalid creation options throw before resources are allocated.
+
+Effective precedence is per-plot override, local whole-study override,
+descriptor scale, then `right`. Explicit price-pane overlays ignore the
+whole-study override but accept their own per-plot assignments. A successful
+`setPriceScale`, including null, clears local plot overrides and keeps explicit
+price-overlay overrides. Clear those individually to restore every descriptor
+assignment.
+
+Levels and unbound price drawings follow the first local plot; markers follow
+their series. Scale changes preserve handles, calculated values and provider
+attachments. `IndicatorState.plotPriceScaleIds` persists explicit overrides in
+chart state, workspace documents and legacy study templates. Known descriptor
+assignments are validated before chart restore changes resources.
+See [scale assignment details](/docs/scales-and-panes#reassign-individual-study-plots)
+and the [live example](/examples#assign-scales-to-individual-study-plots).
 
 ## Using another study's output
 

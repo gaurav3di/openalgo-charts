@@ -115,7 +115,9 @@ const BUNDLE = new URL('../dist/openalgo-charts.mjs', import.meta.url).pathname.
 // Independent visible columns require placement, geometry, input routing and
 // snapshot parsing in raw charts. The measured implementation adds 1.18
 // KiB (66.13 to 67.31); allow 67.5 KiB. Host menus stay in the optional widget.
-const LIMIT_BYTES = 67.5 * 1024;
+// Native per-plot assignment, validation and callback-safe transactions add
+// 0.68 KiB (67.31 to 67.99). Allow 68.25 KiB; workspace persistence stays optional.
+const LIMIT_BYTES = 68.25 * 1024;
 
 // Absent from a chart-only build. Each is a string that appears in the adapter
 // source and nowhere in the rendering core.

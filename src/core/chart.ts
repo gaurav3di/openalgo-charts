@@ -81,7 +81,7 @@ const INSTANCE_PALETTE: readonly string[] = [
   '#f5a623', '#26a69a', '#ab47bc', '#ef5350',
   '#26c6da', '#8bc34a', '#ff7043', '#5c6bc0',
 ];
-import { IndicatorInstance, type IndicatorApi, type IndicatorHost } from '../model/indicator-instance';
+import { IndicatorInstance, parseIndicatorPlotPriceScales, validateIndicatorScaleAssignment, type IndicatorApi, type IndicatorHost } from '../model/indicator-instance';
 import type { AlertsDocument } from '../alerts/types';
 import { copyAlert, parseAlertsDocument, validateAlert } from '../alerts/document';
 import type { ChartDataContext } from '../model/indicator-registry';
@@ -1371,6 +1371,7 @@ export class Chart {
         const digits = pf.precision ?? 2;
         scale.setPriceFormatter((v) => `${v.toFixed(digits)}%`);
       } else {
+        scale.setPriceFormatter(this._priceFormatter);
         const minMove = pf.minMove ?? (pf.precision !== undefined ? Math.pow(10, -pf.precision) : undefined);
         if (minMove !== undefined) scale.setOptions({ minMove });
       }
@@ -1516,10 +1517,13 @@ export class Chart {
   public addIndicator(
     indicatorId: string,
     settings: Readonly<IndicatorSettings> = {},
-    options: { paneIndex?: number; priceScaleId?: PriceScaleId } = {},
+    options: { paneIndex?: number; priceScaleId?: PriceScaleId; plotPriceScaleIds?: Readonly<Record<string, PriceScaleId>> } = {},
   ): IndicatorApi {
     if (options.priceScaleId !== undefined && !this._validPriceScaleId(options.priceScaleId)) throw new TypeError('Invalid indicator price scale');
     const descriptor = getIndicator(indicatorId);
+    const plotPriceScaleIds = options.plotPriceScaleIds === undefined ? undefined : parseIndicatorPlotPriceScales(descriptor, options.plotPriceScaleIds);
+    validateIndicatorScaleAssignment(descriptor, options.priceScaleId, plotPriceScaleIds,
+      options.paneIndex ?? (descriptor.placement === 'onchart' ? 0 : this._panes.length));
     this._flushIndicators();
     const reserved = new Set([...this._indicatorReservedIds, ...this._indicators.map(item => item.id)]);
     for (const edges of planIndicatorDependencies(this._indicators.map(item => item.dependencyNode())).dependencies.values()) {
@@ -1533,6 +1537,7 @@ export class Chart {
       undefined,
       reserved,
       options.priceScaleId,
+      plotPriceScaleIds,
     );
     this._indicators.push(instance);
     this._indicatorReservedIds.add(instance.id);
@@ -2743,8 +2748,8 @@ export class Chart {
   private _canMovePriceAxis(paneIndex: number, from: 'right' | 'left', to: 'right' | 'left'): boolean {
     const pane = this._panes[paneIndex];
     if (!pane || from === to || !pane.usesScale(from) || pane.usesScale(to)) return false;
-    // One saved study override cannot represent a partial axis transfer or an
-    // explicit price overlay. Refuse before changing either scale object.
+    // The legacy transfer supports uniform local studies. Mixed studies and
+    // price overlays use explicit plot assignments or stable axis placement.
     for (const instance of this._indicators) {
       const resources = instance.renderResources();
       const series = resources.series.filter(item => this._seriesOwners.get(item.api)?.pane === pane);
@@ -3415,6 +3420,7 @@ export class Chart {
         visible: i.visible(),
         ...(studyInputs.get(i.id)?.length ? { studyInputs: studyInputs.get(i.id)!.map(edge => edge.inputKey) } : {}),
         ...(i.priceScaleId() === null ? {} : { priceScaleId: i.priceScaleId()! }),
+        ...(Object.keys(i.plotPriceScaleIds()).length ? { plotPriceScaleIds: i.plotPriceScaleIds() } : {}),
       })),
     };
     if (this._drawingState !== undefined) state.drawings = this._drawingState;
@@ -3458,6 +3464,10 @@ export class Chart {
       if (s.indicators !== undefined) {
         if (!Array.isArray(s.indicators)) throw new Error('Invalid indicator list');
         for (const spec of s.indicators) {
+          if ('plotPriceScaleIds' in spec) {
+            const property = Object.getOwnPropertyDescriptor(spec, 'plotPriceScaleIds');
+            if (!property?.enumerable || !('value' in property)) throw new Error('Invalid indicator plot price scale map field');
+          }
           if (spec.priceScaleId !== undefined && !this._validPriceScaleId(spec.priceScaleId)) throw new Error('Invalid indicator price scale');
           if (spec.instanceId === undefined) continue;
           if (typeof spec.instanceId !== 'string' || !spec.instanceId.trim() || reservedIds.has(spec.instanceId)) {
@@ -3488,6 +3498,10 @@ export class Chart {
           .map(spec => [spec.instanceId!, getIndicator(spec.indicatorId)]));
         const nodes = specs.flatMap(spec => {
           const descriptor = descriptors.get(spec.instanceId!);
+          if (descriptor && spec.plotPriceScaleIds !== undefined) {
+            spec.plotPriceScaleIds = parseIndicatorPlotPriceScales(descriptor, spec.plotPriceScaleIds);
+          }
+          if (descriptor) validateIndicatorScaleAssignment(descriptor, spec.priceScaleId, spec.plotPriceScaleIds, spec.paneIndex);
           return descriptor ? [{ id: spec.instanceId!, descriptor, settings: spec.settings }] : [];
         });
         studies = { specs, order: planIndicatorDependencies(nodes).order, descriptors };
@@ -3556,7 +3570,7 @@ export class Chart {
         const descriptor = studies.descriptors.get(id)!;
         const instance = new IndicatorInstance(
           this._indicatorHost(), descriptor, spec.settings, spec.paneIndex,
-          spec.instanceId, reservedIds, spec.priceScaleId,
+          spec.instanceId, reservedIds, spec.priceScaleId, spec.plotPriceScaleIds,
         );
         reservedIds.add(instance.id);
         this._indicators.push(instance);
