@@ -103,7 +103,12 @@ const BUNDLE = new URL('../dist/openalgo-charts.mjs', import.meta.url).pathname.
 // add 0.67 KiB to chart-only imports (61.71 to 62.38). These let raw chart hosts
 // supply explicit availability without adding transport. Allow 62.50 KiB;
 // managed requested calculations stay in the optional indicator tier.
-const LIMIT_BYTES = 62.5 * 1024;
+// Explicit study alerts share source confirmation and calculation ownership.
+// Their live-update, close and lifetime checkpoints serve raw chart hosts,
+// adding 1.05 KiB to chart-only imports (62.47 to 63.52) and 1.14 kB to the
+// base bundle (102.94 to 104.08). Allow 63.75 KiB while notification controls,
+// feed adapters and optional tiers must still disappear below.
+const LIMIT_BYTES = 63.75 * 1024;
 
 // Absent from a chart-only build. Each is a string that appears in the adapter
 // source and nowhere in the rendering core.

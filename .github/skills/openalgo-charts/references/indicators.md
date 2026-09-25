@@ -813,6 +813,7 @@ A crossover of an indicator's own columns is something only that indicator can n
 alerts: [{
   id: 'cross-up',                                 // stable within the descriptor
   title: 'MACD crossed up',
+  frequency: 'oncePerBar',
   message: 'MACD histogram turned positive',      // optional, defaults to `title`
   when: ({ bars, values, settings, index }) => {
     const h = values.histogram;
@@ -823,7 +824,37 @@ alerts: [{
 
 A trigger emits `'indicator:alert'` on the chart's own bus with `{ indicatorId, instanceId, alertId, title, message, time, index }`.
 
-**The firing rule is the part to get right.** Alerts fire **only on a tail-only change**, the same gate `calcTail` uses. Any other pass reseeds the watermark silently, so adding the indicator to a loaded chart, changing a setting, paging history in, or switching symbol emits nothing: two years of bars must not announce every crossover in them at once. The watermark is a bar **time**, not a count, so older bars arriving at the left edge cannot re-fire the chart. `when` judges **one** bar, so a rule comparing against the previous bar reads `index - 1` itself.
+`IndicatorAlertSpec.frequency` accepts the public `IndicatorAlertFrequency` union:
+
+| Frequency | Delivery on native live source calculations |
+| --- | --- |
+| omitted | Existing behavior: evaluate newly appended bars once, using the original tail-only gate. Same-time updates do not trigger. |
+| `everyUpdate` | Every observed live calculation where the condition is true, after chart batching. Superseded ticks are not separate executions. |
+| `oncePerBar` | The first true live evaluation for each bar, including a condition that was false when the bar opened. |
+| `onBarClose` | Once when a bar becomes confirmed and its close condition is true. A false close condition is final. |
+| `once` | The first matching live result during this indicator instance's lifetime. Source changes, history resets and replay do not rearm it; removing and recreating the instance does. |
+
+Historical loads, settings changes, repaint, asynchronous requested-data refresh
+and replay do not emit or spend a `once` alert. Source/history replacement and
+replay restoration seed checkpoints silently. `when` judges one bar using
+`{ bars, values, settings, index }`; previous-bar comparisons read `index - 1`.
+
+Close confirmation follows the native calculation context: the chart's own
+clock and interval, explicit provider `confirmation`, or a newer appended bar.
+Appending also closes the previous count bar; a new tail's `forming` override
+does not reopen earlier bars. Coalesced appends evaluate each newly completed
+bar. Same-time provider confirmation can close a bar without changing its price.
+Clock closure waits for an eligible live source calculation; there is no alert
+polling timer. Settings, repaint and asynchronous refresh alone cannot close it.
+
+For `onBarClose`, predicate and message contexts contain only bar/output prefixes
+through the evaluated index. Calculations must still be causal. Native dispatch
+is at most once for a reserved delivery, including synchronous callback reentry;
+it is not a notification acknowledgement or transport guarantee. Predicate or
+message errors leave delivery unspent, surface through `dataStatus()`, and may
+retry on a later eligible live revision, not a repeated read. Independent
+successful alerts keep their checkpoints. Subscriber exceptions occur after
+native dispatch is committed and do not retry that delivery.
 
 For a signal arriving from outside the calculation entirely (a subscription your `attach(ctx)` opened), use `ctx.emit(event, payload)` on the attach context instead. That is the imperative half, it puts anything on the same bus, and it has no watermark.
 

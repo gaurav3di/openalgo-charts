@@ -9,6 +9,7 @@
  */
 import type { Bar } from './bar';
 import { runAbortable } from './abortable-request';
+import { IndicatorAlertPolicy } from './indicator-alert-policy';
 import type { PriceFormat, PriceScaleId, SeriesApi, SeriesDataState } from './series';
 import type { PriceLine } from '../primitives/price-line';
 import type { PaneLegend, LegendValue } from '../primitives/pane-legend';
@@ -331,6 +332,8 @@ export class IndicatorInstance implements IndicatorApi {
    * settings change, a page of older bars) re-fires nothing.
    */
   private _alertTime = 0;
+  private readonly _alertPolicy: IndicatorAlertPolicy;
+  private _calculationEpoch = 0;
   /** Set once a tail-only change lands, which is what a live feed looks like. */
   private _live = false;
   private _sourceId: number | undefined;
@@ -359,6 +362,7 @@ export class IndicatorInstance implements IndicatorApi {
     this._scaleOverride = priceScaleId ?? null;
     this.indicatorId = descriptor.id;
     this.name = descriptor.name;
+    this._alertPolicy = new IndicatorAlertPolicy(descriptor.alerts ?? []);
     let id = instanceId;
     if (id === undefined) do { id = `${descriptor.id}-${nextInstance++}`; } while (reservedIds?.has(id));
     this.id = id;
@@ -813,30 +817,49 @@ export class IndicatorInstance implements IndicatorApi {
     bars: readonly Bar[],
     settings: Readonly<IndicatorSettings>,
     tailOnly: boolean,
+    calculation: IndicatorCalcContext,
+    refresh: boolean,
+    current: () => boolean,
   ): void {
     const specs = this._d.alerts;
     const n = bars.length;
-    if (specs === undefined || n === 0) return;
+    if (specs === undefined || !current()) return;
     const seen = this._alertTime;
-    this._alertTime = bars[n - 1].time;
-    if (!tailOnly) return;
+    if (n > 0) this._alertTime = bars[n - 1].time;
     let from = n;
-    while (from > 0 && bars[from - 1].time > seen) from--;
+    if (tailOnly && !refresh) while (from > 0 && bars[from - 1].time > seen) from--;
+    let failed = false;
+    let failure: unknown;
     for (let i = from; i < n; i++) {
       for (const spec of specs) {
+        if (spec.frequency !== undefined) continue;
+        if (!current()) return;
         const ctx = { bars, values: this._values, settings, index: i };
-        if (!spec.when(ctx)) continue;
-        this._host.emit?.('indicator:alert', {
-          indicatorId: this.indicatorId,
-          instanceId: this.id,
-          alertId: spec.id,
-          title: spec.title,
-          message: typeof spec.message === 'function' ? spec.message(ctx) : (spec.message ?? spec.title),
-          time: bars[i].time,
-          index: i,
-        });
+        try {
+          const matches = spec.when(ctx);
+          if (!current()) return;
+          if (!matches) continue;
+          const message = typeof spec.message === 'function' ? spec.message(ctx) : (spec.message ?? spec.title);
+          if (!current()) return;
+          this._host.emit?.('indicator:alert', {
+            indicatorId: this.indicatorId, instanceId: this.id, alertId: spec.id,
+            title: spec.title, message, time: bars[i].time, index: i,
+          });
+        } catch (error) {
+          if (!current()) return;
+          if (!failed) { failed = true; failure = error; }
+        }
       }
     }
+    if (!current()) return;
+    try {
+      this._alertPolicy.evaluate({ bars, values: this._values, settings, calculation, tailOnly, refresh, current }, payload => {
+        this._host.emit?.('indicator:alert', { ...payload, indicatorId: this.indicatorId, instanceId: this.id });
+      });
+    } catch (error) {
+      if (!failed) { failed = true; failure = error; }
+    }
+    if (failed && current()) throw failure;
   }
 
   /**
@@ -978,7 +1001,7 @@ export class IndicatorInstance implements IndicatorApi {
       requestRecompute: () => {
         if (this._removed) return;
         this._barCount = 0; // external data invalidates any calcTail state
-        this.recompute();
+        this.recompute(true);
       },
       store: this._store,
       symbol: () => this._host.symbol?.(),
@@ -1097,7 +1120,7 @@ export class IndicatorInstance implements IndicatorApi {
     this._applyRange();
     this._values = {};
     this._barCount = 0; // force a full recompute; settings invalidate any tail state
-    this.recompute();
+    this.recompute(true);
     this._detach?.();
     this._attach();
     this._host.resourcesChanged?.();
@@ -1109,13 +1132,24 @@ export class IndicatorInstance implements IndicatorApi {
    * when only the tail moved (a live tick) and it declares one; otherwise a
    * full `calc`.
    */
-  public recompute(): void {
+  public recompute(refresh = false): void {
     if (this._removed) return;
+    const epoch = ++this._calculationEpoch;
+    const settingsIdentity = this._settings;
+    const source = this._host.sourceState?.();
+    const current = (): boolean => {
+      if (this._removed || epoch !== this._calculationEpoch || settingsIdentity !== this._settings) return false;
+      const latest = this._host.sourceState?.();
+      return source === undefined ? latest === undefined : latest !== undefined
+        && source.sourceId === latest.sourceId && source.revision === latest.revision
+        && source.historyRevision === latest.historyRevision && source.provenance === latest.provenance;
+    };
     // The constructor's pass throws through: see the note there.
-    if (!this._constructed) { this._recompute(); return; }
+    if (!this._constructed) { this._recompute(refresh, source, current); return; }
     try {
-      this._recompute();
+      this._recompute(refresh, source, current);
     } catch (error) {
+      if (!current()) return;
       // One study's bad input must not stall the frame for every other one, and
       // a study that silently stops drawing tells the user nothing. So the
       // failure goes where a Tier-2 fetch failure already goes, the previous
@@ -1124,15 +1158,16 @@ export class IndicatorInstance implements IndicatorApi {
       this._publishStatus({ state: 'error', error });
       return;
     }
+    // A callback can complete a newer pass. Its status owns recovery too.
+    if (!current()) return;
     if (this._calcFailed) {
       this._calcFailed = false;
       this._publishStatus(this._lifecycleStatus ?? { state: 'ready' });
     }
   }
 
-  private _recompute(): void {
+  private _recompute(refresh: boolean, source: SeriesDataState | undefined, current: () => boolean): void {
     const bars = this._host.sourceBars();
-    const source = this._host.sourceState?.();
     const n = bars.length;
     // Resolved once: the zone is fixed for the frame, and calc, calcTail and
     // every colorBy below must be told the same calendar.
@@ -1162,6 +1197,7 @@ export class IndicatorInstance implements IndicatorApi {
       if (tail !== null) values = spliceTail(this._values, tail, from, n);
     }
     if (values === null) values = this._d.calc(bars, settings, this._store, ctx);
+    if (!current()) return;
 
     this._values = values;
     this._barCount = n;
@@ -1211,7 +1247,8 @@ export class IndicatorInstance implements IndicatorApi {
     this._syncBackground(bars);
     this._syncBarColors(bars);
     this._applyLevels(bars, settings);
-    this._syncAlerts(bars, settings, tailOnly);
+    this._syncAlerts(bars, settings, tailOnly, ctx, refresh, current);
+    if (!current()) return;
     this.updateLegendValues(this._host.legendIndex?.());
   }
 

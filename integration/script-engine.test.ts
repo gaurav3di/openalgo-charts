@@ -52,6 +52,31 @@ function makeChart(data: Bar[], now: number, updatesOnly = false) {
 const bar = (time: number, close: number): Bar => ({ time, open: 1, high: close + 1, low: 0, close });
 
 describe('compiled script engine on an actual Chart', () => {
+  it('evaluates native close alerts from compiled outputs with provider confirmation', () => {
+    const compiled = compile(`version 1
+study("Confirmed output")
+plot(close * 3, "Value")
+`);
+    const key = compiled.plots[0].key;
+    registerIndicator({ ...compiled, alerts: [{
+      id: 'confirmed', title: 'Confirmed value', frequency: 'onBarClose',
+      when: context => context.values[key][context.index]! > 0,
+      message: context => String(context.values[key][context.index]),
+    }] });
+    const { chart, series } = makeChart([bar(0, 2), bar(60, 3)], 61);
+    const events: { time: number; message: string }[] = [];
+    chart.on('indicator:alert', payload => events.push(payload as { time: number; message: string }));
+    const indicator = chart.addIndicator(compiled.id);
+    series.update(bar(60, 4), { confirmation: 'forming' }); indicator.values();
+    expect(events).toEqual([]);
+    series.update(bar(60, 4), { confirmation: 'confirmed' }); indicator.values();
+    series.update(bar(60, 5), { confirmation: 'confirmed' }); indicator.values();
+    series.update(bar(120, 6), { confirmation: 'forming' }); indicator.values();
+    series.update(bar(120, 7), { confirmation: 'confirmed' }); indicator.values();
+    expect(events.map(event => [event.time, event.message])).toEqual([[60, '12'], [120, '21']]);
+    expect(indicator.values()[key]).toEqual([6, 15, 21]);
+  });
+
   it('refreshes a compiled external mean on same-time ticks and provider replacement', async () => {
     const compiled = compile(`version 1
 study("External rolling mean")

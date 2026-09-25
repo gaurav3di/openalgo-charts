@@ -120,7 +120,10 @@
         "Per-bar fill gradient anchors and colors",
         "Gradient price anchoring across frames and pane transforms",
         "Merged table cells, multiline text, font choices and vertical alignment",
-        "Independent outer table frames"
+        "Independent outer table frames",
+        "Explicit live-update, first-match-per-bar, known-close and instance-lifetime indicator alerts",
+        "Historical and replay suppression with independent alert checkpoints",
+        "Close-context prefixes, retryable predicate errors and reentrant calculation ownership"
       ],
       "evidence": [
         "tests/indicator-visual-descriptors.test.ts",
@@ -128,13 +131,16 @@
         "tests/indicator-fill-varying-gradient.test.ts",
         "tests/e2e/native-fill-gradients.spec.ts",
         "tests/table-formatting.test.ts",
-        "tests/e2e/table-layout.spec.ts"
+        "tests/e2e/table-layout.spec.ts",
+        "tests/indicator-alert-policy.test.ts",
+        "tests/indicator-alert-frequencies.test.ts",
+        "tests/indicator-alert-reentry.test.ts",
+        "tests/e2e/native-indicator-alerts.spec.ts"
       ],
       "remaining": [
         "Typed and interactive inputs",
         "Table hover tooltips",
-        "Drawing and marker variants",
-        "Alert frequency and confirmation policies"
+        "Drawing and marker variants"
       ]
     },
     {
@@ -202,7 +208,8 @@
         "Provider confirmation, replay and primary-source replacement",
         "Compiled expression alignment against explicit requested-observation availability",
         "Compiled managed expression confirmation and provider replacement through the unchanged adapter",
-        "Compiled external rolling mean refresh on fixed-time source changes and provider replacement"
+        "Compiled external rolling mean refresh on fixed-time source changes and provider replacement",
+        "Native close alerts using compiled output and explicit provider confirmation through the unchanged adapter"
       ],
       "remaining": [
         "Wider output and request fixtures",
@@ -233,21 +240,21 @@
     ]
   },
   "validation": {
-    "chartTests": 6843,
-    "chartTestFiles": 294,
-    "compiledProgramTests": 13,
+    "chartTests": 6906,
+    "chartTestFiles": 297,
+    "compiledProgramTests": 14,
     "demoTests": 424,
     "demoTestFiles": 35,
-    "browserEvidence": "This batch passed 15 browser cases across all three engines: nine external-lifecycle cases and six requested-provider regressions. The built website example also passed all four controls in each engine, with no page or example errors. Thirty regression screenshots and six representative built-site screenshots were inspected. The reported example autofit regression passed in the preceding committed scale batch across all three engines: the scale expands when an extreme enters view and contracts when it leaves. Traffic uses fixtures rather than live brokers.",
-    "website": "63 static pages built successfully; external-lifecycle example verified on the built site in all three engines",
-    "chartOnlyBrotliKiB": 62.47,
-    "chartOnlyBudgetKiB": 62.5,
-    "baseBrotliKB": 102.94,
+    "browserEvidence": "This batch passed 12 browser cases across all three engines: nine alert-policy cases and three example autofit regressions. The right axis expands when an extreme enters view and contracts when it leaves. The built website alert example passed ten interaction states in each engine, with no page or example errors. Twenty-four alert and six autofit screenshots plus six representative built-site screenshots were inspected. Traffic uses fixtures rather than live brokers.",
+    "website": "63 static pages built successfully; alert example verified on the built site in all three engines",
+    "chartOnlyBrotliKiB": 63.52,
+    "chartOnlyBudgetKiB": 63.75,
+    "baseBrotliKB": 104.08,
     "indicatorBrotliKB": 35.89,
-    "allTiersBrotliKB": 279.15,
-    "budgetChange": "Raw external lifecycle support increases the optional indicator tier from 35.05 to 35.89 kB. Base measures 102.94 kB, chart-only 62.47 KiB and all tiers 279.15 kB. Optional limits are now 36 kB indicators, 240 kB terminal and 279.5 kB all tiers. Base remains 103.25 kB, base plus trade 111.25 kB and chart-only 62.5 KiB. Other budgets are unchanged and removal checks pass.",
-    "review": "Review closed stale live-callback status, failed authoritative replacement, missing error catch-up, missing tail after prefix catch-up and cached calculation recovery overriding lifecycle status. The external helper passes 25 new native cases and 32 unchanged cases; two independent review cases and nine calculation-guard cases pass. The new compiled integration reproduced a stale mean of 25 instead of 40 before the fix.",
-    "packageVerification": "Verify passed lint, typecheck, 6843 unit tests, seven endurance-harness checks, build, 424 example tests and declaration identity. Measured optional-tier growth required the documented budget adjustments; size and tree-shake checks then passed. Thirteen compiled-program checks and public adapter typechecking passed.",
+    "allTiersBrotliKB": 280.29,
+    "budgetChange": "Native indicator alert policies add 1.14 kB to the base bundle (102.94 to 104.08) and 1.05 KiB to chart-only imports (62.47 to 63.52). Limits are now 104.25 kB base, 112.25 kB base plus trade, 241 kB terminal, 280.5 kB all tiers and 63.75 KiB chart-only. Optional tier limits are unchanged and removal checks pass.",
+    "review": "Review closed lost dirty flushes during nested reads, old success clearing a newer calculation error and old failure overwriting a newer success. Alert suites pass 63 cases: 28 pure policy, 14 native frequency and 21 native reentry cases. Eleven frequency and 17 reentry cases demonstrated failures before implementation; three additional status regressions failed before the review fix. Nine browser cases also reproduced missing same-time alerts on the old bundle.",
+    "packageVerification": "Full verify passed lint, typecheck, 6906 unit tests, seven endurance-harness checks, build, 424 example tests, declaration identity, measured size limits and tree-shake checks. Fourteen compiled-program checks and public adapter typechecking passed with the unchanged engine adapter.",
     "latestEngineSourceReview": "d95bd70daf598892d40a9265607537b86ce712dd has no source changes relative to the pinned tested engine revision.",
     "apiDocumentation": "Generated with warnings treated as errors",
     "skillsCoverage": "975 of 975 named exports and registry entries; not functional coverage"

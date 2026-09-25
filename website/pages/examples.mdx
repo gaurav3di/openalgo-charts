@@ -684,6 +684,108 @@ chart.destroy = () => { disposed = true; unsubscribe(); destroy(); };
 render();
 return chart;`} />
 
+## Indicator alerts on live updates
+
+Cross threshold changes the current forming bar from false to true. Repeat tick
+keeps its timestamp and value, letting the log distinguish every observed update
+from once per bar. Confirm bar uses provider confirmation; Close by clock clears
+that override and advances only this chart's clock. Append bar starts below the
+threshold and can close the previous matching bar.
+
+Reset history and replay emit nothing. The one-time alert stays spent for this
+study instance. These controls simulate source events; the chart only dispatches
+`indicator:alert`, and the example owns the visible log.
+
+<RunnableExample height={600} caption="Four alert policies share one condition: the blue value is at least 105." code={`const start = 1700000040;
+let clock = start + 11 * 60 + 30, replay = null, disposed = false;
+const controls = document.createElement('div');
+controls.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;padding:8px';
+const status = document.createElement('div');
+status.style.cssText = 'padding:0 8px 8px;color:#94a3b8;font:12px sans-serif';
+status.setAttribute('role', 'status');
+const host = document.createElement('div');
+host.style.height = '340px';
+const log = document.createElement('pre');
+log.setAttribute('role', 'log');
+log.setAttribute('aria-label', 'Indicator alert events');
+log.style.cssText = 'height:132px;overflow:auto;margin:8px;padding:8px;background:#101827;color:#cbd5e1;font:12px/18px monospace;scrollbar-color:#334155 #101827';
+el.append(controls, status, host, log);
+const chart = lib.createChart(host, { timezone: 'Etc/UTC', branding: false, axisChrome: { clock: () => clock } });
+chart.setDataContext({ symbol: 'SIGNAL', interval: '1m' });
+const source = chart.addSeries('line', { style: { color: '#64748b', lineWidth: 1 } });
+const initial = () => Array.from({ length: 12 }, (_, i) => ({ time: start + i * 60, value: i === 4 || i === 5 ? 110 : 100 }));
+source.setData(initial(), { confirmation: 'forming' });
+const frequencies = ['everyUpdate', 'oncePerBar', 'onBarClose', 'once'];
+lib.registerIndicator({
+  id: 'demo-indicator-alert-policies', name: 'Live threshold', placement: 'onchart', inputs: [],
+  plots: [{ key: 'value', type: 'line', style: { color: '#4f8cff', lineWidth: 3, markers: true, markerRadius: 4 } }],
+  calc: bars => ({ value: bars.map(bar => bar.close) }),
+  alerts: frequencies.map(frequency => ({
+    id: frequency, title: frequency, frequency,
+    when: ({ values, index }) => values.value[index] >= 105,
+  })),
+});
+chart.addIndicator('demo-indicator-alert-policies');
+source.priceScale().setAutoScale(false);
+source.priceScale().setPriceRange({ min: 95, max: 115 });
+chart.fitContent();
+const events = [], liveButtons = [];
+const render = () => {
+  if (disposed) return;
+  const tail = source.getData().slice(-1)[0];
+  status.textContent = (replay ? 'Replay' : 'Live') + '; bar ' + ((tail.time - start) / 60)
+    + '; value ' + tail.close + '; events ' + events.length;
+  log.textContent = events.length ? events.join(String.fromCharCode(10)) : 'No live alerts yet.';
+  log.scrollTop = log.scrollHeight;
+  for (const button of liveButtons) {
+    button.disabled = Boolean(replay);
+    button.style.opacity = replay ? '0.45' : '1';
+    button.style.cursor = replay ? 'not-allowed' : 'pointer';
+  }
+};
+const unsubscribe = chart.on('indicator:alert', event => {
+  if (event.indicatorId !== 'demo-indicator-alert-policies') return;
+  events.push(event.alertId + ' @ bar ' + ((event.time - start) / 60));
+  render();
+});
+const tail = () => source.getData().slice(-1)[0];
+for (const [label, action] of [
+  ['Below threshold', () => source.update({ time: tail().time, value: 100 }, { confirmation: 'forming' })],
+  ['Cross threshold', () => source.update({ time: tail().time, value: 110 }, { confirmation: 'forming' })],
+  ['Repeat tick', () => source.update(tail())],
+  ['Confirm bar', () => source.update(tail(), { confirmation: 'confirmed' })],
+  ['Close by clock', () => {
+    clock = tail().time + 60;
+    source.update(tail(), { confirmation: 'auto' });
+  }],
+  ['Append bar', () => {
+    const time = tail().time + 60;
+    clock = time + 30;
+    source.update({ time, value: 100 }, { confirmation: 'forming' });
+    chart.fitContent();
+  }],
+  ['Reset history', () => {
+    clock = start + 11 * 60 + 30;
+    source.setData(initial(), { confirmation: 'forming' });
+    chart.fitContent();
+  }],
+  ['Toggle replay', () => {
+    if (replay) { replay.stop(); replay = null; }
+    else replay = new lib.ReplayController(chart, { series: source, startIndex: 5 });
+  }],
+]) {
+  const button = document.createElement('button');
+  button.textContent = label;
+  button.style.cssText = 'padding:5px 10px;border:1px solid #334155;border-radius:4px;background:#172033;color:#e2e8f0;cursor:pointer';
+  button.onclick = () => { action(); render(); };
+  controls.appendChild(button);
+  if (label !== 'Toggle replay') liveButtons.push(button);
+}
+const destroy = chart.destroy.bind(chart);
+chart.destroy = () => { disposed = true; replay?.stop(); unsubscribe(); destroy(); };
+render();
+return chart;`} />
+
 ## Move a whole study between scales
 
 The buttons move both plots, their gradient fill and reference level together.

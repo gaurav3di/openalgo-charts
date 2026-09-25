@@ -1144,6 +1144,7 @@ name, so the condition is declared on the descriptor and the runtime watches it:
 alerts: [{
   id: 'cross-up',                       // stable within the descriptor
   title: 'MACD crossed up',
+  frequency: 'oncePerBar',
   message: 'MACD histogram turned positive',   // defaults to `title`
   when: ({ values, index }) => {
     const h = values.histogram;
@@ -1163,15 +1164,41 @@ chart.on('indicator:alert', ({ indicatorId, instanceId, alertId, title, time }) 
 `when` is handed `{ bars, values, settings, index }` and judges **one bar**, so a rule that
 compares against the previous bar reads `index - 1` itself.
 
-<Callout type="warning">
-**Alerts fire only on a tail-only change**, the same gate `calcTail` uses and for the same
-reason. Any other pass reseeds the watermark silently, so adding the indicator to a loaded
-chart, changing a setting, paging history in, or switching symbol announces nothing. An
-indicator dropped onto two years of bars must not fire every crossover in them at once.
+The optional `IndicatorAlertSpec.frequency` uses `IndicatorAlertFrequency`:
 
-The watermark is a bar **time**, not a count, so a page of older bars arriving at the left
-edge cannot re-fire the chart.
-</Callout>
+| Frequency | When a true condition emits |
+| --- | --- |
+| omitted | Once for a newly appended bar, retaining the original tail-only rule. Same-time updates do not emit. |
+| `everyUpdate` | Each observed live calculation after chart batching. Several provider ticks can coalesce into one calculation. |
+| `oncePerBar` | The first matching live calculation for that bar, even when the condition was false at its opening. |
+| `onBarClose` | Once when native confirmation closes the bar. A false condition at close is not reconsidered. |
+| `once` | The first matching live result in this instance's lifetime. Removing and recreating the study creates a fresh lifetime. |
+
+Historical loads, settings changes, repaint, asynchronous requested-data refresh
+and replay do not emit alerts. They cannot consume a `once` alert. A delivered
+`once` remains spent across source changes, history resets and replay; bar
+checkpoints are seeded silently when history is replaced or replay restores it.
+
+Close confirmation uses the chart's own clock and interval or an explicit provider
+confirmation. A newer appended bar closes the previous observation, including
+count bars, even when the new tail is marked `forming`. Coalesced appends can
+close several observations. A same-time `series.update(bar, { confirmation:
+'confirmed' })` can close the current bar without a price change. Clock closure
+is observed on the next eligible live calculation, without a polling timer;
+repaint, settings and asynchronous refresh alone do not trigger it.
+
+Close predicates and message functions receive only bars and output values
+through their evaluated index. Use causal calculations so those values do not
+already contain future information. A predicate or message error leaves that
+delivery unspent and reports through `dataStatus()`; a later live revision can
+retry, while repeated reads do not repeat successful sibling alerts. Subscriber
+exceptions happen after native dispatch is committed and do not retry that
+delivery.
+
+The event is native dispatch, with at-most-once checkpoints for synchronous
+reentry. The host owns any logging, notifications or delivery acknowledgement.
+Try the [live alert policy example](/examples#indicator-alerts-on-live-updates)
+to compare same-time ticks, confirmation, resets and replay.
 
 For a signal that arrives from outside the calculation entirely (a subscription your
 `attach` opened), use the imperative half instead: `ctx.emit(event, payload)` on

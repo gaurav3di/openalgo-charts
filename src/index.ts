@@ -114,6 +114,7 @@ export type {
   IndicatorCalcContext,
   IndicatorExecutionContext,
   IndicatorAlertSpec,
+  IndicatorAlertFrequency,
   IndicatorAlertContext,
   IndicatorAlertPayload,
   IndicatorDrawing,

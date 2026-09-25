@@ -2122,7 +2122,8 @@ export class Chart {
    */
   private _flushIndicators(): void {
     if (!this._indicatorsDirty) return;
-    if (this._recomputing || this._indicators.length === 0) {
+    if (this._recomputing) return;
+    if (this._indicators.length === 0) {
       this._indicatorsDirty = false;
       return;
     }

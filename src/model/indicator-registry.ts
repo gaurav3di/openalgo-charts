@@ -484,6 +484,9 @@ export interface IndicatorAlertContext {
   index: number;
 }
 
+/** Delivery frequency for eligible live calculations after chart batching. */
+export type IndicatorAlertFrequency = 'everyUpdate' | 'oncePerBar' | 'onBarClose' | 'once';
+
 /**
  * A condition the runtime watches, declared by the descriptor rather than wired
  * up by the host: the indicator is the only thing that knows what a crossover of
@@ -497,6 +500,13 @@ export interface IndicatorAlertSpec {
   id: string;
   /** Short human label, e.g. `'MACD crossed up'`. */
   title: string;
+  /**
+   * Omitted retains evaluation only when a new bar is appended. Explicit
+   * policies also observe qualifying updates within a bar. once is spent only
+   * by a delivered live event and lasts for this instance's lifetime.
+   * Historical loads, replay and settings-only recalculation never deliver.
+   */
+  frequency?: IndicatorAlertFrequency;
   /**
    * Longer text for a notification; defaults to `title`. A function is handed
    * the same context `when` judged, so the message can carry the bar's own

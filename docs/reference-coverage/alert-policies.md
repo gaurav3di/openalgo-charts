@@ -1,13 +1,13 @@
 # Indicator alert policies
 
-Descriptor alerts currently evaluate newly appended observations once. Retain that
-behavior when no frequency is declared. Add explicit frequency choices through
+Descriptor alerts retain evaluation of newly appended observations when no
+frequency is declared. Explicit frequency choices use
 the existing native event, without introducing notification delivery or changing
 the trader-alert controller's saved schema.
 
 ## Frequency contract
 
-An additive `frequency` selects `everyUpdate`, `oncePerBar`, `onBarClose` or `once`.
+The optional `frequency` selects `everyUpdate`, `oncePerBar`, `onBarClose` or `once`.
 Every update means each observed live calculation, after chart batching; it does
 not promise an event for a tick that was superseded before calculation. Once per
 bar waits for the first matching live calculation, including a condition that
