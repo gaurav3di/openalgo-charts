@@ -53,6 +53,7 @@ Every name emitted by the engine, verified against the `emit(` call sites in `sr
 | `paneRemoved` | `{ paneIndex }` | A pane was removed. |
 | `paneMoved` | `{ from, to }` | A pane swapped position. |
 | `paneMaximized` | `{ paneIndex }` | A pane was maximized; `paneIndex` is `null` when un-maximizing. |
+| `paneCollapsed` | `{ paneIndex, collapsed }` | A lower pane folded to its header strip (`collapsed: true`) or opened again, through `setPaneCollapsed`, its legend's collapse button or a host menu. Collapsing the maximized pane first emits `paneMaximized` with `null`. |
 | `paneResized` | `{ paneIndex }` | A pane-divider drag released. |
 | `priceAxisMoved` | `{ paneIndex, from, to }` | `movePriceAxis` succeeded: a pane's prices and their scale changed strip. Re-read `priceAxisState` for any menu still open on that axis. |
 | `indicatorRemoved` | `{ instanceId, indicatorId, paneIndex }` | An indicator instance was removed (legend button or `removeIndicator`). |
@@ -136,7 +137,7 @@ which returns `applied: false`. Hosts must not roll back over that newer state.
 | `navigation` (`mousePan`, `defaultVisibleBars`, optional `defaultBarSpacing`) | yes; controls pointer panning and the initial/reset view. Positive spacing selects CSS pixels per bar. An explicitly restored viewport takes precedence until reset |
 | `crosshairMode` `'normal' \| 'magnet'` | yes |
 | `timezone` (IANA name) | yes, but a name this runtime does not recognise is **skipped**, not thrown, so one stale zone cannot cost the whole layout |
-| `panes[]`: `weight`, right `priceScale`, optional secondary `scales` | yes; every scale retains margins, `minMove`, optional `minPrecision`, mode, inversion, auto-scale, manual `range`, declared `fixedRange` and `ratioLock` geometry |
+| `panes[]`: `weight`, right `priceScale`, optional secondary `scales`, optional `collapsed` | yes; every scale retains margins, `minMove`, optional `minPrecision`, mode, inversion, auto-scale, manual `range`, declared `fixedRange` and `ratioLock` geometry. `collapsed: true` is written only for a folded pane; a pane saved without it restores open, and pane 0 always restores open |
 | `indicators[]`: `{ indicatorId, instanceId?, settings, paneIndex, visible? }` | yes, replaced not appended; saved identities are stable, legacy entries receive new IDs |
 | `drawings` | round-tripped opaquely; only present when a drawing state has been set. The draw tier writes a `DrawingsDocument` (`{ version: 2, drawings }`) here and reads a 1.9.x bare array too |
 | `alerts` | optional `AlertsDocument`; lifecycle, scope, anchors and consumed bars survive reload; unsupported runtime payloads reject serialization |
@@ -158,7 +159,8 @@ returns detached snapshots of its existing scales, including the right scale;
 `Pane.clearRatioLocks()` releases its locks without changing ranges.
 
 `parsePaneState(value, allowLegacyPartial = false)` validates and copies a pane
-snapshot, throwing on invalid settings. The optional legacy mode supplies defaults
+snapshot, throwing on invalid settings, including a `collapsed` flag that is not
+a boolean. The optional legacy mode supplies defaults
 for missing primary-scale settings; secondary settings remain complete. Both
 chart restoration and workspace parsing use it. Layouts cannot serialize runtime
 formatter functions or a price scale's data-derived baseline.

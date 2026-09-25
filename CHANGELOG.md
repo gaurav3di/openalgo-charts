@@ -4,6 +4,19 @@ All notable changes to OpenAlgo Charts.
 
 ## Unreleased
 
+- A lower pane collapses to a header strip and opens again at exactly the height
+  it had, through `chart.setPaneCollapsed(index, collapsed)`,
+  `chart.paneCollapsed(index)`, a collapse button on the pane's first legend row
+  and the `paneCollapsed` event. A collapsed pane keeps its data, studies,
+  drawings, scales and weight, and draws and hit-tests only its legend row, so no
+  drawing, price alert or pick lands on it. Pane 0 stays open, the time axis stays
+  at the foot of the chart under a collapsed bottom pane, maximize shows a
+  collapsed pane whole, and `collapsed` is saved in pane state and workspace
+  documents. The widget and the reference host offer the control in their
+  right-click menus. This is separate from collapsing study legend rows.
+- Pane dividers no longer rewrite the weights of panes hidden behind a maximized
+  pane, and removing a pane above the time navigator no longer attaches the
+  navigator twice.
 - CSV export supports explicit study instances, inclusive UTC ranges and
   display-aligned plot values with effective runtime offsets. Candle plots expand
   into OHLC fields; projected times are identified without exposing future replay

@@ -500,8 +500,10 @@ chart.addPrimitive(mark, { anchor: 'chart-bottom' })   // or 'chart-top'
 ```
 
 Pass a placement instead of a pane index and the engine re-homes the primitive whenever a
-pane is added, removed, moved or maximized. Use it for anything that is chart furniture
-rather than pane furniture: a watermark, a corner clock, a brand mark.
+pane is added, removed, moved, maximized or collapsed. Use it for anything that is chart furniture
+rather than pane furniture: a watermark, a corner clock, a brand mark. `'chart-bottom'`
+resolves to the lowest open pane, so a collapsed bottom pane, which draws only its legend
+row, hands the primitive to the pane above it.
 
 Maximize is the reason this exists rather than a `paneAdded` listener. It HIDES the other
 panes, so a primitive pinned to pane 0 disappears with it instead of merely sitting in the

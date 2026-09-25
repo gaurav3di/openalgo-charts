@@ -247,6 +247,8 @@ untouched and neither side can collapse.
 | `chart.movePane(index, -1 \| 1)` | Move a pane one slot up or down. |
 | `chart.maximizePane(index)` | Give one pane the whole chart and hide the rest; call again to restore. |
 | `chart.maximizedPane()` | The maximized pane index, or `null`. |
+| `chart.setPaneCollapsed(index, collapsed)` | Fold a lower pane to its header strip, or open it again. |
+| `chart.paneCollapsed(index)` | Whether a pane is folded. Always `false` for pane 0. |
 | `chart.removePane(index)` | Remove a pane with its series and indicators. |
 
 <Callout type="info">
@@ -268,24 +270,56 @@ captures the real stack rather than a placeholder. The maximized index is not pa
 the saved state: `restoreState` brings back the layout unmaximized.
 </Callout>
 
-Events: `paneResized`, `paneMoved`, `paneMaximized`, `paneRemoved`.
+Events: `paneResized`, `paneMoved`, `paneMaximized`, `paneCollapsed`, `paneRemoved`.
+
+### Collapsing a pane
+
+A lower pane can fold to a strip one legend row tall and open again later. Nothing in it
+is lost: its series keep taking data, its studies keep recomputing, and its drawings,
+scales and stored weight are untouched, so it opens at exactly the height it had. The
+open panes share the rest of the chart by weight.
+
+```ts
+const rsi = chart.addIndicator('rsi');
+chart.setPaneCollapsed(rsi.paneIndex, true);   // a header strip
+chart.paneCollapsed(rsi.paneIndex);            // true
+chart.setPaneCollapsed(rsi.paneIndex, false);  // back to its former height
+```
+
+The strip shows the pane's first legend row, and that row's collapse button opens it
+again. Nothing else on the strip paints or answers the pointer: no plot, grid, price
+ladder or crosshair, and `click`, `crosshair:move` and `contextmenu` report no price
+there, so a drawing tool or a price alert cannot land on a pane nobody can see.
+
+<Callout type="info">
+**Pane 0 always stays open**, the way it always stays in place. Collapsing the bottom
+pane keeps the time axis at the foot of the chart, under its strip; the navigator and
+the brand mark move up to the lowest open pane. Maximizing a collapsed pane shows it
+whole and folds it again on restore, and collapsing the maximized pane ends the
+maximize. A divider beside a strip moves height between the open panes either side of it.
+
+`getState` saves `collapsed: true` on a folded pane, and a pane saved without it restores
+open. This is separate from collapsing study legend rows into a count, which never
+changes a pane.
+</Callout>
 
 ## Pane legends
 
 Every indicator gets a legend row at the top-left of its pane: a colour swatch, the name,
 its parameters, and one reading per plot in that plot's own colour, tracking the crosshair.
 Hovering the row reveals inline controls; the chart handles the presses itself, so you get
-show/hide, move, maximize, and delete without wiring anything.
+show/hide, move, collapse, maximize, and delete without wiring anything.
 
 | Control | Effect |
 |---|---|
 | Eye | Show / hide the source's plots (it stays on the chart). |
 | Gear | Emits `indicatorSettings` (see below). |
 | Up / Down | Move this pane one slot. |
+| Collapse | Fold this pane to its header strip; press again to open it. |
 | Maximize | Expand this pane; press again to restore. |
 | Trash | Remove the source, and its pane if that empties it. |
 
-The first legend on a non-price pane also carries the pane-level controls (move, maximize),
+The first legend on a non-price pane also carries the pane-level controls (move, collapse, maximize),
 so extra rows on the same pane stay uncluttered.
 
 The base engine has no built-in settings dialog: the gear emits an event for the host.
@@ -327,7 +361,7 @@ symbol.setValues([
 ```
 
 `actions: []` gives a read-only row. Pass any of `'hide' | 'settings' | 'up' | 'down' |
-'maximize' | 'close'` to show controls; they hit-test as `${id}::<action>` and route through
+'collapse' | 'maximize' | 'close'` to show controls; they hit-test as `${id}::<action>` and route through
 `chart.subscribeClick`.
 
 ### Status line options
