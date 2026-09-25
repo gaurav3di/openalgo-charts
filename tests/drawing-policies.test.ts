@@ -675,6 +675,40 @@ describe('the pane paint', () => {
     expect(fixed).toHaveLength(2);
     expect(Math.max(...fixed)).toBeLessThan(Math.min(...editable));
   });
+
+  it('draws the faint anchors for a selected read-only drawing under the series too', () => {
+    const below = (extra: Partial<Drawing>): number[] => {
+      const top = new DrawingLayer('top');
+      const bottom = new DrawingLayer('bottom');
+      top.setBelow(bottom);
+      bottom.setDrawings([at('d', { zIndex: -1, ...extra })]);
+      const bare = new RecordingContext();
+      top.draw(bare as never, rc);
+      bottom.setSelected(['d']);
+      const rec = new RecordingContext();
+      top.draw(rec as never, rc);
+      return rec.ops.slice(bare.ops.length).filter((o) => o.type === 'stroke').map((o) => o.lineWidth ?? 0);
+    };
+    const editable = below({});
+    const fixed = below({ policy: { editable: false } });
+    expect(fixed).toHaveLength(2);
+    expect(Math.max(...fixed)).toBeLessThan(Math.min(...editable));
+  });
+
+  it('offers no anchors on hover over a read-only drawing, where an editable one shows them', () => {
+    const hoverStrokes = (extra: Partial<Drawing>): number => {
+      const layer = new DrawingLayer('top');
+      layer.setDrawings([at('d', extra)]);
+      const bare = new RecordingContext();
+      layer.draw(bare as never, rc);
+      layer.setHovered('d');
+      const rec = new RecordingContext();
+      layer.draw(rec as never, rc);
+      return rec.ops.slice(bare.ops.length).filter((o) => o.type === 'stroke').length;
+    };
+    expect(hoverStrokes({})).toBe(2);
+    expect(hoverStrokes({ policy: { editable: false } })).toBe(0);
+  });
 });
 
 describe('the object inventory', () => {
