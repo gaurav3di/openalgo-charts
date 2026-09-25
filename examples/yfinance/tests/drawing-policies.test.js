@@ -8,8 +8,11 @@ import { makeApp, line, text, hover, T0 } from './draw-host.js';
 
 vi.mock('../src/persist.js', () => ({ autosave: vi.fn() }));
 const { mountPropertiesBar } = await import('../src/properties.js');
-const { addSessionMark, sessionMarks, clearSessionMarks, SESSION_MARK_POLICY } = await import('../src/session-marks.js');
+const {
+  addSessionMark, sessionMarks, clearSessionMarks, restoreSessionMarks, followSessionMarks, SESSION_MARK_POLICY,
+} = await import('../src/session-marks.js');
 const { drawingMenuState } = await import('../src/menus.js');
+const { drawToolbarState } = await import('../src/drawing.js');
 
 describe('session marks', () => {
   it('are read-only, transient and unlisted, and only the host clears them', () => {
@@ -34,6 +37,68 @@ describe('session marks', () => {
     expect(clearSessionMarks(draw)).toBe(2);
     expect(draw.get(again.id)).toBeUndefined();
     expect(sessionMarks(draw)).toEqual([]);
+  });
+});
+
+describe('session marks across a rebuild', () => {
+  it('come back after every restore, with their ids, on their own symbol only', () => {
+    const { chart, draw } = makeApp();
+    const mark = addSessionMark(draw, { time: T0 + 600, price: 101.5 }, 'AAPL');
+    line(draw);
+    const saved = draw.toJSON();
+    // A chart-type switch or a reload builds a new controller and restores
+    // the saved state into it, which never held the mark.
+    const next = makeApp();
+    let symbol = 'AAPL';
+    followSessionMarks(next.chart, next.draw, () => symbol);
+    next.chart.emit('drawings:restore', saved);
+    expect(sessionMarks(next.draw).map((d) => [d.id, d.points, d.policy])).toEqual([[mark.id, mark.points, SESSION_MARK_POLICY]]);
+    expect(next.draw.toJSON()).toEqual(saved);
+    expect(next.draw.canUndo()).toBe(false);
+    // A layout loaded over it replaces the drawings, and the mark returns again.
+    next.chart.emit('drawings:restore', saved);
+    expect(sessionMarks(next.draw)).toHaveLength(1);
+    // Another instrument has marks of its own, none yet.
+    symbol = 'MSFT';
+    next.chart.emit('drawings:restore', saved);
+    expect(sessionMarks(next.draw)).toEqual([]);
+    // Once cleared, a mark stays gone.
+    symbol = 'AAPL';
+    restoreSessionMarks(next.draw, 'AAPL');
+    restoreSessionMarks(next.draw, 'AAPL');
+    expect(sessionMarks(next.draw)).toHaveLength(1);
+    expect(clearSessionMarks(next.draw, 'AAPL')).toBe(1);
+    next.chart.emit('drawings:restore', saved);
+    expect(sessionMarks(next.draw)).toEqual([]);
+    expect(sessionMarks(draw)).toHaveLength(1);
+    void chart;
+  });
+
+  it('take a fresh id when a restored drawing already holds theirs', () => {
+    const { draw } = makeApp();
+    const mark = addSessionMark(draw, { time: T0 + 600, price: 90 }, 'TSLA');
+    const next = makeApp().draw;
+    next.fromJSON({ version: 2, drawings: [{ id: mark.id, tool: 'trend-line', paneIndex: 0, zIndex: 0, style: {},
+      points: [{ time: T0, price: 1 }, { time: T0 + 60, price: 2 }] }] });
+    restoreSessionMarks(next, 'TSLA');
+    const [again] = sessionMarks(next);
+    expect(again.id).not.toBe(mark.id);
+    expect(next.get(mark.id).tool).toBe('trend-line');
+    clearSessionMarks(next, 'TSLA');
+  });
+});
+
+describe('the toolbar\'s draw buttons', () => {
+  it('offer Del and Clear only for what the user may delete, and Undo only for a step that does something', () => {
+    const { draw } = makeApp();
+    expect(drawToolbarState(null)).toEqual({ undo: false, redo: false, del: 0, readOnly: false, clear: 0 });
+    const mark = addSessionMark(draw, { time: T0 + 600, price: 100 });
+    draw.select(mark.id);
+    expect(drawToolbarState(draw)).toEqual({ undo: false, redo: false, del: 0, readOnly: true, clear: 0 });
+    const mine = line(draw);
+    draw.select([mark.id, mine.id]);
+    expect(drawToolbarState(draw)).toEqual({ undo: true, redo: false, del: 1, readOnly: false, clear: 1 });
+    clearSessionMarks(draw);
   });
 });
 

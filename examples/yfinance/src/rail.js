@@ -498,8 +498,10 @@ function controlsBlock() {
     glyph: chromeGlyph('trash'),
     tip: () => {
       const sel = selectionOf(app.draw);
+      // The count is what the press deletes: read-only drawings stay.
+      const n = sel.filter((id) => isEditable(app.draw.get(id))).length;
       return sel.length
-        ? { title: sel.length > 1 ? `Delete ${sel.length} drawings` : 'Delete drawing', chord: 'Del', sub: 'Right-click to remove all', side: 'right' }
+        ? { title: n > 1 ? `Delete ${n} drawings` : 'Delete drawing', chord: 'Del', sub: 'Right-click to remove all', side: 'right' }
         : { title: 'Delete drawing', chord: 'Del', sub: 'Select one first. Right-click to remove all', side: 'right' };
     },
     onClick: () => {

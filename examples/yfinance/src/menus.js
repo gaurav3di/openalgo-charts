@@ -671,12 +671,12 @@ export function initMenus(a) {
     // them, which is why this is the one row that passes `force`.
     if (act === 'mark') {
       if (!app.draw || ctxTime === null) return;
-      addSessionMark(app.draw, { time: ctxTime, price: ctxPrice });
+      addSessionMark(app.draw, { time: ctxTime, price: ctxPrice }, app.req.symbol);
       el('status').textContent = `marked ${fmt(ctxPrice)} for this session`;
       return;
     }
     if (act === 'unmark') {
-      const n = clearSessionMarks(app.draw);
+      const n = clearSessionMarks(app.draw, app.req.symbol);
       el('status').textContent = `cleared ${n} session mark${n === 1 ? '' : 's'}`;
       return;
     }

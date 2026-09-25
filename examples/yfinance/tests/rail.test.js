@@ -410,6 +410,16 @@ describe('selection controls', () => {
     rows[1].dispatchEvent(new FakeEvent('click'));
     expect(page.status.textContent).toBe('removed 2 drawings');
   });
+
+  it('counts only what the trash deletes in a selection that mixes read-only and editable drawings', () => {
+    const d = setup();
+    d.state.drawings = [{ id: 'fixed', policy: { editable: false } }, { id: 'a' }, { id: 'b' }];
+    d.select(['fixed', 'a', 'b']);
+    app.chart.emit('drawing:select', { ids: ['fixed', 'a', 'b'] });
+    const trash = byLabel('Delete 2 drawings');
+    expect(trash).toBeDefined();
+    expect(trash.classList.contains('is-off')).toBe(false);
+  });
 });
 
 describe('keyboard', () => {
