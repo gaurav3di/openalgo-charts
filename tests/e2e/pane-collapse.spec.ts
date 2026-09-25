@@ -122,6 +122,27 @@ test('a lower pane folds to its header strip from its legend and opens back pixe
   expect(errors).toEqual([]);
 });
 
+test('a strip keeps its row and the way back while study legends are compact', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await mount(page);
+  await page.evaluate(() => {
+    const { chart } = window.__paneCollapse;
+    chart.setPaneCollapsed(1, true);
+    chart.setIndicatorLegendCollapsed(true);
+  });
+  await paint(page);
+  await page.screenshot({ path: info.outputPath('compact-strip.png') });
+  const control = await collapseControl(page);
+  await page.mouse.click(control.x, control.y);
+  await paint(page);
+  expect(await page.evaluate(() => window.__paneCollapse.chart.paneCollapsed(1))).toBe(false);
+  // Open again, the row folds back behind the count like every other study row.
+  expect(await page.evaluate(() => window.__paneCollapse.chart.indicatorLegendCollapsed())).toBe(true);
+  expect(await plotPixels(page, 1, [255, 0, 255])).toBeGreaterThan(50);
+  expect(errors).toEqual([]);
+});
+
 test('the bottom pane folds above a time axis that stays at the foot of the chart', async ({ page }, info) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));

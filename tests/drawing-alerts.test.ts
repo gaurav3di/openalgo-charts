@@ -253,6 +253,32 @@ describe('drawing alert evaluation and lifecycle', () => {
     expect(fired[0].price).toBe(30);
   });
 
+  it('keeps reading and firing a drawing on a pane folded to a strip', () => {
+    registerIndicator({ id: 'drawing-alert-strip', name: 'Strip reading', placement: 'pane', inputs: [],
+      plots: [{ key: 'v', title: 'Value', type: 'line' }], calc: bars => ({ v: bars.map(item => item.volume ?? null) }) });
+    const { chart, draw, series, alerts, fired } = alertSetup([60, 120, 180]);
+    series.setData([60, 120, 180].map(time => ({ ...bar(time, 100), volume: 20 })));
+    const study = chart.addIndicator('drawing-alert-strip');
+    const pane = study.paneIndex;
+    const trend = add(draw, { tool: 'trend-line', points: [point(60, 10), point(180, 40)], paneIndex: pane });
+    chart.panes()[pane].priceScale.setOptions({ mode: 'logarithmic' });
+    const open = draw.valueAt(trend.id, 120)?.price;
+    // Halfway along in log space: the geometric mean, not the linear 25.
+    expect(open).toBeCloseTo(20, 6);
+    // The chart maps no price on a strip, yet the level is the one drawn on the
+    // open pane, logarithmic projection included.
+    expect(chart.setPaneCollapsed(pane, true)).toBe(true);
+    expect(chart.priceToCoordinate(10, pane)).toBeNull();
+    expect(draw.valueAt(trend.id, 120)?.price).toBeCloseTo(open!, 6);
+
+    const level = add(draw, { tool: 'horizontal-line', points: [point(120, 25)], paneIndex: pane });
+    const alert = alerts.add({ source: { kind: 'drawing', drawingId: level.id, input: { instanceId: study.id, plotKey: 'v' } },
+      policy: 'onTouch', condition: 'crossingUp' });
+    series.update({ ...bar(180, 100), volume: 30 });
+    expect(fired.map(event => event.alertId)).toEqual([alert.id]);
+    expect(chart.paneCollapsed(pane)).toBe(true);
+  });
+
   it('reports unsupported tools and missing selected rungs as unavailable', () => {
     const { draw, alerts, series, fired } = alertSetup([60, 120]);
     const shape = add(draw, { tool: 'ellipse', points: [point(60, 90), point(120, 110)] });

@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import '../src/indicators/index';
-import { Chart, type ContextMenuEvent, type CrosshairMoveEvent, type ChartClickEvent } from '../src/core/chart';
+import { Chart, type ChartOptions, type ContextMenuEvent, type CrosshairMoveEvent, type ChartClickEvent } from '../src/core/chart';
 import { InvalidationLevel } from '../src/core/invalidate-mask';
 import { parsePaneState } from '../src/model/chart-state';
 import { ChartObjects } from '../src/model/chart-objects';
@@ -54,12 +54,13 @@ const bars = (n: number, from = 0): Bar[] => Array.from({ length: n }, (_, k) =>
   return { time: 1700000000 + i * 60, open: c - 0.5, high: c + 1, low: c - 1, close: c, volume: 10 + i };
 });
 
-function makeChart(): { chart: Chart; el: FakeElement } {
+function makeChart(options: Partial<ChartOptions> = {}): { chart: Chart; el: FakeElement } {
   const doc = fakeDocument();
   const el = doc.createElement('div') as unknown as FakeElement;
   const chart = new Chart(el, {
     document: doc, pixelRatio: () => 1, shortcuts: false,
     raf: { schedule: (cb: (t: number) => void) => { cb(0); return 1; }, cancel: () => {} },
+    ...options,
   });
   chart.applySize(W, H);
   charts.push(chart);
@@ -67,8 +68,8 @@ function makeChart(): { chart: Chart; el: FakeElement } {
 }
 
 /** The price pane, an RSI pane and a MACD pane: weights 1, 0.32 and 0.32. */
-function stacked() {
-  const made = makeChart();
+function stacked(options: Partial<ChartOptions> = {}) {
+  const made = makeChart(options);
   const price = made.chart.addSeries('candlestick');
   price.setData(bars(120));
   const rsi = made.chart.addIndicator('rsi');
@@ -93,6 +94,28 @@ const press = (el: FakeElement, x: number, y: number, toX = x, toY = y): void =>
   el.dispatch('pointerup', pointer('up', toX, toY));
 };
 const hover = (el: FakeElement, x: number, y: number): void => el.dispatch('pointermove', pointer('move', x, y, { buttons: 0 }));
+const touch = (el: FakeElement, type: 'down' | 'move' | 'up', id: number, x: number, y: number): void =>
+  el.dispatch(`pointer${type}`, pointer(type, x, y, { pointerType: 'touch', pointerId: id }));
+const paneHolds = (chart: Chart, index: number, type: abstract new (...args: never[]) => unknown): boolean =>
+  chart.panes()[index].primitives().some((primitive) => primitive instanceof type);
+/** Where the strip's collapse control sits, in container px, once the row has painted its buttons. */
+const collapseControl = (chart: Chart, legend: PaneLegend, pane: number): { x: number; y: number } => {
+  const buttons = (legend as unknown as { _buttons: { id: string; x: number; y: number }[] })._buttons;
+  const button = buttons.find((b) => b.id.endsWith('::collapse'));
+  expect(button).toBeDefined();
+  return { x: button!.x + 8, y: tops(chart)[pane] + button!.y + 8 };
+};
+/** Hover the row so its buttons appear, then press its collapse control. */
+const pressCollapse = (chart: Chart, el: FakeElement, legend: PaneLegend, pane: number): void => {
+  hover(el, 20, tops(chart)[pane] + 15);
+  const first = collapseControl(chart, legend, pane);
+  hover(el, first.x, first.y);
+  const { x, y } = collapseControl(chart, legend, pane);
+  hover(el, x, y);
+  press(el, x, y);
+};
+const texts = (ctx: CanvasRenderingContext2D): string[] =>
+  recorder(ctx).ops.filter((op) => op.type === 'fillText').map((op) => String(op.text));
 
 describe('collapsing a pane', () => {
   it('lays it out as a header strip and gives its height to the open panes', () => {
@@ -331,6 +354,58 @@ describe('what a collapsed pane keeps', () => {
     expect(chart.getVisibleLogicalRange()).not.toEqual(view);
     expect(scale.priceRange()).toEqual(range);
   });
+
+  it('pans time but leaves a strip scale alone under a two-finger drag', () => {
+    const { chart, el } = stacked();
+    chart.setPaneCollapsed(1, true);
+    const scale = chart.panes()[1].priceScale;
+    const range = { ...scale.priceRange() };
+    const auto = scale.autoScale;
+    const view = chart.getVisibleLogicalRange();
+    const y = tops(chart)[1] + 12;
+    touch(el, 'down', 1, 400, y);
+    touch(el, 'down', 2, 600, y);
+    touch(el, 'move', 1, 360, y + 10);
+    touch(el, 'move', 2, 560, y + 10);
+    touch(el, 'up', 1, 360, y + 10);
+    touch(el, 'up', 2, 560, y + 10);
+    expect(chart.getVisibleLogicalRange()).not.toEqual(view);
+    expect(scale.autoScale).toBe(auto);
+    expect(scale.priceRange()).toEqual(range);
+  });
+
+  it('maps no price to or from a strip, the way its pointer events report none', () => {
+    const { chart } = stacked();
+    const open = { toY: chart.priceToCoordinate(50, 1), toPrice: chart.coordinateToPrice(tops(chart)[1] + 40, 1) };
+    expect(open.toY).not.toBeNull();
+    expect(open.toPrice).not.toBeNull();
+    chart.setPaneCollapsed(1, true);
+    expect(chart.priceToCoordinate(50, 1)).toBeNull();
+    expect(chart.coordinateToPrice(tops(chart)[1] + 10, 1)).toBeNull();
+    // The panes that are still open map as before.
+    expect(chart.priceToCoordinate(100, 0)).not.toBeNull();
+    expect(chart.coordinateToPrice(tops(chart)[2] + 40, 2)).not.toBeNull();
+    // Maximized, the pane is whole again and so is its mapping.
+    chart.maximizePane(1);
+    expect(chart.priceToCoordinate(50, 1)).not.toBeNull();
+    chart.maximizePane(1);
+    chart.setPaneCollapsed(1, false);
+    expect(chart.priceToCoordinate(50, 1)).toBeCloseTo(open.toY!, 9);
+  });
+
+  it('nudges no drawing on a strip by a screen distance the strip cannot show', () => {
+    const { chart } = stacked();
+    const draw = new DrawingController(chart);
+    const line = draw.add({ tool: 'horizontal-line', paneIndex: 1, style: {}, points: [{ time: bars(1, 60)[0].time, price: 50 }] });
+    chart.setPaneCollapsed(1, true);
+    // Ten strip pixels are a third of a 30 px scale: a jump nobody would see.
+    draw.nudge([line.id], 0, 10);
+    expect(draw.get(line.id)?.points[0].price).toBe(50);
+    chart.setPaneCollapsed(1, false);
+    draw.nudge([line.id], 0, 10);
+    expect(draw.get(line.id)?.points[0].price).toBeLessThan(50);
+    draw.destroy();
+  });
 });
 
 describe('collapsing the bottom pane', () => {
@@ -367,6 +442,19 @@ describe('collapsing the bottom pane', () => {
     chart.setPaneCollapsed(2, false);
     expect(holds(2, LogoWatermark)).toBe(true);
     expect(holds(2, TimeNavigator)).toBe(true);
+  });
+
+  it('reveals the navigator from the lowest open pane, where it now sits', () => {
+    const { chart, el } = stacked({ timeNavigator: { fadeSeconds: 0 } });
+    chart.setPaneCollapsed(2, true);
+    const nav = chart.panes()[1].primitives().find((p) => p instanceof TimeNavigator) as TimeNavigator;
+    expect(nav).toBeDefined();
+    // The band just above the pane's foot, where the controls fade in.
+    const x = chart.timeScale.width / 2;
+    const y = heights(chart)[1] - 23;
+    hover(el, x, tops(chart)[1] + y);
+    fullFrame(chart);
+    expect(nav.hitTest(x, y)?.externalId).toMatch(/^timenav::/);
   });
 });
 
@@ -533,6 +621,47 @@ describe('saving and restoring collapse', () => {
     expect(chart.paneCollapsed(1)).toBe(false);
   });
 
+  it('moves the chart furniture off a strip the saved layout folds', () => {
+    const a = stacked();
+    a.chart.setPaneCollapsed(2, true);
+    const state = JSON.parse(JSON.stringify(a.chart.getState()));
+    const fresh = makeChart();
+    fresh.chart.addSeries('candlestick').setData(bars(120));
+    const same = stacked();
+    for (const { chart } of [fresh, same]) {
+      expect(chart.restoreState(state).applied).toBe(true);
+      expect(chart.paneCollapsed(2)).toBe(true);
+      expect(paneHolds(chart, 1, LogoWatermark)).toBe(true);
+      expect(paneHolds(chart, 2, LogoWatermark)).toBe(false);
+      expect(paneHolds(chart, 1, TimeNavigator)).toBe(true);
+    }
+  });
+
+  it('opens a pane the restored layout does not list, so a new study never lands folded', () => {
+    const { chart } = stacked();
+    chart.setPaneCollapsed(1, true);
+    chart.setPaneCollapsed(2, true);
+    const state = JSON.parse(JSON.stringify(chart.getState()));
+    const cci = [{ indicatorId: 'cci', settings: {}, paneIndex: 1 }];
+    // A template applied in replace mode keeps only the price pane's layout.
+    expect(chart.restoreState({ version: state.version, indicators: cci, panes: state.panes.slice(0, 1) }).applied).toBe(true);
+    expect(chart.indicators().map((study) => study.indicatorId)).toEqual(['cci']);
+    expect(chart.paneCollapsed(1)).toBe(false);
+    expect(heights(chart)[1]).toBeGreaterThan(STRIP + TIME_AXIS);
+
+    // Studies rebuilt with no layout at all open their panes the same way.
+    chart.setPaneCollapsed(1, true);
+    expect(chart.restoreState({ version: state.version, indicators: cci }).applied).toBe(true);
+    expect(chart.paneCollapsed(1)).toBe(false);
+  });
+
+  it('keeps a fold through a restore that touches neither panes nor studies', () => {
+    const { chart } = stacked();
+    chart.setPaneCollapsed(1, true);
+    expect(chart.restoreState({ version: 1, crosshairMode: 'magnet' }).applied).toBe(true);
+    expect(chart.paneCollapsed(1)).toBe(true);
+  });
+
   it('keeps pane 0 open whatever a saved layout claims', () => {
     const { chart } = stacked();
     const state = JSON.parse(JSON.stringify(chart.getState()));
@@ -568,6 +697,45 @@ describe('study legend collapse is a different thing', () => {
     chart.setPaneCollapsed(1, true);
     expect(chart.indicatorLegendCollapsed()).toBe(false);
     expect(chart.getState().indicatorLegendCollapsed).toBe(false);
+  });
+
+  it.each(['pane first', 'legends first'])('keeps the strip row and its control with compact study legends (%s)', (order) => {
+    const { chart, el, rsi } = stacked();
+    if (order === 'pane first') chart.setPaneCollapsed(1, true);
+    chart.setIndicatorLegendCollapsed(true);
+    if (order === 'legends first') chart.setPaneCollapsed(1, true);
+    const strip = chart.panes()[1].top.ctx;
+    const open = chart.panes()[2].top.ctx;
+    recorder(strip).ops.length = 0;
+    recorder(open).ops.length = 0;
+    fullFrame(chart);
+    // The strip's row is its only way back; the open pane's row stays compact.
+    expect(texts(strip)).toContain('RSI');
+    expect(texts(open)).not.toContain('MACD');
+
+    pressCollapse(chart, el, rsi.legend()!, 1);
+    expect(chart.paneCollapsed(1)).toBe(false);
+    expect(chart.indicatorLegendCollapsed()).toBe(true);
+    recorder(strip).ops.length = 0;
+    fullFrame(chart);
+    expect(texts(strip)).not.toContain('RSI');
+  });
+
+  it('restores a layout that folds a pane with compact study legends', () => {
+    const a = stacked();
+    a.chart.setPaneCollapsed(1, true);
+    a.chart.setIndicatorLegendCollapsed(true);
+    const state = JSON.parse(JSON.stringify(a.chart.getState()));
+    const b = makeChart();
+    b.chart.addSeries('candlestick').setData(bars(120));
+    expect(b.chart.restoreState(state).applied).toBe(true);
+    const strip = b.chart.panes()[1].top.ctx;
+    recorder(strip).ops.length = 0;
+    fullFrame(b.chart);
+    expect(texts(strip)).toContain('RSI');
+    const rsi = b.chart.indicators().find((study) => study.indicatorId === 'rsi')!;
+    pressCollapse(b.chart, b.el, rsi.legend()!, 1);
+    expect(b.chart.paneCollapsed(1)).toBe(false);
   });
 });
 
@@ -610,9 +778,12 @@ describe('the collapse control', () => {
     const ctx = { chart, draw: { drawings: () => [] } } as unknown as WidgetContext;
     const event = (paneIndex: number): ContextMenuEvent => ({ paneIndex, point: { x: 400, y: 10 }, price: null, time: null,
       index: null, preventDefault() {}, target: { kind: 'empty', id: null } });
-    const row = (paneIndex: number): MenuItem | undefined => contextMenuEntries(ctx, event(paneIndex))
-      .find((entry) => !entry.kind && entry.id === 'pane-collapse') as MenuItem | undefined;
+    const row = (paneIndex: number, target: ContextMenuEvent['target'] = { kind: 'empty', id: null }): MenuItem | undefined =>
+      contextMenuEntries(ctx, { ...event(paneIndex), target })
+        .find((entry) => !entry.kind && entry.id === 'pane-collapse') as MenuItem | undefined;
     expect(row(0)).toBeUndefined();
+    // The time axis under a bottom pane belongs to the whole chart, not to that pane.
+    expect(row(1, { kind: 'time-scale', id: null })).toBeUndefined();
     expect(row(1)).toMatchObject({ label: 'Collapse pane' });
     row(1)!.run!();
     expect(chart.paneCollapsed(1)).toBe(true);

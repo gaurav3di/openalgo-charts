@@ -2560,23 +2560,31 @@ export class Chart {
   /**
    * Map a price to a container-relative Y in media (CSS) px, for positioning DOM
    * overlays (order panels, tooltips) over a pane. Returns null if the pane
-   * doesn't exist. The inverse is `coordinateToPrice`.
+   * doesn't exist or is collapsed to its header strip, which plots no price.
+   * The inverse is `coordinateToPrice`.
    */
   public priceToCoordinate(price: number, paneIndex = 0): number | null {
-    this._ensureScaled(paneIndex);
-    const pane = this._panes[paneIndex];
-    if (pane === undefined) return null;
-    const top = this._paneLayout()[paneIndex]?.top ?? 0;
-    return top + pane.priceToY(price);
+    const pane = this._mappedPane(paneIndex);
+    return pane && this._paneLayout()[paneIndex].top + pane.priceToY(price);
   }
 
-  /** Map a container-relative media-px Y back to a price on a pane (inverse of priceToCoordinate). */
+  /**
+   * Map a container-relative media-px Y back to a price on a pane (inverse of
+   * priceToCoordinate). Null where that is, for the same panes.
+   */
   public coordinateToPrice(y: number, paneIndex = 0): number | null {
+    const pane = this._mappedPane(paneIndex);
+    return pane && pane.yToPrice(y - this._paneLayout()[paneIndex].top);
+  }
+
+  /**
+   * A pane whose prices have a place on screen, scaled. A strip has none: the
+   * pointer events report no price there, and a conversion that still did
+   * would put an overlay or a nudged drawing inside a strip nobody can read.
+   */
+  private _mappedPane(paneIndex: number): Pane | null {
     this._ensureScaled(paneIndex);
-    const pane = this._panes[paneIndex];
-    if (pane === undefined) return null;
-    const top = this._paneLayout()[paneIndex]?.top ?? 0;
-    return pane.yToPrice(y - top);
+    return this._collapsedShown(paneIndex) ? null : this._panes[paneIndex] ?? null;
   }
 
   /**
@@ -3171,18 +3179,22 @@ export class Chart {
   private _restackLegends(): void {
     const rowByPane = new Map<number, number>();
     const top = this._topPaneIndex(), count = this._indicators.length;
+    const led = new Set<number>();
     let reserved = false;
     for (const entry of this._legends) {
       let row = rowByPane.get(entry.paneIndex) ?? 0;
       const owned = this._studyLegends.has(entry.legend);
-      entry.legend.setSuppressed(owned && this._indicatorLegendCollapsed);
+      // A pane's first study row carries its collapse control, and on a strip
+      // that control is the only way back, so compact rows leave it showing.
+      const folded = owned && this._indicatorLegendCollapsed && (led.has(entry.paneIndex) || !this._collapsedShown(entry.paneIndex));
+      if (owned) led.add(entry.paneIndex);
+      entry.legend.setSuppressed(folded);
       if (count > 0 && entry.paneIndex === top && owned && !reserved) {
         this._indicatorLegendRow = row++;
         reserved = true;
       }
       entry.legend.setOptions(owned ? { row, collapsed: this._collapsed.has(this._panes[entry.paneIndex]) } : { row });
-      const displayed = !(owned && this._indicatorLegendCollapsed) && entry.legend.options().visible !== false;
-      rowByPane.set(entry.paneIndex, row + (displayed ? 1 : 0));
+      rowByPane.set(entry.paneIndex, row + (!folded && entry.legend.options().visible !== false ? 1 : 0));
     }
     if (!reserved) this._indicatorLegendRow = rowByPane.get(top) ?? 0;
     if (count > 0 && this._indicatorLegendToggle === null) {
@@ -3802,13 +3814,16 @@ export class Chart {
     // The panes themselves first: the indicators below are placed by index, so
     // the panes have to exist and be weighted before they are rebuilt. Their
     // price scales are *not* set here, see below.
-    if (panes) {
-      panes.forEach((ps, i) => {
-        this._ensurePane(i);
-        const pane = this._panes[i];
-        pane.weight = ps.weight;
-        // A layout that does not fold a pane opens it, and pane 0 never folds.
-        if (i > 0 && ps.collapsed === true) this._collapsed.add(pane);
+    panes?.forEach((ps, i) => {
+      this._ensurePane(i);
+      this._panes[i].weight = ps.weight;
+    });
+    if (panes || studies) {
+      // A layout that does not fold a pane opens it, and pane 0 never folds.
+      // That covers a pane it does not list at all: rebuilt studies land on
+      // the existing panes and would otherwise open inside a stale strip.
+      this._panes.forEach((pane, i) => {
+        if (i > 0 && panes?.[i]?.collapsed) this._collapsed.add(pane);
         else this._collapsed.delete(pane);
       });
       this._relayout();
@@ -4277,7 +4292,8 @@ export class Chart {
    * recompute, and its drawings, scales and stored weight are untouched, so
    * opening it brings back exactly the height it had. The strip shows the
    * pane's first legend row, with the control that opens it, and on the bottom
-   * pane the time axis; nothing else in it paints or answers the pointer.
+   * pane the time axis; nothing else in it paints or answers the pointer, and
+   * no coordinate conversion maps a price onto it.
    *
    * Pane 0 stays open, the way it stays in place. Collapsing the maximized pane
    * ends the maximize, since a strip cannot fill the chart; maximizing a

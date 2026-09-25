@@ -77,12 +77,20 @@ export interface DrawingChartHost {
   timeToCoordinate?(time: number): number;
   coordinateToTime?(x: number): number;
   /**
-   * Optional, and used only to keep a paste from a chart with more panes than
-   * this one landing on a pane the user cannot see. Adding a primitive creates
-   * the pane it names, so without this a drawing copied out of an indicator
-   * pane would conjure an empty pane in a single-pane chart.
+   * Optional. It keeps a paste from a chart with more panes than this one
+   * landing on a pane the user cannot see: adding a primitive creates the pane
+   * it names, so without this a drawing copied out of an indicator pane would
+   * conjure an empty pane in a single-pane chart. An entry with `priceToY` and
+   * `yToPrice`, as a chart pane has, also lets an alert read a drawing on a
+   * pane the chart maps no price for, one collapsed to its header strip.
    */
   panes?(): readonly unknown[];
+}
+
+/** The pane-local price projection a chart pane carries, in media px. */
+interface PaneProjection {
+  priceToY(price: number): number;
+  yToPrice(y: number): number;
 }
 
 export interface DrawingControllerOptions {
@@ -626,17 +634,24 @@ export class DrawingController {
     if (!drawing || !hasDrawingTool(drawing.tool) || !Number.isFinite(time)) return undefined;
     const tool = getDrawingTool(drawing.tool);
     const toX = this._chart.timeToCoordinate;
-    const fromY = this._chart.coordinateToPrice;
-    if (!tool.alertValue || !toX || !fromY) return undefined;
-    const pts: ScreenPoint[] = [];
-    for (const point of drawing.points) {
-      const pixel = this._toPixel(point, drawing.paneIndex);
-      if (!pixel) return undefined;
-      pts.push(pixel);
+    const toPrice = this._chart.coordinateToPrice;
+    if (!tool.alertValue || !toX || !toPrice) return undefined;
+    const pane = drawing.paneIndex;
+    let fromY = (y: number): number | null => toPrice.call(this._chart, y, pane);
+    let pts = drawing.points.map(point => this._toPixel(point, pane));
+    if (pts.includes(null)) {
+      // A pane folded to a strip has no place on screen, so the chart maps no
+      // price there, yet an alert on it must keep firing. The pane's own scale
+      // keeps the projection it was drawn in, and every alert level is a line
+      // through the anchors, which the height of that scale cannot move.
+      const own = this._chart.panes?.()[pane] as PaneProjection | undefined;
+      if (typeof own?.priceToY !== 'function' || typeof own.yToPrice !== 'function') return undefined;
+      pts = drawing.points.map(point => ({ x: toX.call(this._chart, point.time), y: own.priceToY(point.price) }));
+      fromY = y => own.yToPrice(y);
     }
     const x = toX.call(this._chart, time);
     if (!Number.isFinite(x)) return undefined;
-    const value = tool.alertValue({ drawing, pts, time, x, fromY: y => fromY.call(this._chart, y, drawing.paneIndex) }, level);
+    const value = tool.alertValue({ drawing, pts: pts as ScreenPoint[], time, x, fromY }, level);
     if (!value || !Number.isFinite(value.price) || (value.upperPrice !== undefined && !Number.isFinite(value.upperPrice))) return undefined;
     return { ...value, paneIndex: drawing.paneIndex };
   }

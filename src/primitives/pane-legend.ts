@@ -292,8 +292,8 @@ function fieldOn(s: LegendStatusLineOptions, field: LegendField | undefined, has
 
 /**
  * Per-source actions, mirroring the indicator legend toolbar: show/hide,
- * settings, delete. Pane-level actions (`up`/`down`/`maximize`) are added by the
- * host to the *first* legend on a pane, so extra rows stay uncluttered.
+ * settings, delete. Pane-level actions (`up`/`down`/`collapse`/`maximize`) are
+ * added by the host to the *first* legend on a pane, so extra rows stay uncluttered.
  */
 const DEFAULT_ACTIONS: readonly PaneLegendAction[] = ['hide', 'settings', 'close'];
 
