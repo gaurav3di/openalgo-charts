@@ -60,20 +60,29 @@
         "Opt-in missing-observation policies on eleven established helpers",
         "Finite extreme averages and centered deviations in opt-in paths",
         "Aligned per-bar lengths on nine window helpers",
-        "Per-bar pivot widths resolved at confirmation indices"
+        "Per-bar pivot widths resolved at confirmation indices",
+        "Finite Balance of Power outputs with recovery after extreme observations",
+        "Fresh chronological WaveTrend signal windows without false crossings from rolling drift",
+        "AlphaTrend price and money-flow window recovery after overflow expires",
+        "Seasonality finite monthly returns and unavailable aggregate statistics",
+        "Independent RSI seed recovery, held state across absent changes and finite final ratios",
+        "Companion numerical audit and verified public 0.7.0 packages with exact cross-language results"
       ],
       "evidence": [
         "tests/indicator-statistics.test.ts",
         "tests/indicator-missing-values.test.ts",
-        "tests/indicator-varying-windows.test.ts"
+        "tests/indicator-varying-windows.test.ts",
+        "tests/indicator-balance-of-power-numeric.test.ts",
+        "tests/indicator-event-window-recovery.test.ts",
+        "tests/seasonality-numeric-boundaries.test.ts",
+        "tests/rsi-numeric-recovery.test.ts"
       ],
       "remaining": [
         "Missing-value and warmup contracts",
         "Missing-value options on remaining composed helpers",
         "Composed calculations and arbitrary anchor policies",
         "Varying parameters on remaining composed calculations",
-        "Independent numerical fixtures",
-        "Cross-language numerical audit, confirmed deviation fixes and companion package release 0.7.0"
+        "Independent numerical fixtures"
       ]
     },
     {
@@ -149,7 +158,11 @@
         "Independent outer table frames",
         "Explicit live-update, first-match-per-bar, known-close and instance-lifetime indicator alerts",
         "Historical and replay suppression with independent alert checkpoints",
-        "Close-context prefixes, retryable predicate errors and reentrant calculation ownership"
+        "Close-context prefixes, retryable predicate errors and reentrant calculation ownership",
+        "Native symbol, session, multiline, price and absolute timestamp inputs",
+        "Atomic typed-value validation and paired exchange defaults across creation, editing and restoration",
+        "Targeted price and time capture with reentrant ownership and lifecycle fences",
+        "Shared host controls with symbol search, invalid drafts and suspended modal picking"
       ],
       "evidence": [
         "tests/indicator-visual-descriptors.test.ts",
@@ -161,10 +174,14 @@
         "tests/indicator-alert-policy.test.ts",
         "tests/indicator-alert-frequencies.test.ts",
         "tests/indicator-alert-reentry.test.ts",
-        "tests/e2e/native-indicator-alerts.spec.ts"
+        "tests/e2e/native-indicator-alerts.spec.ts",
+        "tests/indicator-typed-inputs.test.ts",
+        "tests/pick-targets.test.ts",
+        "tests/widget-indicator-typed-inputs.test.ts",
+        "examples/yfinance/tests/indicator-typed-inputs.test.js",
+        "tests/e2e/native-typed-inputs.spec.ts"
       ],
       "remaining": [
-        "Typed and interactive inputs",
         "Table hover tooltips",
         "Drawing and marker variants"
       ]
@@ -296,9 +313,9 @@
     }
   ],
   "next": [
-    "Audit all shipped numerical indicators and both script engines in parallel; fix confirmed contract deviations.",
+    "Resolve remaining native numerical contracts and confirmed calculation defects using the completed companion engine audit.",
     "Complete remaining listed fixes and native capabilities; defer issue #22.",
-    "Execute the authorized chart and companion package release sequences after verification."
+    "Execute the authorized chart package and website release sequence after verification."
   ],
   "release": {
     "version": "2.5.4",
@@ -315,35 +332,40 @@
     "companion": {
       "version": "0.7.0",
       "authorized": true,
-      "status": "pending-extreme-recovery-regressions-and-complete-chart-audit",
-      "requirement": "Compare all shipped numerical indicators with equivalent calculations in both language engines, fix confirmed deviations and publish both companion packages from one versioned source."
+      "status": "published-and-public-artifacts-verified",
+      "requirement": "Compare all shipped numerical indicators with equivalent calculations in both language engines, fix confirmed deviations and publish both companion packages from one versioned source.",
+      "sourceCommit": "f9ab00e4e9238b442ae0ad3639f52bc5dc45394b",
+      "releaseUrl": "https://github.com/marketcalls/openscript/releases/tag/v0.7.0"
     }
   },
   "validation": {
-    "chartTests": 7361,
-    "chartTestFiles": 324,
+    "chartTests": 7480,
+    "chartTestFiles": 331,
     "compiledProgramTests": 18,
-    "demoTests": 457,
-    "demoTestFiles": 40,
+    "demoTests": 472,
+    "demoTestFiles": 41,
     "browserEvidence": "This batch passed 33 browser cases across all three engines: 12 native template layout, no-plot pane and formatter cases, 18 example-host template cases and three original autofit regressions. Actual built-site checks passed 30 states across desktop and 390-pixel layouts, including all four template controls. Data, source identity, copied values, pane weights, scale ownership, ranges, axis placement and rendered pixels were checked. Final engine, host and built-site screenshots were inspected. Traffic uses fixtures rather than live brokers.",
     "website": "63 static pages built successfully; template example verified through initial state and all four controls at desktop and mobile widths in all three engines",
-    "chartOnlyBrotliKiB": 69.59,
-    "chartOnlyBudgetKiB": 69.75,
-    "baseBrotliKB": 110.47,
-    "indicatorBrotliKB": 35.9,
+    "chartOnlyBrotliKiB": 70.71,
+    "chartOnlyBudgetKiB": 70.85,
+    "baseBrotliKB": 111.49,
+    "indicatorBrotliKB": 36.0,
     "workspaceBrotliKB": 8.67,
-    "allTiersBrotliKB": 290.62,
-    "budgetChange": "Primary-price fitting, persistent study-count geometry, state validation and consumed gesture handling add 1.34 kB to base (109.13 to 110.47) and 1.22 KiB to chart-only (68.37 to 69.59). Limits are 110.75 kB base, 119 kB base plus trade, 248.5 kB terminal, 291 kB all tiers and 69.75 KiB chart-only. Optional-tier removal checks still pass. No indicator, drawing, profile, transform, WebGL, widget or workspace budget changed in this batch.",
-    "review": "Independent review covered malformed layout metadata, effective overlay bindings, removed plot handles, host-bearing pane detection, nested restore ownership, rollback, primitive-only panes and destination formatter preservation. Failing regressions reproduced hidden-scale recreation and selector-array accessor defects before the fixes. Both review findings are closed.",
-    "packageVerification": "Full verify passed lint, typecheck, 7358 unit tests, seven endurance-harness checks, build, 457 example tests, declaration identity, measured size limits and optional-tier removal checks. A later shared row-height correction passes all 7361 unit tests, typecheck, scoped lint, build, size, tree-shake and all 18 affected browser cases. The packed 0.7.0 candidate passed 18 compiled-program integration checks and public adapter typechecking; it remains unpublished pending newly found numerical edge cases.",
-    "latestEngineSourceReview": "Candidate d5cec2210a374d12f30f5eddb1aa7e118c5e0c37 passes its complete npm and Python suites, CI, exact 3298-case numerical gate and installed-distribution probes. A broader chart composition sweep then reproduced extreme finite-input recovery differences in TSI, RSI and Ultimate Oscillator. Publication is held while permanent regressions and fixes are added. No exhaustive agreement claim is made.",
+    "allTiersBrotliKB": 293.78,
+    "budgetChange": "Typed scalar validation, paired exchange defaults and targeted capture fences add 1025 bytes to base (110469 to 111494) and 1.12 KiB to chart-only (69.59 to 70.71). Shared typed forms and modal actions add 2032 bytes to the optional widget (60158 to 62190). Numerical window and finite-result corrections add 106 bytes to indicators (35895 to 36001). Limits: base 111.75 kB, base plus trade 119.75 kB, indicators 36.1 kB, widget 62.25 kB, terminal 251.5 kB, all 294 kB and chart-only 70.85 KiB. Other tier limits unchanged.",
+    "review": "Independent typed-input review found reentrant destruction, pane-slot replacement and context changes during pick:end. Eight actual-chart regressions failed before capture lifetime fences and now pass. No additional blocker found in scalar validation, exchange defaults, restore preflight or public exports. A final host review reproduced four failures involving constructor and __proto__ exchange keys; safe own-property defaults, patches and staged collection now preserve them through selection, Defaults, Cancel and Apply.",
+    "packageVerification": "Full verify passes lint, typecheck, 7480 unit tests, seven endurance checks, build, 472 example-host tests, declaration identity, measured size budgets and optional-tier removal checks. Installed companion 0.7.0 passes 18 compiled-program integration checks and public adapter typechecking. API documentation generates without warnings.",
+    "latestEngineSourceReview": "Companion source f9ab00e4e9238b442ae0ad3639f52bc5dc45394b passes 2161 JavaScript tests, 956 Python tests and 102 conformance cases, with 19 compiler-only skips. Strict gates pass 6836 cases and 1504908 accepted calls with zero exact-bit, absence, oracle or execution differences. Both public 0.7.0 packages are published. Downloaded public artifacts pass 363 programs across all 116 keys, 124977 exact cells and 6756 independent expected cells. Archived source/build bytes and registry integrity match; attestation digest/source/workflow claims checked without cryptographic signature verification.",
     "directionalSeedAudit": "129 focused tests pass after aligning directional-movement seeds with true range. Built-package exact-value and rendered-line checks pass in all three browser engines; screenshots inspected. First-available indices and existing chart missing-value behavior are preserved. See numerical-audit.md for the independent fixture and remaining limits.",
     "hullLengthAudit": "173 focused tests and six browser cases across three engines pass. Standalone HMA now shares Hull Suite's integer half and rounded square-root windows, with length one as identity. Six compiled Hull fixtures match chart formulas and availability within 1e-12, while all fifteen audited compiled programs agree bit-for-bit between the companion engines. Chart summation order and missing-value contracts remain under audit.",
-    "widerNumericalProbe": "270 compiled cases compare selected columns from 45 of 105 descriptors over six 192-bar input patterns. Remaining descriptors and secondary outputs stay open. Both engines differ only in Gaussian weights and choppiness logarithms in this corpus (960 cells); portable elementary arithmetic remains in progress. Native results include 57 cases with absence or beyond-threshold differences requiring contract review. Differential evidence is not independent certification.",
+    "widerNumericalProbe": "All 105 descriptors and 266 outputs were executed through 1148 compiled cases, covering 1287674 companion-engine cells and 86866 independent table cells. Recorded companion runs have zero differences. After the RSI correction, 197 outputs differ in at least one exercised policy or arithmetic case, 38 agree on tested finite inputs, 27 are constant, two are table carriers and two broad-absent Halftrend signals have finite independent fixtures. The post-correction event/calendar supplement passes all 70 compiled programs, 104954 cross-engine cells and 86866 independent table cells; 16 of its 58 outputs match exactly within the exercised native corpus and 36 still differ, with constants and carriers counted separately. Other recursive gap policies, CPR period extrema and arithmetic-order differences remain under review; this is not a universal native parity claim.",
     "apiDocumentation": "Generated with warnings treated as errors",
-    "skillsCoverage": "978 of 978 named exports and registry entries; not functional coverage",
+    "skillsCoverage": "979 of 979 named exports and registry entries, not functional coverage",
     "preferenceBrowserEvidence": "18 cases pass across three engines at 1100 and 390 CSS pixels. Primary-only range, actual price pixels, axis controls, touch collapse, suppressed former row hits, retained live study output, keyboard settings, cancel and reload are checked. Screenshots inspected. A reproduced desktop touch double-click reset failed before consumed-primary-press tracking and passes afterward.",
-    "preferenceWebsiteEvidence": "The built website example passes 30 control states across three browser engines at 1280 and 390 CSS pixels. Primary-only versus combined extents change actual pixels and price range; collapse and expansion retain bars and calculated values. No console exceptions or control overflow. Screenshots inspected. API documentation builds without warnings and skills inventory remains 978/978."
+    "preferenceWebsiteEvidence": "The built website example passes 30 control states across three browser engines at 1280 and 390 CSS pixels. Primary-only versus combined extents change actual pixels and price range; collapse and expansion retain bars and calculated values. No console exceptions or control overflow. Screenshots inspected. API documentation builds without warnings and skills inventory remains 978/978.",
+    "typedInputBrowserEvidence": "42 permanent cases pass across both hosts at 1100 and 390 CSS pixels in Chromium, Firefox and WebKit. Search pairs including constructor and __proto__ exchange fields, cancel/defaults, exact UTC fractions, invalid drafts, target scales, price/time capture, reload, instance removal and destruction were checked. Screenshots inspected. Browser regressions caught textarea assignment, compatibility click-through dismissal and stretched mobile rows before fixes.",
+    "typedInputWebsiteEvidence": "The built example passes 30 recorded states across all three browser engines at 1280 and 390 CSS pixels. Symbol/exchange display, literal notes, session and threshold line pixels, exact fractional UTC seconds, out-of-calendar numeric timestamps, Apply/Cancel and resumed price/time picking are verified. Screenshots inspected, no page errors or horizontal overflow.",
+    "numericalBrowserEvidence": "21 numerical cases pass in Chromium, Firefox and WebKit, checking directional and Hull values, RSI seed and gap recovery, absent Balance of Power points, false and genuine WaveTrend markers, AlphaTrend recovery and finite Seasonality table pixels. Screenshots inspected."
   },
   "deferred": [
     "Issue #22: higher-timeframe inputs on built-in indicators, excluded by the user on 2026-09-25"

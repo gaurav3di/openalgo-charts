@@ -678,9 +678,19 @@ unrecognised status stays visible instead of being silently dropped.
   `tableOrigin(position, margin, w, h, plotW, plotH)` - corner placement
 
 **Interaction.** `beginPick(host, kind, cb)` starts a price or time pick and returns
-its cancel function; call it to tear the pick down. `isRebasing(mode)` reports whether
+its callable `PickHandle`; call it to tear the pick down. `handle.active()` is
+true only while this invocation owns the capture, including after synchronous
+cancellation or replacement during a start notification. `isRebasing(mode)` reports whether
 a `PriceScaleMode` re-bases the series, which is true for `percentage` and
 `indexed-to-100` and is why a rebased pane cannot share an axis with an absolute one.
+
+`chart.beginPick(kind, cb, options?: PickOptions)` also checks actual plot bounds
+and accepts `paneIndex` and a price-only `priceScaleId`. Explicit scales must
+already exist. A scale without a pane targets the primary series' pane. The
+selected scale converts pane-local coordinates, including hidden overlays.
+Panning and primitive controls do not select values. Active drawing placement
+refuses the pick; starting placement, data replacement, context changes, restore
+and destruction cancel it. Cancelled picks emit `pick:end` with a null value.
 
 ## Types that name a public signature
 

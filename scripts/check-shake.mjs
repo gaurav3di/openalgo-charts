@@ -123,7 +123,10 @@ const BUNDLE = new URL('../dist/openalgo-charts.mjs', import.meta.url).pathname.
 // chart hosts. Their range selection, row geometry, state and consumed-gesture
 // handling add 1.22 KiB (68.37 to 69.59), with base growing 109.13 to 110.47 kB.
 // Allow 69.75 KiB. Settings forms and workspace parsing remain optional below.
-const LIMIT_BYTES = 69.75 * 1024;
+// Typed scalar validation, paired exchange defaults and targeted capture
+// lifecycle fences add 1.12 KiB (69.59 to 70.71). Base grows by 1025 bytes;
+// symbol search, editor validation and modal controls remain in the widget.
+const LIMIT_BYTES = 70.85 * 1024;
 
 // Absent from a chart-only build. Each is a string that appears in the adapter
 // source and nowhere in the rendering core.

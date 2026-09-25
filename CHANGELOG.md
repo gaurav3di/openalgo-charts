@@ -4,6 +4,23 @@ All notable changes to OpenAlgo Charts.
 
 ## Unreleased
 
+- Native study inputs now support symbols with paired exchanges, session
+  strings, multiline notes, prices and absolute UTC timestamps. Both hosts
+  validate drafts, retain fractional timestamps and support chart picking in
+  the study's actual pane and scale. Dialog cancellation restores prior values;
+  context changes, pane changes and destruction cancel stale captures.
+- WaveTrend uses fresh chronological signal windows, avoiding rounding drift
+  that could create a false crossing. AlphaTrend windows recover when extreme
+  observations expire. These windows require work proportional to the selected
+  period rather than a constant-time rolling update.
+- Balance of Power omits nonfinite ratios. Seasonality omits nonfinite monthly
+  returns and leaves unavailable aggregate statistics blank.
+- RSI now treats missing or overflowing changes as unavailable observations
+  while retaining seeded averages. Its gain and loss legs recover independently
+  from an unavailable seed, and nonfinite running averages no longer emit false
+  zero or 100 readings. Ordinary finite results and the public signature remain
+  unchanged; built-in studies using RSI inherit the correction.
+
 - Primary-only auto-fit follows the actual primary series across panes and scales,
   keeping distant overlays from compressing price candles when enabled. The
   setting preserves manual ranges and ratio locks, and is available in both hosts.

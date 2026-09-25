@@ -271,6 +271,7 @@ class WidgetContextImpl implements WidgetContext {
   public readonly storage: WidgetStorage;
   public readonly locale: string | undefined;
   public readonly translate?: WidgetTranslator;
+  public readonly symbolSearch?: SymbolSearch;
   public readonly toast: WidgetContext['toast'];
   public readonly openOverlay: WidgetContext['openOverlay'];
   public readonly status: WidgetContext['status'];
@@ -293,6 +294,7 @@ class WidgetContextImpl implements WidgetContext {
     this.storage = parts.storage;
     this.locale = parts.locale;
     this.translate = parts.translate;
+    this.symbolSearch = parts.symbolSearch;
     this.toast = parts.toast;
     this.openOverlay = parts.openOverlay;
     this.status = parts.status;
@@ -460,6 +462,7 @@ class WidgetImpl implements Widget {
       storage: this._storage,
       locale: options.locale,
       translate: options.translate,
+      symbolSearch: options.symbolSearch,
       toast: (message: string, kind?: ToastKind): ToastHandle => this._toasts.toast(message, kind),
       openOverlay: (el: HTMLElement, o?: OverlayOptions): (() => void) => overlays.open(el, o),
       status: (text: string, kind: 'info' | 'error' = 'info'): void => {

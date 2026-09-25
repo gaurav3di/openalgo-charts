@@ -108,13 +108,14 @@ import { ShortcutManager } from '../input/shortcuts';
 import type { ShortcutManagerOptions } from '../input/shortcuts';
 import { TradingController, DEFAULT_TRADING_COLORS, type TradingColors, type TradingSettings } from './trading-controller';
 import { pinchState, pinchDelta, type PinchState } from '../input/touch';
-import { beginPick, type PickKind } from '../input/pick';
+import { beginPickResolved, cancelPick, type PickKind, type PickOptions, type PickHandle } from '../input/pick';
 import type { IPrimitive, PrimitiveHost, PrimitiveHit, PrimitiveAnchor, PrimitivePlacement } from '../primitives/primitive';
 import { PriceLine, type PriceLineOptions } from '../primitives/price-line';
 import { SeriesMarkers } from '../primitives/markers';
 import { EventMarkers, type ChartEvent, type EventGroup, type EventMarkersOptions, type EventMarkerDetails } from '../primitives/event-markers';
 import { PaneLegend, paneLegendRowHeight, type PaneLegendAction, type LegendStatusLineOptions } from '../primitives/pane-legend';
 import { IndicatorLegendToggle, INDICATOR_LEGEND_TOGGLE } from '../primitives/indicator-legend-toggle';
+import { validateIndicatorInputs } from '../model/indicator-inputs';
 import { ChartTable } from '../primitives/table';
 import { TimeNavigator, type TimeNavigatorOptions } from '../primitives/time-navigator';
 import type { ChartSettingsState } from '../model/chart-settings';
@@ -1542,6 +1543,8 @@ export class Chart {
   ): IndicatorApi {
     if (options.priceScaleId !== undefined && !this._validPriceScaleId(options.priceScaleId)) throw new TypeError('Invalid indicator price scale');
     const descriptor = getIndicator(indicatorId);
+    const validatedSettings = cloneIndicatorSettings(settings);
+    validateIndicatorInputs(descriptor.inputs, validatedSettings);
     const plotPriceScaleIds = options.plotPriceScaleIds === undefined ? undefined : parseIndicatorPlotPriceScales(descriptor, options.plotPriceScaleIds);
     validateIndicatorScaleAssignment(descriptor, options.priceScaleId, plotPriceScaleIds,
       options.paneIndex ?? (descriptor.placement === 'onchart' ? 0 : this._panes.length));
@@ -1553,7 +1556,7 @@ export class Chart {
     const instance = new IndicatorInstance(
       this._indicatorHost(),
       descriptor,
-      this._distinctColors(descriptor, settings),
+      this._distinctColors(descriptor, validatedSettings),
       options.paneIndex,
       undefined,
       reserved,
@@ -3377,6 +3380,7 @@ export class Chart {
    */
   public setPlacementMode(active: boolean): void {
     this._placementMode = active;
+    if (active) cancelPick(this);
   }
 
   /**
@@ -3386,8 +3390,31 @@ export class Chart {
    * its own cursor while the pick is live. See `input/pick` for why this does
    * not touch placement mode.
    */
-  public beginPick(kind: PickKind, cb: (value: number) => void): () => void {
-    return beginPick(this, kind, cb);
+  public beginPick(kind: PickKind, cb: (value: number) => void, options: PickOptions = {}): PickHandle {
+    if (this._destroyed || this._destroying) throw new Error('Cannot pick on a destroyed chart');
+    if (this._placementMode) throw new Error('Finish drawing placement before picking a study value');
+    if (options === null || typeof options !== 'object' || ![Object.prototype, null].includes(Object.getPrototypeOf(options))
+      || Object.values(Object.getOwnPropertyDescriptors(options)).some(item => !('value' in item))) throw new TypeError('Invalid pick options');
+    const fields = Object.getOwnPropertyDescriptors(options);
+    const paneIndex = fields.paneIndex?.value as PickOptions['paneIndex'];
+    const priceScaleId = fields.priceScaleId?.value as PickOptions['priceScaleId'];
+    if (paneIndex !== undefined && (!Number.isSafeInteger(paneIndex) || paneIndex < 0 || !this._panes[paneIndex])) throw new RangeError('Invalid pick pane');
+    const targetPane = paneIndex ?? (priceScaleId !== undefined ? this._firstPaneIndex : undefined);
+    if (priceScaleId !== undefined && (kind !== 'price' || !this._validPriceScaleId(priceScaleId)
+      || !Object.prototype.hasOwnProperty.call(this._panes[targetPane!]?.scaleStates() ?? {}, priceScaleId))) throw new RangeError('Invalid pick scale');
+    return beginPickResolved(this, kind, cb, payload => {
+      const click = payload as Partial<ChartClickEvent>, point = click?.point, index = click?.paneIndex;
+      if (index === undefined || !Number.isSafeInteger(index) || !point || !Number.isFinite(point.x) || !Number.isFinite(point.y)
+        || click.viaDrag || (click.id !== undefined && click.id !== null) || (targetPane !== undefined && index !== targetPane)) return null;
+      const pane = this._panes[index];
+      const height = (this._paneLayout()[index]?.height ?? 0) - (index === this._bottomPaneIndex() ? this._timeAxisHeight : 0);
+      if (!pane || point.x < this._leftAxisWidth || point.x >= this._width - this._rightAxisWidth || point.y < 0 || point.y >= height) return null;
+      if (kind === 'time') return click.time ?? null;
+      this._ensureScaled(index);
+      if (priceScaleId === undefined) return click.price ?? null;
+      if (!Object.prototype.hasOwnProperty.call(pane.scaleStates(), priceScaleId)) return null;
+      return pane.scaleFor(priceScaleId).yToPrice(point.y);
+    });
   }
 
   /** Swap the palette at runtime (dark/light toggle) without recreating the chart. */
@@ -3621,7 +3648,10 @@ export class Chart {
           if (descriptor && spec.plotPriceScaleIds !== undefined) {
             spec.plotPriceScaleIds = parseIndicatorPlotPriceScales(descriptor, spec.plotPriceScaleIds);
           }
-          if (descriptor) validateIndicatorScaleAssignment(descriptor, spec.priceScaleId, spec.plotPriceScaleIds, spec.paneIndex);
+          if (descriptor) {
+            validateIndicatorInputs(descriptor.inputs, spec.settings);
+            validateIndicatorScaleAssignment(descriptor, spec.priceScaleId, spec.plotPriceScaleIds, spec.paneIndex);
+          }
           return descriptor ? [{ id: spec.instanceId!, descriptor, settings: spec.settings }] : [];
         });
         studies = { specs, order: planIndicatorDependencies(nodes).order, descriptors };

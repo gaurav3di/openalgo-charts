@@ -20,6 +20,9 @@ import type { SeriesMarker } from '../primitives/markers';
 import type { TableCell, ChartTableOptions } from '../primitives/table';
 import type { FillGradient } from '../primitives/indicator-fill';
 import type { IPrimitive } from '../primitives/primitive';
+import { validateIndicatorInputs } from './indicator-inputs';
+import { IndicatorInputError } from './indicator-input-error';
+export { IndicatorInputError } from './indicator-input-error';
 
 /** Which price a calculation reads from each bar. */
 export type IndicatorSource = 'open' | 'high' | 'low' | 'close' | 'hl2' | 'hlc3' | 'ohlc4' | 'volume';
@@ -43,8 +46,8 @@ export interface IndicatorStudyOutput {
 }
 
 /**
- * One tunable input. `type` is what a settings UI renders; the core only reads
- * `key`/`default`.
+ * One tunable input. New typed values are validated before study mutations;
+ * established input kinds retain their descriptor's calculation contract.
  *
  * `tooltip` is help text for the row. A label has to stay short enough to fit a
  * dense panel, which leaves nowhere to say what a parameter actually does, and a
@@ -57,6 +60,14 @@ export type IndicatorInput =
   | { key: string; type: 'boolean'; label: string; default: boolean; group?: string; tooltip?: string }
   | { key: string; type: 'color'; label: string; default: string; group?: string; tooltip?: string }
   | { key: string; type: 'text'; label: string; default: string; group?: string; tooltip?: string }
+  | { key: string; type: 'symbol'; label: string; default: string; exchangeKey?: string; group?: string; tooltip?: string }
+  | { key: string; type: 'session'; label: string; default: string; group?: string; tooltip?: string }
+  | { key: string; type: 'multiline'; label: string; default: string; group?: string; tooltip?: string }
+  | { key: string; type: 'price'; label: string; default: number; min?: number; max?: number; step?: number;
+      pick?: boolean | { paneIndex?: number; priceScaleId?: PriceScaleId }; group?: string; tooltip?: string }
+  /** Absolute UTC seconds. Independent of the chart timezone and legacy wall-clock `time` inputs. */
+  | { key: string; type: 'timestamp'; label: string; default: number; min?: number; max?: number; step?: number;
+      pick?: boolean; group?: string; tooltip?: string }
   | { key: string; type: 'select'; label: string; default: string; options: readonly { label: string; value: string }[]; group?: string; tooltip?: string }
   | { key: string; type: 'source'; label: string; default: IndicatorSource; allowStudyOutputs?: boolean; group?: string; tooltip?: string }
   /**
@@ -538,24 +549,6 @@ export interface IndicatorAlertSpec {
 }
 
 /**
- * Thrown by a `calc` (or any hook) to say its inputs cannot produce a study,
- * the way a script language's runtime error does: a period at or below zero, a
- * fast length above the slow one, a benchmark the provider cannot serve.
- *
- * Any error out of a recompute is caught by the runtime and published on the
- * instance's data status as `{ state: 'error' }`, so the chart keeps drawing
- * every other indicator and a host can show the reason beside this one. This
- * class exists so a descriptor can throw a **named** condition and a host can
- * tell a bad input, which the user can fix, from a bug, which they cannot.
- */
-export class IndicatorInputError extends Error {
-  public constructor(message: string) {
-    super(message);
-    this.name = 'IndicatorInputError';
-  }
-}
-
-/**
  * Bars of another instrument or interval, supplied by the host on request.
  *
  * The engine is handed one symbol's bars and owns no transport, so a study
@@ -928,6 +921,7 @@ const registry = new Map<string, IndicatorDescriptor>();
 
 /** Register an indicator descriptor. Later registrations of the same id win. */
 export function registerIndicator(descriptor: IndicatorDescriptor): void {
+  validateIndicatorInputs(descriptor.inputs, {});
   registry.set(descriptor.id, descriptor);
 }
 
@@ -951,8 +945,13 @@ export function registeredIndicators(): IndicatorDescriptor[] {
 
 /** The descriptor's declared defaults as a settings object. */
 export function indicatorDefaults(descriptor: IndicatorDescriptor): IndicatorSettings {
-  const out: IndicatorSettings = {};
-  for (const input of descriptor.inputs) out[input.key] = input.default;
+  validateIndicatorInputs(descriptor.inputs, {});
+  const out: IndicatorSettings = Object.fromEntries(descriptor.inputs.map(input => [input.key, input.default]));
+  for (const input of descriptor.inputs) {
+    if (input.type === 'symbol' && input.exchangeKey !== undefined && !Object.prototype.hasOwnProperty.call(out, input.exchangeKey)) {
+      Object.defineProperty(out, input.exchangeKey, { value: '', enumerable: true, writable: true, configurable: true });
+    }
+  }
   return out;
 }
 

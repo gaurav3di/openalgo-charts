@@ -370,7 +370,7 @@ export type {
 } from './input/shortcuts';
 
 export { beginPick } from './input/pick';
-export type { PickKind, PickHost } from './input/pick';
+export type { PickKind, PickHost, PickOptions, PickHandle } from './input/pick';
 
 export { AlertController } from './alerts/controller';
 export { alertSettingsSchema } from './alerts/schema';

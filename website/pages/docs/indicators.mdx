@@ -9,6 +9,30 @@ import { Callout } from 'nextra/components'
 
 # Indicators
 
+## Typed study inputs
+
+Custom descriptors can declare `symbol`, `session`, `multiline`, `price` and
+`timestamp` inputs. The widget and reference host render these controls and keep
+their values as ordinary strings and numbers in saved layouts.
+
+| Kind | Value and editing |
+| --- | --- |
+| `symbol` | Instrument text, with search when the host supplies it. Optional `exchangeKey` stores the venue separately and defaults to empty text. Selecting a study instrument leaves the primary chart unchanged. |
+| `session` | A session such as `0930-1600:23456`, using the existing overnight and weekday rules. |
+| `multiline` | Literal text with newlines and whitespace preserved. |
+| `price` | A finite number with optional bounds and editor step. `pick: true` enables chart selection; an explicit `{ paneIndex, priceScaleId }` chooses the units for mixed-scale studies. |
+| `timestamp` | Absolute UTC seconds, including fractions. Manual editing preserves the exact number; `pick: true` selects a bar time. |
+
+Invalid values stay visible in the form with an error and do not change the
+study. Cancel restores accepted edits. New typed values are also validated by
+`setSettings` and before a saved layout replaces the chart.
+
+The established `time` input remains a wall-clock string in the chart timezone.
+Use `timestamp` for an instant that must remain unchanged when the timezone
+changes. Existing script descriptors keep their current input kinds.
+
+Try the [typed study inputs example](/examples#typed-study-inputs).
+
 There are two ways to put an indicator on a chart, and they suit different jobs.
 
 **`chart.addIndicator(id)`** is the managed path: the chart creates the series, picks the

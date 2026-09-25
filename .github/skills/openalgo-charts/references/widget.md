@@ -214,9 +214,29 @@ Every mount takes the context and an optional anchor element (so it satisfies `D
 | `renderForm(host, controls, opts)` | function | One control renderer for every generated form: switch column, label, control column; `colorPair` on one row. Returns a `FormHandle`. |
 | `controlsFromInputs(inputs)` | function | `ChartSettingsInput[]` (the engine's settings schema) to `FormControl[]`. |
 | `controlsFromFields(fields)` | function | A drawing tool's `SettingsField[]` to `FormControl[]`. |
+| `mountIndicatorInputControls(ctx, options)` | function | Adds symbol lookup and chart picking to an existing indicator form. Returns `IndicatorInputControlsHandle` with `cancelPick`, `refresh` and `destroy`. |
+| `IndicatorInputControlsOptions`, `IndicatorInputControlsHandle` | types | Native typed-field host actions. |
 | `SettingsDialogOptions`, `IndicatorPickerOptions`, `IndicatorSettingsOptions`, `IndicatorSettingsTab`, `DrawingPropertiesOptions`, `LevelEditorOptions`, `TextEditorOptions`, `TextEditorHandle`, `ContextMenuHooks`, `ContextMenuOptions`, `MenuEntry`, `MenuItem`, `OrderRequest`, `PanelHandle`, `FormControl`, `FormKind`, `FormOptions`, `FormHandle` | types | |
 
 `OrderRequest` is `{ side: 'BUY' | 'SELL'; type: 'MARKET' | 'LIMIT' | 'SL'; price: number | null; paneIndex: number }`; `price` is null for a market order.
+
+`FormKind` includes `symbol`, `session`, `multiline`, `price` and `timestamp`.
+`FormHandle.validate()` checks drafts and `setError(key, message)` reports a
+field error without committing invalid settings. Prices and timestamps preserve
+their numeric value; timestamps are absolute UTC seconds, including fractions.
+An ordinary `time` field retains its existing clock-string contract.
+
+`IndicatorInputControlsOptions` provides `instance`, `inputs`, `panel`,
+`field(key)` and atomic `onPatch(patch): boolean`. Optional `current()` fences
+stale dialogs; `suspend()` lets a custom host hide its modal while picking.
+The built-in `OverlayStack.suspend(panel)` releases the focus trap and scrim
+until its idempotent resume callback runs. Destroy the controls with the form.
+Configured lookup is available as `WidgetContext.symbolSearch`. A selected
+symbol and its `exchangeKey` commit together; a missing exchange defaults to
+an empty string. Without lookup, manual symbol entry remains available.
+Price picks resolve the study's actual pane and scale, including hidden scales;
+a mixed-scale study needs an explicit target. Drawing placement blocks picking.
+Context changes, study removal and chart destruction cancel pending controls.
 
 Alert panels use optional `WidgetContext.alerts`, supplied automatically by
 `createWidget`. Custom contexts without a controller show an unavailable reason.

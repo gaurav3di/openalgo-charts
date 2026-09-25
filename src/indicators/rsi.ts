@@ -1,9 +1,10 @@
 /**
- * Relative Strength Index — Wilder's RSI, matching `openalgo.rsi(close, 14)`.
+ * Relative Strength Index using Wilder smoothing.
  *
  * Uses Wilder smoothing (RMA): the first average gain/loss is the simple mean of
- * the first `period` deltas, then each subsequent average carries
- * `(prev*(period-1) + current)/period`. Warmup bars (before enough data) are NaN.
+ * a complete finite window of `period` deltas, then each subsequent average
+ * carries `(prev*(period-1) + current)/period`. Missing deltas preserve seeded
+ * state but emit NaN. Each leg retries an unavailable seed independently.
  */
 import type { Bar } from '../model/bar';
 
@@ -12,26 +13,49 @@ export function rsi(values: readonly number[], period = 14): number[] {
   if (period <= 0) throw new Error('openalgo-charts: RSI period must be > 0');
   const n = values.length;
   const out = new Array<number>(n).fill(NaN);
-  if (n <= period) return out;
+  if (n <= period || !Number.isInteger(period)) return out;
 
-  let gain = 0;
-  let loss = 0;
-  for (let i = 1; i <= period; i++) {
+  let avgGain = NaN;
+  let avgLoss = NaN;
+  let gainSeeded = false;
+  let lossSeeded = false;
+  let finiteRun = 0;
+  for (let i = 1; i < n; i++) {
     const d = values[i] - values[i - 1];
-    if (d >= 0) gain += d;
-    else loss -= d;
-  }
-  let avgGain = gain / period;
-  let avgLoss = loss / period;
-  out[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
-
-  for (let i = period + 1; i < n; i++) {
-    const d = values[i] - values[i - 1];
+    if (!Number.isFinite(d)) {
+      finiteRun = 0;
+      continue;
+    }
+    finiteRun++;
     const g = d > 0 ? d : 0;
     const l = d < 0 ? -d : 0;
-    avgGain = (avgGain * (period - 1) + g) / period;
-    avgLoss = (avgLoss * (period - 1) + l) / period;
-    out[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+    // A valid recurrence commits even when it overflows. It must not turn into
+    // a new seed or let the other leg manufacture a finite extreme reading.
+    if (gainSeeded) avgGain = (avgGain * (period - 1) + g) / period;
+    if (lossSeeded) avgLoss = (avgLoss * (period - 1) + l) / period;
+    if ((!gainSeeded || !lossSeeded) && finiteRun >= period) {
+      let gain = 0;
+      let loss = 0;
+      // Fresh chronological sums allow a failed seed to recover after the
+      // overflowing window expires, without subtraction drift in later seeds.
+      for (let j = i - period + 1; j <= i; j++) {
+        const change = values[j] - values[j - 1];
+        if (change >= 0) gain += change;
+        else loss -= change;
+      }
+      if (!gainSeeded && Number.isFinite(gain / period)) {
+        avgGain = gain / period;
+        gainSeeded = true;
+      }
+      if (!lossSeeded && Number.isFinite(loss / period)) {
+        avgLoss = loss / period;
+        lossSeeded = true;
+      }
+    }
+    if (Number.isFinite(avgGain) && Number.isFinite(avgLoss)) {
+      const value = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+      if (Number.isFinite(value)) out[i] = value;
+    }
   }
   return out;
 }

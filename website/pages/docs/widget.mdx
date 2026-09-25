@@ -132,6 +132,14 @@ Colour controls share a compact palette, recent colours, and a native custom
 colour chooser. Values with alpha retain it; opacity is editable for those values.
 Unsupported colour expressions remain unchanged until the user selects a colour.
 
+Custom study descriptors can also declare symbol, session, multiline, price and
+absolute timestamp inputs. Symbol lookup uses the configured `symbolSearch`
+and commits its exchange with the instrument. Invalid drafts stay in the form
+with an error. Price and time picking suspend the dialog and resume it after
+selection or Escape; ambiguous study scales require an explicit pick target.
+Timestamps are edited as UTC seconds without rounding fractional values.
+See [typed study inputs](/docs/indicators#typed-study-inputs).
+
 ## Use individual controls in your own host
 
 `AlertUi.context` exposes the same widget context used by its alert dialogs.
@@ -144,6 +152,10 @@ Custom terminals can also supply their own `WidgetContext` and compose controls:
 - `mountPanelDock(context, stage, options)` mounts one Data or Objects view at a
   time. Each content factory receives its container and returns a `destroy()` handle.
 - `mountSymbolPicker(context, input, options)` supplies shared search results.
+- `mountIndicatorInputControls(context, options)` adds search and picking to an
+  existing study form. Supply the instance, input declarations, panel, field
+  lookup and atomic `onPatch` callback. Destroy the returned handle with the form.
+  A custom host can supply `suspend()` to release its modal during a chart pick.
 - `mountQuickEntry(context, options)` uses the host's `enabled()` callback to decide
   which chart owns typing. Destroy it with the chart.
 - `createColorPicker(document, options)` supports `openOverlay: context.openOverlay`

@@ -677,6 +677,34 @@ Three rules behind that shape:
 
 ## Writing a custom indicator
 
+### Typed native inputs
+
+`IndicatorInput` also supports these scalar kinds:
+
+| Type | Saved value | Contract |
+| --- | --- | --- |
+| `symbol` | string | Opaque instrument identifier; empty can mean the chart symbol. Optional `exchangeKey` names a string setting and defaults to empty text if undeclared. |
+| `session` | string | Existing `parseSessionSpec` grammar, including overnight and weekday filters. Accepted spelling is retained. |
+| `multiline` | string | Newlines, whitespace and markup remain literal text. |
+| `price` | number | Finite value within optional `min`/`max`. `step` is editor metadata and never rounds stored values. |
+| `timestamp` | number | Absolute UTC seconds, including fractional or negative values. Independent of chart timezone. |
+
+`price.pick` is a boolean or `{ paneIndex?, priceScaleId? }`; `timestamp.pick` is
+a boolean. The host exposes chart selection and keeps manual entry available.
+Mixed-scale price studies require an unambiguous actual target or an explicit
+one. Symbol search uses the existing host provider and never changes the primary
+chart instrument. Missing search leaves manual entry available.
+
+New kinds validate defaults and settings before registration, calculation or
+restoration. Invalid values raise `IndicatorInputError` without replacing the
+current study state. Settings accessors reject without executing. Existing
+`time` inputs remain wall-clock strings; migrating them to `timestamp` requires
+the original timezone and an explicit host migration.
+
+The widget and reference host retain invalid drafts, restore the same dialog
+after chart picking, and cancel pending selection on teardown. Existing compiled
+adapters keep their current input types and compiled format.
+
 An indicator is data, not code in the core: the chart never switches on an id, and each plot names a registered chart type, so you add no drawing code. `calc` must return one array per plot key, exactly `bars.length` long, with `null` in warmup slots (the line renderer breaks across them and autoscale skips them).
 
 ```ts

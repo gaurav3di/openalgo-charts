@@ -11,6 +11,7 @@ import type { Bar } from './bar';
 import { runAbortable } from './abortable-request';
 import { IndicatorAlertPolicy } from './indicator-alert-policy';
 import { cloneIndicatorSettings, planIndicatorDependencies, type IndicatorDependencyNode } from './indicator-dependencies';
+import { validateIndicatorInputs } from './indicator-inputs';
 import type { PriceFormat, PriceScaleId, SeriesApi, SeriesDataState } from './series';
 import type { PriceLine } from '../primitives/price-line';
 import type { PaneLegend, LegendValue } from '../primitives/pane-legend';
@@ -465,7 +466,7 @@ export class IndicatorInstance implements IndicatorApi {
     this._settings = this._validatedSettings({
       ...indicatorDefaults(descriptor),
       ...styleDefaults(descriptor),
-      ...settings,
+      ...cloneIndicatorSettings(settings),
     });
 
     if (paneIndex !== undefined) {
@@ -1210,6 +1211,7 @@ export class IndicatorInstance implements IndicatorApi {
 
   private _validatedSettings(settings: Readonly<IndicatorSettings>): IndicatorSettings {
     const copy = cloneIndicatorSettings(settings);
+    validateIndicatorInputs(this._d.inputs, copy);
     planIndicatorDependencies([{ id: this.id, descriptor: this._d, settings: copy }]);
     this._host.validateIndicatorSettings?.(this.id, this._d, copy);
     for (const input of this._d.inputs) {
@@ -1335,7 +1337,7 @@ export class IndicatorInstance implements IndicatorApi {
 
   public setSettings(patch: Readonly<IndicatorSettings>): void {
     if (this._removed) return;
-    this._settings = this._validatedSettings({ ...this._settings, ...patch });
+    this._settings = this._validatedSettings({ ...this._settings, ...cloneIndicatorSettings(patch) });
     this._outputPending = true;
     this._host.indicatorOutputChanged?.(this.id, true);
     // Restyle before recomputing — appearance is independent of the maths, so a

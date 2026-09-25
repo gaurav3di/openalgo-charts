@@ -316,7 +316,29 @@ interface PickHost {
 }
 ```
 
-The slice of a chart the standalone `beginPick(host, kind, cb)` needs. Structural, so `Chart` satisfies it with nothing to cast, and the module never imports the core. `chart.beginPick` is sugar over the exported function.
+The slice of a chart the standalone `beginPick(host, kind, cb)` needs. Structural,
+so `Chart` satisfies it without a cast. The chart method additionally checks plot
+bounds and supports explicit pane and scale targets.
+
+### `PickHandle`
+
+`PickHandle` is the callable cancellation handle returned by a pick. Its
+readonly `active(): boolean` method reports ownership of that invocation. It
+becomes false before `pick:end`, including when a notification listener cancels
+or replaces the pick synchronously.
+
+### `PickOptions`
+
+```ts
+interface PickOptions {
+  paneIndex?: number;
+  priceScaleId?: PriceScaleId;
+}
+```
+
+The optional third argument to `chart.beginPick`. Price-scale targeting applies
+to price picks only. The pane and scale must already exist; omitted fields retain
+the ordinary chart pick behavior.
 
 ---
 

@@ -30,6 +30,14 @@ export const WIDGET_CSS = `
 .oac-widget button { cursor: pointer; }
 .oac-widget kbd { font: 11px/1 ${v('mono')}; font-variant-numeric: tabular-nums; }
 .oac-widget [hidden] { display: none !important; }
+.oac-widget .oac-row:has(> .oac-input-error:not([hidden])) { flex-wrap: wrap; }
+.oac-widget .oac-input-error { flex-basis: 100%; min-width: 0; color: ${v('danger')}; font-size: 11px; overflow-wrap: anywhere; }
+.oac-widget .oac-row__ctl:has([data-input-action]) { flex-wrap: wrap; }
+.oac-widget .oac-row__ctl [data-input-action] { font-size: 11px; padding: 3px 7px; }
+.oac-widget [aria-invalid="true"] { border-color: ${v('danger')}; }
+.oac-widget .oac-input-pick { position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px; max-width: calc(100% - 16px); padding: 8px;
+  color: ${v('tx')}; background: ${v('panel')}; border: 1px solid ${v('bd')}; border-radius: 6px; pointer-events: auto; }
 
 /* Scrollbars: a thumb one step lighter than its panel, and no visible track. */
 .oac-widget * { scrollbar-width: thin; scrollbar-color: ${v('sb-thumb')} transparent; }

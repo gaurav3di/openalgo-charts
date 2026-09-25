@@ -4,6 +4,7 @@ description: Live, in-page chart demos powered by the real OpenAlgo Charts libra
 ---
 
 import RunnableExample from '../components/RunnableExample'
+import TypedInputsDemo from '../components/TypedInputsDemo'
 import { STOCK_BARS_SOURCE } from '../components/synthetic-market'
 import { ProfileDemo, ProfileThemeGallery } from '../components/ProfileShowcase'
 import DepthLadderDemo from '../components/DepthLadderDemo'
@@ -144,6 +145,27 @@ return chart;`} />
 </div>
 
 </div>
+
+## Typed study inputs
+
+Open the study inputs to edit a session and notes, select a watch instrument,
+or pick a threshold and start bar directly from the chart. The threshold line
+follows the selected time window. Cancel restores the settings from before
+the dialog opened.
+
+<TypedInputsDemo />
+
+The descriptor uses native scalar settings:
+
+```ts
+inputs: [
+  { key: 'instrument', type: 'symbol', label: 'Instrument', default: 'SAMPLE-A', exchangeKey: 'venue' },
+  { key: 'session', type: 'session', label: 'Session', default: '0900-1700:23456' },
+  { key: 'note', type: 'multiline', label: 'Notes', default: '' },
+  { key: 'level', type: 'price', label: 'Threshold', default: 104, pick: true },
+  { key: 'start', type: 'timestamp', label: 'Start at', default: 1790068800, pick: true },
+]
+```
 
 ## Compare markets
 

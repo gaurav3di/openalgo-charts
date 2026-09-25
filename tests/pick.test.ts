@@ -51,6 +51,49 @@ function rig(): Rig {
 const kinds = (r: Rig): string[] => r.events.map((e) => e.event);
 
 describe('beginPick', () => {
+  it('reports its own active lifetime before and after delivery or cancellation', () => {
+    const r = rig(), seen = vi.fn();
+    const delivered = beginPick(r, 'price', seen);
+    expect(delivered.active()).toBe(true);
+    r.click(null, 1060);
+    expect(delivered.active()).toBe(true);
+    r.click(12, 1060);
+    expect(delivered.active()).toBe(false);
+    expect(seen).toHaveBeenCalledExactlyOnceWith(12);
+    const cancelled = beginPick(r, 'time', seen);
+    expect(cancelled.active()).toBe(true);
+    cancelled();
+    expect(cancelled.active()).toBe(false);
+    expect(delivered.active()).toBe(false);
+  });
+
+  it('reports a displaced invocation inactive while its same-kind replacement stays active', () => {
+    const r = rig(), ignored = vi.fn(), selected = vi.fn();
+    const first = beginPick(r, 'price', ignored);
+    let newest: ReturnType<typeof beginPick> | undefined;
+    const off = r.on('pick:end', () => {
+      off(); newest = beginPick(r, 'price', selected);
+    });
+    const displaced = beginPick(r, 'price', ignored);
+    expect(first.active()).toBe(false);
+    expect(displaced.active()).toBe(false);
+    expect(newest?.active()).toBe(true);
+    displaced();
+    r.click(24, 1060);
+    expect(selected).toHaveBeenCalledExactlyOnceWith(24);
+    expect(ignored).not.toHaveBeenCalled();
+    expect(newest?.active()).toBe(false);
+  });
+
+  it('reports synchronous cancellation during its start notification', () => {
+    const r = rig(), selected = vi.fn();
+    r.on('pick:start', () => r.emit('data:context', {}));
+    const handle = beginPick(r, 'price', selected);
+    expect(handle.active()).toBe(false);
+    r.click(12, 1060);
+    expect(selected).not.toHaveBeenCalled();
+  });
+
   it('answers with the price under the click and disarms itself', () => {
     const r = rig();
     const seen: number[] = [];

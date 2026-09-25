@@ -230,13 +230,16 @@ function buildMatrix(
     // and the absolute denominator keeps the sign meaningful on a series that
     // can go negative, such as a spread.
     if (!Number.isFinite(prev.last) || !Number.isFinite(span.last) || prev.last === 0) continue;
+    const change = (100 * (span.last - prev.last)) / Math.abs(prev.last);
+    // An unavailable return must not create a year or enter its summary counts.
+    if (!Number.isFinite(change)) continue;
     let row = byYear.get(span.year);
     if (row === undefined) {
       row = new Array<number | null>(12).fill(null);
       byYear.set(span.year, row);
       years.push(span.year);
     }
-    row[span.month - 1] = (100 * (span.last - prev.last)) / Math.abs(prev.last);
+    row[span.month - 1] = change;
   }
   return { years, byYear, skipped };
 }
@@ -255,7 +258,8 @@ const mean = (v: readonly number[]): number | null => {
   if (v.length === 0) return null;
   let sum = 0;
   for (const x of v) sum += x;
-  return sum / v.length;
+  const result = sum / v.length;
+  return Number.isFinite(result) ? result : null;
 };
 
 /** Sample standard deviation: these years are a sample of the seasons, not all of them. */
@@ -265,7 +269,8 @@ function sampleStdev(v: readonly number[]): number | null {
   if (mu === null) return null;
   let acc = 0;
   for (const x of v) acc += (x - mu) * (x - mu);
-  return Math.sqrt(acc / (v.length - 1));
+  const result = Math.sqrt(acc / (v.length - 1));
+  return Number.isFinite(result) ? result : null;
 }
 
 /** Share of readings at or above zero, as a percentage. */

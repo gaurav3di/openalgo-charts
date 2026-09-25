@@ -14,6 +14,7 @@ import { getIndicator, indicatorDefaults, indicatorStyleInputs } from 'openalgo-
 import type { IndicatorApi, IndicatorDescriptor, IndicatorInput, IndicatorSettings, IndicatorStudySource } from 'openalgo-charts';
 import { chromeIconSvg } from 'openalgo-charts/draw';
 import type { WidgetContext } from '../context';
+import { mountIndicatorInputControls, type IndicatorInputControlsHandle } from '../indicator-input-controls';
 import {
   button, controlsFromInputs, dialogFrame, el, glyphSvg, openPanel, renderForm, tabList,
   type FormHandle, type PanelHandle,
@@ -49,8 +50,12 @@ const detached = (settings: Readonly<IndicatorSettings>): IndicatorSettings => O
 
 /** The defaults of a list of inputs, as a settings patch. */
 export function inputDefaults(inputs: readonly IndicatorInput[]): IndicatorSettings {
-  const out: IndicatorSettings = {};
-  for (const i of inputs) out[i.key] = i.default;
+  const out: IndicatorSettings = Object.fromEntries(inputs.map(input => [input.key, input.default]));
+  for (const input of inputs) {
+    if (input.type === 'symbol' && input.exchangeKey !== undefined && !Object.prototype.hasOwnProperty.call(out, input.exchangeKey)) {
+      Object.defineProperty(out, input.exchangeKey, { value: '', writable: true, configurable: true, enumerable: true });
+    }
+  }
   return out;
 }
 
@@ -93,8 +98,11 @@ export function mountIndicatorSettings(
   const dirty = new Set<string>();
   let activeTab: IndicatorSettingsTab = tabs.some((t) => t.id === opts.tab) ? (opts.tab as IndicatorSettingsTab) : tabs[0].id;
   let form: FormHandle | null = null;
+  let inputControls: IndicatorInputControlsHandle | null = null;
+  let writeError: string | null = null;
   let committed = false;
   let offRemoved = (): void => {};
+  let offDestroy = (): void => {};
 
   /** What the form shows: the instance's settings over every declared default. */
   const values = (): IndicatorSettings => ({
@@ -105,9 +113,13 @@ export function mountIndicatorSettings(
     ctx.toast(error instanceof Error ? error.message : widgetText(ctx, 'The study settings could not be applied'), 'error');
   };
   const write = (patch: IndicatorSettings): boolean => {
+    writeError = null;
     if (!current()) { cancel(); return false; }
     try { inst.setSettings(detached(patch)); }
-    catch (error) { report(error); return false; }
+    catch (error) {
+      writeError = error instanceof Error ? error.message : widgetText(ctx, 'The study settings could not be applied');
+      report(error); return false;
+    }
     for (const k of Object.keys(patch)) dirty.add(k);
     opts.onChange?.(inst);
     return true;
@@ -118,11 +130,15 @@ export function mountIndicatorSettings(
   // One tab needs no tab list: the form alone says what it is.
   if (tabs.length > 1) {
     const nav = tabList(doc, tabs.map((t) => ({ id: t.id, label: t.label, icon: t.icon })), activeTab, 'row',
-      (id) => { activeTab = id as IndicatorSettingsTab; renderPane(); });
+      (id) => {
+        if (form && !form.validate()) { nav.setActive(activeTab); return; }
+        activeTab = id as IndicatorSettingsTab; renderPane();
+      });
     frame.body.appendChild(nav.el);
   }
 
   function renderPane(): void {
+    inputControls?.destroy(); inputControls = null;
     form?.destroy();
     const tab = tabs.find((t) => t.id === activeTab) ?? tabs[0];
     body.innerHTML = '';
@@ -170,12 +186,29 @@ export function mountIndicatorSettings(
         const reference = typeof value === 'string' ? sources.get(key)?.get(value) : undefined;
         if (!write({ [key]: reference ? { ...reference } : value })) {
           if (!current()) return;
+          if (tab.inputs.some(input => input.key === key && ['symbol', 'session', 'multiline', 'price', 'timestamp'].includes(input.type))) {
+            form?.setError(key, writeError); return;
+          }
           const focused = (doc.activeElement as HTMLElement | null)?.id;
           renderPane();
           if (focused) doc.getElementById(focused)?.focus();
           return;
         }
         form?.sync(shown());
+      },
+    });
+    inputControls = mountIndicatorInputControls(ctx, {
+      instance: inst, inputs: tab.inputs, panel: frame.el,
+      field: key => Array.from(body.querySelectorAll('input')).find(field =>
+        field.id === `oac-ind-${inst.id}-${key.replace(/[^A-Za-z0-9_-]/g, '-')}`) ?? null,
+      onPatch: patch => {
+        if (!write(patch)) {
+          for (const key of Object.keys(patch)) form?.setError(key, writeError);
+          return false;
+        }
+        for (const key of Object.keys(patch)) form?.setError(key, null);
+        form?.sync(shown());
+        return true;
       },
     });
   }
@@ -187,8 +220,7 @@ export function mountIndicatorSettings(
     label: widgetText(ctx, 'Defaults'),
     onClick: () => {
       const tab = tabs.find((t) => t.id === activeTab) ?? tabs[0];
-      write(inputDefaults(tab.inputs));
-      renderPane();
+      if (write(inputDefaults(tab.inputs))) renderPane();
     },
   }));
   frame.actions.appendChild(button(doc, { label: widgetText(ctx, 'Cancel'), onClick: () => cancel() }));
@@ -201,15 +233,17 @@ export function mountIndicatorSettings(
     event.preventDefault(); event.stopPropagation(); cancel();
   });
   const handle = openPanel(ctx, frame.el, { placement: 'center', modal: true, dismissOnEscape: false,
-    onClose: () => { offRemoved(); form?.destroy(); },
+    onClose: () => { offRemoved(); offDestroy(); inputControls?.destroy(); form?.destroy(); },
   }, () => {
     cancel();
     // A host destroying its overlay cannot keep a rejected rollback open.
     if (handle.isOpen()) { form?.destroy(); handle.close(); opts.onClose?.(false); }
   });
   offRemoved = ctx.chart.on('indicatorRemoved', () => {
-    if (!current()) cancel(); else renderPane();
+    if (!current()) cancel();
+    else if (form?.validate()) renderPane();
   });
+  offDestroy = ctx.chart.on('destroy', cancel);
 
   function revert(): boolean {
     if (!current()) {
@@ -217,8 +251,7 @@ export function mountIndicatorSettings(
       return true;
     }
     if (committed || dirty.size === 0) return true;
-    const back: IndicatorSettings = {};
-    for (const key of dirty) back[key] = before[key];
+    const back: IndicatorSettings = Object.fromEntries([...dirty].map(key => [key, before[key]]));
     try { inst.setSettings(detached(back)); }
     catch (error) { report(error); renderPane(); return false; }
     dirty.clear();
@@ -228,14 +261,15 @@ export function mountIndicatorSettings(
   function cancel(): void {
     if (!handle.isOpen()) return;
     if (!revert()) return;
-    form?.destroy();
+    inputControls?.destroy(); form?.destroy();
     handle.close();
     opts.onClose?.(false);
   }
   function ok(): void {
     if (!handle.isOpen()) return;
+    if (form && !form.validate()) return;
     committed = true;
-    form?.destroy();
+    inputControls?.destroy(); form?.destroy();
     handle.close();
     opts.onClose?.(true);
   }

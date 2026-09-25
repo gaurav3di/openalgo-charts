@@ -35,8 +35,9 @@
 import { sourceValues } from 'openalgo-charts';
 import type { IndicatorDescriptor, IndicatorSource, SeriesMarker } from 'openalgo-charts';
 import {
-  sma, smaSeededEma, nulls, pivotHigh, pivotLow, barsSince, valueWhen,
+  smaSeededEma, nulls, pivotHigh, pivotLow, barsSince, valueWhen,
 } from './calc';
+import { windowMean } from './window-mean';
 
 const num = (s: Readonly<Record<string, unknown>>, k: string, d: number): number => {
   const v = s[k];
@@ -217,7 +218,7 @@ export const WAVETREND: IndicatorDescriptor = {
       return dv === 0 ? 0 : (v - esa[i]) / (0.015 * dv);
     });
     const wt1 = fromFirstValue(ci, (t) => smaSeededEma(t, n2));
-    const wt2 = fromFirstValue(wt1, (t) => sma(t, sigLen));
+    const wt2 = fromFirstValue(wt1, (t) => windowMean(t, sigLen));
     const mom = wt1.map((v, i) => v - wt2[i]);
 
     const out = {

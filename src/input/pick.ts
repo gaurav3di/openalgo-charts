@@ -15,7 +15,21 @@
  * accident. It also keeps a pick from cancelling an active drawing tool.
  */
 
+import type { PriceScaleId } from '../model/series';
+
 export type PickKind = 'price' | 'time';
+
+/** Cancel a capture, or inspect whether this invocation still owns it. */
+export interface PickHandle {
+  (): void;
+  readonly active: () => boolean;
+}
+
+/** Optional target for Chart.beginPick. Times remain absolute UTC seconds. */
+export interface PickOptions {
+  paneIndex?: number;
+  priceScaleId?: PriceScaleId;
+}
 
 /**
  * The slice of the chart a pick needs. Structural, so `Chart` satisfies it with
@@ -39,6 +53,13 @@ interface ClickLike {
 // a single click would then answer two callers. Weak so a destroyed chart and
 // its pending pick are collected together.
 const active = new WeakMap<PickHost, () => void>();
+const starts = new WeakMap<PickHost, object>();
+
+/** @internal Cancel before a context or interaction changes ownership. */
+export function cancelPick(host: PickHost): void {
+  starts.set(host, {});
+  active.get(host)?.();
+}
 
 /**
  * Arm the next plot click to resolve to a price or a bar time and hand it to
@@ -52,23 +73,49 @@ const active = new WeakMap<PickHost, () => void>();
  * past the last bar keeps the projected time, which is what a pick in the empty
  * right-hand space means.
  */
-export function beginPick(host: PickHost, kind: PickKind, cb: (value: number) => void): () => void {
-  active.get(host)?.();
-  let off: (() => void) | null = null;
+export function beginPick(host: PickHost, kind: PickKind, cb: (value: number) => void): PickHandle {
+  return beginPickResolved(host, kind, cb);
+}
+
+/** @internal Chart supplies measured plot bounds and its selected scale. */
+export function beginPickResolved(host: PickHost, kind: PickKind, cb: (value: number) => void,
+  resolve?: (payload: unknown) => number | null): PickHandle {
+  if (kind !== 'price' && kind !== 'time') throw new TypeError('Invalid pick kind');
+  const token = {};
+  starts.set(host, token);
+  let open = false, invalidated = false;
+  const cleanup: (() => void)[] = [];
 
   const finish = (value: number | null): void => {
-    if (off === null) return;
-    off();
-    off = null;
+    if (!open) return;
+    open = false;
     if (active.get(host) === cancel) active.delete(host);
-    host.emit('pick:end', { kind, value });
-    if (value !== null) cb(value);
+    try {
+      // Context listeners stay live through notifications: a host can replace
+      // data or destroy the chart while responding to the completed pick.
+      host.emit('pick:end', { kind, value });
+      if (value !== null && !invalidated && starts.get(host) === token) cb(value);
+    } finally {
+      for (const off of cleanup.splice(0)) off();
+    }
   };
-  const cancel = (): void => finish(null);
+  const cancel: PickHandle = Object.assign(() => { invalidated = true; finish(null); }, { active: () => open });
 
-  off = host.on('click', (payload) => {
+  // Install fences before cancelling the previous owner, whose listeners can
+  // synchronously replace the context or start a newer capture.
+  for (const event of ['destroy', 'state:restore:start', 'data:context', 'paneRemoved', 'paneMoved']) cleanup.push(host.on(event, cancel));
+  cleanup.push(host.on('data:update', payload => { if ((payload as { kind?: string })?.kind === 'reset') cancel(); }));
+  active.get(host)?.();
+  if (invalidated || starts.get(host) !== token) {
+    for (const off of cleanup.splice(0)) off();
+    return cancel;
+  }
+  open = true;
+
+  cleanup.push(host.on('click', (payload) => {
+    if (!open) return;
     const p = payload as ClickLike;
-    let value = kind === 'price' ? p.price : p.time;
+    let value = resolve ? resolve(payload) : kind === 'price' ? p.price : p.time;
     // A click the chart could not resolve (no pane under it, no bars loaded)
     // leaves the pick armed rather than answering with a bogus number.
     if (value === null || !Number.isFinite(value)) return;
@@ -76,8 +123,9 @@ export function beginPick(host: PickHost, kind: PickKind, cb: (value: number) =>
       const dl = host.dataLayer;
       value = dl.indexToTime(Math.round(dl.timeToIndexFloat(value))) ?? value;
     }
+    if (!Number.isFinite(value)) return;
     finish(value);
-  });
+  }));
   active.set(host, cancel);
   host.emit('pick:start', { kind });
   return cancel;

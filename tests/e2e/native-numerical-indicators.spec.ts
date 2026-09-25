@@ -1,5 +1,50 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import type * as Charts from '../../src/index';
+
+declare global {
+  interface Window {
+    __numeric: {
+      lib: typeof Charts;
+      chart: Charts.Chart;
+      source: Charts.SeriesApi;
+      study?: Charts.IndicatorApi;
+      paint: () => Promise<void>;
+      ink: (series: Charts.SeriesApi, paneIndex: number, index: number, value: number, color?: readonly number[]) => number;
+    };
+  }
+}
+
+async function numericalFixture(page: Page) {
+  await page.setViewportSize({ width: 900, height: 600 });
+  await page.route('**/numeric-recovery.html', route => route.fulfill({
+    contentType: 'text/html',
+    body: '<!doctype html><style>html,body{margin:0;background:#101010}#chart{width:900px;height:600px}</style><div id="chart"></div>',
+  }));
+  await page.goto('/numeric-recovery.html');
+  await page.evaluate(async () => {
+    const url = '/dist/openalgo-charts.all.mjs';
+    const lib = await import(url) as typeof Charts;
+    const chart = lib.createChart(document.getElementById('chart')!, {
+      theme: lib.darkTheme, branding: false, animZoom: false, animAutoscale: false,
+      timeNavigator: false, pixelRatio: () => 1, timezone: 'UTC',
+    });
+    const source = chart.addSeries('line', { style: { color: '#888888' } });
+    window.__numeric = {
+      lib, chart, source,
+      paint: () => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+      ink: (series, paneIndex, index, value, color = [255, 153, 0]) => {
+        const pane = chart.panes()[paneIndex];
+        const x = chart.timeScale.indexToX(index), y = series.priceScale().priceToY(value);
+        const pixels = pane.base.ctx.getImageData(Math.round(x - 5), Math.round(y - 5), 11, 11).data;
+        let count = 0;
+        for (let i = 0; i < pixels.length; i += 4) {
+          if (color.every((component, channel) => Math.abs(pixels[i + channel] - component) < 12)) count++;
+        }
+        return count;
+      },
+    };
+  });
+}
 
 test('Hull smoothing draws the rounded-length warmup and independently calculated ramp', async ({ page }, info) => {
   const errors: string[] = [];
@@ -80,4 +125,168 @@ test('directional strength draws the independently calculated seed and next read
   expect(result.ink).toBeGreaterThan(1);
   expect(errors).toEqual([]);
   await page.screenshot({ path: info.outputPath('directional-seed.png') });
+});
+
+test('RSI draws recovered finite suffixes and leaves missing deltas unpainted', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await numericalFixture(page);
+  const result = await page.evaluate(async () => {
+    const { chart, source, paint, ink } = window.__numeric;
+    source.setData([NaN, 1, 2, 3, 2, 3, NaN, 4, 5, 4].map((close, i) => ({
+      time: 1700000000 + i * 60, open: close, high: close, low: close, close,
+    })));
+    const study = chart.addIndicator('rsi', { length: 2, color: '#ff9900' });
+    chart.setPaneWeight(study.paneIndex, 1.5);
+    chart.setVisibleLogicalRange({ from: -1, to: 10 });
+    await paint();
+    const plot = study.series('rsi')!;
+    return { values: study.values().rsi, initial: ink(plot, study.paneIndex, 4.5, 62.5),
+      recovered: ink(plot, study.paneIndex, 8.5, 65.625), gap: ink(plot, study.paneIndex, 6.5, 75) };
+  });
+  expect(result.values).toEqual([null, null, null, 100, 50, 75, null, null, 87.5, 43.75]);
+  expect(result.initial).toBeGreaterThan(1);
+  expect(result.recovered).toBeGreaterThan(1);
+  expect(result.gap).toBe(0);
+  expect(errors).toEqual([]);
+  await page.screenshot({ path: info.outputPath('rsi-finite-recovery.png') });
+});
+
+test('Balance of Power omits an overflowing range and paints the later finite ratio', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await numericalFixture(page);
+  const result = await page.evaluate(async () => {
+    const { chart, source, paint, ink } = window.__numeric;
+    source.setData([
+      [10, 14, 6, 12], [10, 14, 6, 14], [0, 1e308, -1e308, 1],
+      [10, 14, 6, 12], [10, 14, 6, 14],
+    ].map(([open, high, low, close], i) => ({ time: 1700000000 + i * 60, open, high, low, close })));
+    const study = chart.addIndicator('balance-of-power', { color: '#ff9900' });
+    const plot = study.series('bop')!;
+    plot.priceScale().setAutoScale(false);
+    plot.priceScale().setPriceRange({ min: -0.25, max: 0.75 });
+    chart.setVisibleLogicalRange({ from: -1, to: 5 });
+    await paint();
+    return { values: study.values().bop, recovered: ink(plot, study.paneIndex, 3.5, 0.375),
+      unavailable: ink(plot, study.paneIndex, 2, 0) };
+  });
+  expect(result.values).toEqual([0.25, 0.5, null, 0.25, 0.5]);
+  expect(result.recovered).toBeGreaterThan(1);
+  expect(result.unavailable).toBe(0);
+  expect(errors).toEqual([]);
+  await page.screenshot({ path: info.outputPath('bop-overflow-gap.png') });
+});
+
+test('WaveTrend draws a genuine crossing but no marker for equal finite lines', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await numericalFixture(page);
+  const flat = await page.evaluate(async () => {
+    const { chart, source, paint, ink } = window.__numeric;
+    source.setData(Array.from({ length: 10 }, (_, i) => ({
+      time: 1700000000 + i * 60, open: 100 + i / 4, high: 101 + i / 4,
+      low: 99 + i / 4, close: 100 + i / 4, volume: 0,
+    })));
+    const study = chart.addIndicator('wavetrend', {
+      source: 'close', n1: 3, n2: 4, sigLen: 2, filterZone: false,
+      wt1Color: '#ff9900', wt2Color: '#ff9900', buyColor: '#ff00ff', sellColor: '#ff00ff',
+      showRegDiv: false, showHidDiv: false,
+    });
+    window.__numeric.study = study;
+    const plot = study.series('wt2')!;
+    plot.priceScale().setAutoScale(false);
+    plot.priceScale().setPriceRange({ min: -120, max: 120 });
+    chart.setPaneWeight(study.paneIndex, 1.5);
+    chart.setVisibleLogicalRange({ from: 5, to: 12 });
+    await paint();
+    return { values: study.values(), marker: ink(plot, study.paneIndex, 9, 1 / 0.015, [255, 0, 255]),
+      line: ink(plot, study.paneIndex, 8.5, 1 / 0.015) };
+  });
+  expect(flat.values.wt1.slice(7)).toEqual([1 / 0.015, 1 / 0.015, 1 / 0.015]);
+  expect(flat.values.wt2.slice(8)).toEqual([1 / 0.015, 1 / 0.015]);
+  expect(flat.values.buy).toEqual(Array(10).fill(null));
+  expect(flat.values.sell).toEqual(Array(10).fill(null));
+  expect(flat.marker).toBe(0);
+  expect(flat.line).toBeGreaterThan(1);
+  await page.screenshot({ path: info.outputPath('wavetrend-equal-no-signal.png') });
+  const crossed = await page.evaluate(async () => {
+    const { source, study, paint, ink } = window.__numeric;
+    source.update({ time: 1700000000 + 10 * 60, open: 100, high: 101, low: 99, close: 100, volume: 0 });
+    await paint();
+    const values = study!.values(), price = values.wt2[10]!;
+    return { values, marker: ink(study!.series('wt2')!, study!.paneIndex, 10, price, [255, 0, 255]) };
+  });
+  expect(crossed.values.wt1[10]!).toBeLessThan(crossed.values.wt2[10]!);
+  expect(crossed.values.sell[10]).toBe(crossed.values.wt2[10]);
+  expect(crossed.values.buy[10]).toBeNull();
+  expect(crossed.marker).toBeGreaterThan(3);
+  expect(errors).toEqual([]);
+  await page.screenshot({ path: info.outputPath('wavetrend-genuine-signal.png') });
+});
+
+test('AlphaTrend paints a recovered band after the overflowing window expires', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await numericalFixture(page);
+  const result = await page.evaluate(async () => {
+    const { chart, source, paint, ink } = window.__numeric;
+    source.setData(Array.from({ length: 6 }, (_, i) => ({
+      time: 1700000000 + i * 60, open: 100, close: 100,
+      high: i === 1 || i === 2 ? 1e308 : 102, low: i === 1 || i === 2 ? 0 : 98, volume: 0,
+    })));
+    const study = chart.addIndicator('alphatrend', { AP: 2, color: '#ff9900' });
+    const plot = study.series('alphatrend')!;
+    plot.applyOptions({ color: '#ff9900', lineWidth: 3 });
+    plot.priceScale().setAutoScale(false);
+    plot.priceScale().setPriceRange({ min: -10, max: 110 });
+    chart.setVisibleLogicalRange({ from: -1, to: 6 });
+    await paint();
+    return { values: study.values(), recovered: ink(plot, study.paneIndex, 4.5, 94) };
+  });
+  expect(result.values.alphatrend).toEqual([null, null, null, 0, 94, 94]);
+  expect(result.recovered).toBeGreaterThan(1);
+  expect(errors).toEqual([]);
+  await page.screenshot({ path: info.outputPath('alphatrend-finite-recovery.png') });
+});
+
+test('Seasonality paints finite completed-month cells and omits unavailable changes', async ({ page }, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await numericalFixture(page);
+  const result = await page.evaluate(async () => {
+    const { chart, source, lib, paint } = window.__numeric;
+    const data = [1e308, -1e308, 100, 120, 110].map((close, i) => ({
+      time: Date.UTC(2024, i, 15) / 1000, open: close, high: close, low: close, close,
+    }));
+    source.setData(data);
+    const study = chart.addIndicator('seasonality', { startYear: 1800 });
+    chart.setPaneWeight(study.paneIndex, 2);
+    const pane = chart.panes()[study.paneIndex], painted: string[] = [];
+    const original = pane.top.ctx.fillText.bind(pane.top.ctx);
+    pane.top.ctx.fillText = (text, x, y, maxWidth) => {
+      painted.push(text);
+      if (maxWidth === undefined) original(text, x, y); else original(text, x, y, maxWidth);
+    };
+    chart.setVisibleLogicalRange({ from: -1, to: 5 });
+    await paint();
+    const descriptor = lib.getIndicator('seasonality')!;
+    const rows = descriptor.table!({ bars: data, settings: { ...study.settings(), timezone: 'UTC' }, values: study.values() })!.rows;
+    const pixels = pane.top.ctx.getImageData(0, 0, pane.top.element.width, pane.top.element.height).data;
+    let tableInk = 0;
+    for (let i = 0; i < pixels.length; i += 4) if (pixels[i + 1] > pixels[i] + 30 && pixels[i + 1] > pixels[i + 2] + 5) tableInk++;
+    return { rows: rows.map(row => row.map(cell => cell.text ?? '')), painted, tableInk };
+  });
+  const year = result.rows.find(row => row[0] === '2024')!;
+  const average = result.rows.find(row => row[0] === 'Avgs:')!;
+  expect(year[2]).toBe('');
+  expect(average[2]).toBe('');
+  expect(year[4]).toBe('20.00%');
+  expect(average[4]).toBe('20.00%');
+  expect(result.rows.flat().some(text => /NaN|Infinity/.test(text))).toBe(false);
+  expect(result.painted.some(text => /NaN|Infinity/.test(text))).toBe(false);
+  expect(result.painted).toContain('20.00%');
+  expect(result.tableInk).toBeGreaterThan(20);
+  expect(errors).toEqual([]);
+  await page.screenshot({ path: info.outputPath('seasonality-finite-table.png') });
 });

@@ -99,6 +99,8 @@ export type {
 } from './dialogs/index';
 export { renderForm, controlsFromInputs, controlsFromFields } from './form';
 export type { FormControl, FormKind, FormOptions, FormHandle, FormTranslationOptions } from './form';
+export { mountIndicatorInputControls } from './indicator-input-controls';
+export type { IndicatorInputControlsOptions, IndicatorInputControlsHandle } from './indicator-input-controls';
 export { createAlertUi } from './alert-ui';
 export type { AlertUi, AlertUiOptions } from './alert-ui';
 export { EventDetailsPopup, EVENT_DETAILS_CSS } from './event-details';

@@ -5,6 +5,14 @@ renders it with OpenAlgo Charts (candles plus volume), showing how to wire any
 OHLCV source through a custom `DataFeed`. It is the reference host: the place a
 feature is proved usable, not just present.
 
+Custom indicator settings support symbol lookup with a paired exchange,
+validated session strings, multiline notes, finite prices and absolute UTC
+timestamps. Price and time pick actions hide the settings dialog while the
+chart captures a value, then resume it. Invalid drafts remain visible with an
+error. Apply commits the draft; Cancel discards it. Mixed-scale studies must
+declare the pane and scale for a price pick. These input kinds use native
+descriptor settings and require no feed adapter.
+
 The custom host includes linked chart grids, named layouts and indicator templates
 stored through the optional workspace tier. Layout changes prepare history before
 publication, retain visible storage errors and guard simulated order entry during
@@ -225,6 +233,7 @@ examples/yfinance/
     bracket.js        the bracket panel: entry, target and stop pills
     orders.js         resting orders, market fills, the net position, trade state
     indicators.js     the indicator picker and the generated settings form
+    indicator-input-controls.js typed field validation, symbol search and chart picking
     indicator-source.js the opt-in sample and chart-owned read-only source dialog
     chart-settings.js the chart settings dialog, built from chartSettingsSchema()
     compare.js        multi-symbol comparison
@@ -347,6 +356,7 @@ exists to show one engine surface carrying real use, not just being present.
 | `feed.js` | A `DataFeed` is one method. The bar cache wrapper (`withBarCache`) keys on symbol, exchange and interval, snaps `from` to the bar grid so a reload inside the same bar hits, stops `to` at the last seen bar while the venue is shut, and refetches only the forming bar. A 404, 429 or 5xx becomes a typed error (`NotFoundError`, `RateLimitedError`, `NetworkError`) with a deadline and one retry, so the readout can say "check the symbol" or "try again in a minute" rather than printing whatever the server wrote. A staleness badge says when the newest bar is older than the venue's clock allows. |
 | `intervals.js` | The interval registry accepts codes the built-in grammar does not (`1wk`, a calendar month, a quarter). Monthly and quarterly bars are folded from daily ones through `bucketStartOf`, so a month runs first-to-first in the chart's zone and February is 29 days long in 2024. Ranges are clamped to what the interval can serve. |
 | `indicators.js` | The picker is built from `registeredIndicators()`, so built-ins and the host's opt-in example appear grouped by category. The gear opens a form generated from the descriptor's `inputs`; the same code renders MACD, Bollinger or your own indicator. |
+| `indicator-input-controls.js` | Validates typed drafts and connects shared symbol lookup and chart picking to the reference modal, preserving its Apply and Cancel behavior. |
 | `indicator-source.js` | Registers the Source signal sample and resolves source requests against the emitting chart and live instance. The read-only dialog shows the actual host factory and closes when its owner is removed or destroyed. |
 | `chart-settings.js` | The settings dialog is generated from `chartSettingsSchema()`, including the paired up and down colour control on one row, and a control the current context cannot back is drawn disabled with its state visible. |
 | `transforms.js` | Heikin Ashi, Renko, Range Bars, Line Break, Point and Figure and Kagi from the transform tier; P&F reveals its box-sizing mode (ATR, percent, fixed). |
