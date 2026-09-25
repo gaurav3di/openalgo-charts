@@ -15,8 +15,10 @@ All notable changes to OpenAlgo Charts.
   `openDateNavigation` panel and `DATE_NAVIGATION_CSS` are exported for custom
   hosts. The widget toolbar and mobile More sheet open the panel, and the
   reference host offers it by loading a longer period.
-- `DataLoadingController.loadMore(until?)` widens the first date window to reach
-  `until` in one request instead of one request per default window.
+- `DataLoadingController.loadMore(until?)` widens a date feed's window to reach
+  `until` in one request instead of one request per default window. The window
+  stops at `maxBars` bars of a fixed interval, and a `getBarsPage` feed keeps its
+  ordinary window.
 - CSV export supports explicit study instances, inclusive UTC ranges and
   display-aligned plot values with effective runtime offsets. Candle plots expand
   into OHLC fields; projected times are identified without exposing future replay

@@ -56,6 +56,31 @@ describe('history reach', () => {
     expect(controller.getState()).toMatchObject({ hasMore: null, historyStatus: 'idle' });
   });
 
+  it('never widens a date window past what retention could keep', async () => {
+    const windows: Array<[number, number]> = [];
+    const controller = make({ getBars: async request => {
+      windows.push([request.from!, request.to!]);
+      return windows.length === 1 ? [bar(1080), bar(1140)] : [];
+    } }, { maxBars: 1000, maxEmptyPages: 1 });
+    await controller.load(req);
+    // Two years of one-minute bars back; retention holds a thousand of them.
+    await controller.loadMore(1080 - 2 * 365 * 86400);
+    expect(windows).toHaveLength(2);
+    expect(windows[1][1] - windows[1][0]).toBeLessThanOrEqual(1000 * 60);
+    expect(windows[1][0]).toBeLessThanOrEqual(1080 - 200);
+  });
+
+  it('leaves a paged feed its ordinary window, since it pages by count', async () => {
+    const pages: Array<[number, number]> = [];
+    const controller = make({ getBars: async () => [bar(1080)], getBarsPage: async request => {
+      pages.push([request.from!, request.before]);
+      return { bars: [bar(900)], hasMore: true };
+    } });
+    await controller.load(req);
+    await controller.loadMore(-50_000);
+    expect(pages).toEqual([[1080 - 200, 1080]]);
+  });
+
   it('pages a countBack feed one page per reach and respects its exhaustion', async () => {
     const pages: number[] = [];
     const controller = make({ getBars: async () => [bar(1080)], getBarsPage: async request => {

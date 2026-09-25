@@ -60,7 +60,7 @@ bindings and preserves a saved view when the original instrument matches.
 | --- | --- |
 | `load(req)` | Cancel the old context, clear its bars, optionally paint closed cache bars, fetch current history and seed the stream. |
 | `refresh()` | Fetch authoritative history, buffer incoming bars, then publish the merged result. A failure retains a stale display and Retry remains available. |
-| `loadMore(until?)` | Share a pending page, deduplicate older bars and reject obsolete responses after a context change. `until` (UTC seconds) widens the first date window to reach that time in one request; a paged feed still returns one `countBack` page per call. |
+| `loadMore(until?)` | Share a pending page, deduplicate older bars and reject obsolete responses after a context change. `until` (UTC seconds) widens a date feed's window to reach that time in one request, up to `maxBars` bars of a fixed interval; a paged feed keeps its ordinary window and returns one `countBack` page per call. |
 | `pushBar(bar, meta?)` | Accept live bars from an existing host-owned subscription. Omit `feed.subscribeBars` to avoid a second subscription. `meta.provisional` marks a bar whose open is only the first tick a builder saw; it keeps the open history holds for that bucket. |
 | `getState()` / `subscribe(fn)` | Read/observe display bars and typed loading status. Subscribe does not immediately invoke the listener. |
 | `bars()` | Read the current live store, including updates held away from the display. Treat arrays and bars as read-only. |
