@@ -5,6 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import type { PriceScale } from '../src/scale/price-scale';
+import type { PaneRenderContext } from '../src/core/pane';
 import { Chart } from '../src/core/chart';
 import { fakeDocument } from './helpers/fake-dom';
 import { alignToPrimary } from '../src/compare/align';
@@ -580,15 +581,24 @@ describe('regressions found by the browser pass, not by unit tests', () => {
     expect(after.max).toBeCloseTo(primary.max * k, 6);
   });
 
+  it('autoscales against the context the paint loop gives the bottom pane', () => {
+    // The helper below stands in for the paint loop. If it drifted, the
+    // autoscale assertions above would compare against a taller plot than any
+    // frame lays out.
+    const { chart } = chartWith();
+    expect(chartRenderContext(chart).showTimeAxis).toBe(true);
+  });
+
   function chart0Scale(): PriceScale {
     const chart = makeChart();
     chart.addSeries('candlestick').setData(bars(50, 100));
     return chart.panes()[0].priceScale;
   }
 
-  function chartRenderContext(chart: Chart): never {
+  function chartRenderContext(chart: Chart): PaneRenderContext {
     // The pane needs the same context the paint loop builds. Reach for the
-    // private builder rather than reconstructing it and drifting from it.
-    return (chart as unknown as { _renderContext(b: boolean): never })._renderContext(true);
+    // private builder rather than reconstructing it and drifting from it, and
+    // borrow its own signature so a change to it fails the typecheck here.
+    return (chart as unknown as { _renderContext: Chart['_renderContext'] })._renderContext(0);
   }
 });

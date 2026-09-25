@@ -161,7 +161,7 @@ test('every drawing can be moved by its painted body without changing its shape'
       const { chart, draw } = widget;
       draw.select(null);
       const drawing = draw.drawings()[0];
-      const pane = chart._panes[0], rc = chart._renderContext(true);
+      const pane = chart._panes[0], rc = chart._renderContext(0);
       const anchors = drawing.points.map((p: any) => ({ x: chart.timeToCoordinate(p.time), y: chart.priceToCoordinate(p.price) }));
       const canvas = document.querySelectorAll('#chart canvas')[1].getBoundingClientRect();
       const points: { x: number; y: number }[] = [];

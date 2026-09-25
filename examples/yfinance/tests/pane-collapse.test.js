@@ -20,9 +20,9 @@ function foldingChart() {
 }
 
 /** The right-click menu with the rows `openContextMenu` reads, in index.html's order. */
-function setup(chart) {
+function setup(chart, chart2 = null) {
   const { document } = installDom();
-  for (const id of ['ctxmenu', 'axmenu', 'axsub', 'chart', 'status', 'chartset', 'setmodal', 'volshow']) {
+  for (const id of ['ctxmenu', 'axmenu', 'axsub', 'chart', 'chart2', 'status', 'chartset', 'setmodal', 'volshow']) {
     const node = document.createElement('div'); node.id = id; node.hidden = id === 'axmenu' || id === 'axsub'; document.body.appendChild(node);
   }
   const menu = document.getElementById('ctxmenu');
@@ -38,11 +38,16 @@ function setup(chart) {
   add('hr', 'data-sec', 'ind'); add('button', 'data-act', 'indset');
   add('hr', 'data-sec', 'pane'); add('button', 'data-act', 'panecollapse');
   add('hr', 'data-sec', 'vol'); add('button', 'data-act', 'volshow').appendChild(document.createElement('em'));
-  initMenus({ chart, req: { symbol: 'X', interval: '1d', period: '1y' }, currentBars: [], draw: null });
-  const open = (paneIndex, kind = 'empty') => openContextMenu({ paneIndex, point: { x: 10, y: 10 }, price: null, index: null, target: { kind, id: null } });
+  const request = { symbol: 'X', interval: '1d', period: '1y' };
+  initMenus({ chart, chart2, req: request, p2: { ...request }, currentBars: [], draw: null });
+  const open = (paneIndex, kind = 'empty', pane = 1) =>
+    openContextMenu({ paneIndex, point: { x: 10, y: 10 }, price: null, index: null, target: { kind, id: null } }, pane);
   const row = () => menu.querySelector('[data-act="panecollapse"]');
   const rule = () => menu.querySelector('hr[data-sec="pane"]');
-  return { open, row, rule };
+  // The second chart's menu is a popup built per open, not the static menu.
+  const popupRow = () => [...document.body.querySelectorAll('.menu button')]
+    .find(button => /(Collapse|Expand) pane/.test(button.innerHTML)) || null;
+  return { open, row, rule, popupRow };
 }
 
 describe('reference host pane collapse', () => {
@@ -69,6 +74,24 @@ describe('reference host pane collapse', () => {
     expect(rig.rule().hidden).toBe(true);
     rig.open(1, 'time-scale');
     expect(rig.row().hidden).toBe(true);
+  });
+
+  it('offers the split chart its own row, acting on that chart', () => {
+    const main = foldingChart(), split = foldingChart();
+    const rig = setup(main, split);
+    rig.open(1, 'empty', 2);
+    expect(rig.popupRow()?.innerHTML).toContain('Collapse pane');
+    rig.popupRow().click();
+    expect(split.setPaneCollapsed).toHaveBeenLastCalledWith(1, true);
+    expect(main.setPaneCollapsed).not.toHaveBeenCalled();
+    rig.open(1, 'empty', 2);
+    expect(rig.popupRow()?.innerHTML).toContain('Expand pane');
+    rig.popupRow().click();
+    expect(split.paneCollapsed(1)).toBe(false);
+    rig.open(1, 'time-scale', 2);
+    expect(rig.popupRow()).toBeNull();
+    rig.open(0, 'empty', 2);
+    expect(rig.popupRow()).toBeNull();
   });
 
   it('stays out of the menu on an engine without pane collapse', () => {
