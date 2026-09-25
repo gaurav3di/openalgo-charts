@@ -204,8 +204,9 @@ export interface IndicatorHost {
   removeIndicatorFill(fill: IndicatorFillPrimitive): void;
   /**
    * Detach a signal-marker layer. There is no matching `add`: the layer comes
-   * from `series.createMarkers()` on a plot's own series, so it already lands in
-   * the right pane. Removing a series does not remove its primitives, hence this.
+   * from `series.createMarkers()` on a plot's own series, or on the instrument's
+   * for marks sent to the candles, so it already lands in the right pane.
+   * Removing a series does not remove its primitives, hence this.
    */
   removeIndicatorMarkers(markers: SeriesMarkers): void;
   /** Attach a corner-pinned summary grid to a pane, and detach it again. */
