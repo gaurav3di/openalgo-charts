@@ -536,7 +536,7 @@ A plot cannot express this: a plot is a column of prices drawn as a line or a hi
 - Missing or NaN plot values use the instrument bar at the same time only when the indicator is on pane 0 and its marker series shares the primary series' price scale. Finite plot points retain precedence. Own-pane oscillators and independent scales never receive instrument-price fallback; without an anchor their bar-relative marker is skipped.
 - `series.createMarkers(fallbackBars)` and `new SeriesMarkers(seriesId, fallbackBars, priceScale)` accept optional callbacks. `fallbackBars` returns current `readonly Bar[]`; the optional constructor `priceScale` returns the current `PriceScale`. Series-created layers supply that scale callback automatically, including after an axis move. Missing shared-axis times are skipped even when a fallback bar exists. `atPrice`, `paneTop` and `paneBottom` do not require a series bar.
 - **Markers are a separate primitive from the plots.** `setVisible(false)` hides both because the runtime re-runs the hook with an empty result, but a plot-level style patch does not touch them.
-- **Marker groups.** A marker can name an `IndicatorOutputTarget`: `overlay: true` anchors it to the instrument's candles on the price pane (so `belowBar` sits under the low) even from a study in its own pane, and `plot: key` anchors it to that declared plot's series, pane and scale. Each target is its own `SeriesMarkers` layer created on that series: it follows the series through `setPlotPriceScales`, `setPriceScale` and `moveIndicator` (a price-pane group stays on pane 0), is cleared while the study is hidden and refilled in place when shown, is released when a visible pass returns nothing for it, and goes with the study or its pane. A group created after the first pass (a target returned again, or for the first time) is restacked into study order through the host's `resourcesChanged`. Marks with no target keep `markerAnchor` and the first plot byte for byte. An overlay group waits for a primary series. An unknown plot, or `plot` together with `overlay: true`, throws before any marker layer changes, and so does an invalid style on any mark: `addIndicator` throws, and a later pass publishes an error status while every marker layer keeps the last good pass. The rest of the pass is not rolled back: a pass syncs plots and fills, markers, the table, drawings, then background, bar colours, levels and alerts, so outputs before the failing one stay applied and those after it wait for the next good pass. Marks in different groups do not stack against each other at a shared bar.
+- **Marker groups.** A marker can name an `IndicatorOutputTarget`: `overlay: true` anchors it to the instrument's candles on the price pane (so `belowBar` sits under the low) even from a study in its own pane, and `plot: key` anchors it to that declared plot's series, pane and scale. Each target is its own `SeriesMarkers` layer created on that series: it follows the series through `setPlotPriceScales`, `setPriceScale` and `moveIndicator` (a price-pane group stays on pane 0), is cleared while the study is hidden and refilled in place when shown, is released when a visible pass returns nothing for it, and goes with the study or its pane. A target that resolves to the series the study's own marks anchor to (`overlay: true` from an on-price study with `markerAnchor: 'price'`, or `plot` naming the first plot) is not a separate layer: those marks join the study's own layer in the order returned, so marks at one bar stack, and they split out again if a move changes that anchor. A study's layers stack as: its own marks, its marker groups, its own shapes, its drawing targets, each kind's targets in target order (price pane, then plots in declaration order), which is also the order a pass creates them in. A group created after the first pass (a target returned again, or for the first time) is restacked into that place through the host's `resourcesChanged`, called from inside the pass; the runtime republishes no study's bar colours during that call, since study order has not changed. A study's own layer created on a later pass is never restacked, exactly as before targets. Marks with no target keep `markerAnchor` and the first plot byte for byte. An overlay group waits for a primary series. An unknown plot, or `plot` together with `overlay: true`, throws before any marker layer changes, and so does an invalid style on any mark: `addIndicator` throws, and a later pass publishes an error status while every marker layer keeps the last good pass. The rest of the pass is not rolled back: a pass syncs plots and fills, markers, the table, drawings, then background, bar colours, levels and alerts, so outputs before the failing one stay applied and those after it wait for the next good pass. Marks in groups on different series (the candles and a plot, or two plots) do not stack against each other at a shared bar: each is measured against a different value.
 
 ```ts
 markers: ({ bars, values }) => crossings(values.momentum).map(i => ({
@@ -966,8 +966,10 @@ mutate or leak, and a symbol change cannot strand a drawing.
 Every `IndicatorDrawing` also accepts the `IndicatorOutputTarget` fields. With neither set the shape
 stays in the study's own layer on its first local plot's scale, exactly as before.
 
-- `overlay: true` draws the shape on the price pane in the instrument's units, measured on the
-  primary series' own scale whichever axis or overlay scale that is. The layer binds no scale, so it
+- `overlay: true` draws the shape on pane 0 in the instrument's units, measured on the scale that
+  pane quotes prices on (`PrimitiveRenderContext.readoutPriceScale`: its first visible price series,
+  the candles, on whichever axis or overlay scale that is). It is read from pane 0 itself, so a host
+  that puts its candles on another pane gets pane 0's own scale, never a scale from another pane. The layer binds no scale, so it
   never reserves an axis column and never stops `movePriceAxis` or `setSeriesPriceScale` from moving
   the candles; the shape goes with them. It stays on pane 0 through `moveIndicator` and ignores
   whole-study scale moves.
@@ -977,15 +979,18 @@ stays in the study's own layer on its first local plot's scale, exactly as befor
 - Each target is its own `IndicatorDrawings` layer owned by the instance: hidden with the study,
   released when a pass returns nothing for it, released on `remove()` or when the study's pane is
   removed, and recreated on `restoreState` from the descriptor (targets are descriptor data, not
-  saved state). A layer created after the first pass is restacked into study order. Hit ids and
-  tooltips report on the pane and scale the shape is drawn on.
+  saved state). A layer created after the first pass is restacked into its study's place (see the
+  marker groups bullet for the order). Hit ids and tooltips report on the pane and scale the shape is
+  drawn on.
 - An unknown plot, or `plot` together with `overlay: true`, throws before any drawing layer changes,
   and so does an invalid style on any shape. Only the drawing layers are protected: the plots,
   fills, markers and table synced earlier in that pass stay applied, and the background, bar colours,
   levels and alerts wait for the next good pass. The error is published as the study's status.
-- `new IndicatorDrawings(priceScale?)` takes an optional `() => PriceScale | null | undefined`,
-  read on every frame; without it, or when it returns nothing, the layer uses the scale its pane binds
-  it to. The runtime passes the primary series' scale for price-pane targets.
+- `new IndicatorDrawings(priceScale?)` takes an optional
+  `(rc: PrimitiveRenderContext) => PriceScale | null | undefined`, read on every frame with that
+  frame's context; without it, or when it returns nothing, the layer uses the scale its pane binds it
+  to. The runtime passes `rc => rc.readoutPriceScale` for price-pane targets. A host can pass
+  `() => series.priceScale()` to follow one series on that series' own pane.
 
 ```ts
 draws: ({ bars }) => [

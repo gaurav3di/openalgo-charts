@@ -5,18 +5,23 @@ All notable changes to OpenAlgo Charts.
 ## Unreleased
 
 - Study drawings and markers can name where they go. `overlay: true` sends a
-  shape to the price pane, measured on the candles' own scale on whichever axis
-  they sit, or anchors a marker to the candles, even from a study in its own
-  pane; neither holds an axis, so the price axis stays free to move. `plot: key`
-  draws a shape on that plot's pane and scale, or anchors a marker to that
-  plot's series. Each target is its own layer that follows scale reassignment
-  and study moves, hides with the study, reports hits where it is drawn, keeps
-  its study's place in the stack, and is released when no longer returned or
-  when the study or its pane goes. An invalid target or style throws before any
-  layer of that kind changes; the rest of that pass is not rolled back. Outputs
-  that name no target render exactly as before. `IndicatorOutputTarget` and
-  `IndicatorMarker` are exported, and `IndicatorDrawings` takes an optional
-  price-scale callback.
+  shape to the price pane, measured on the scale that pane quotes prices on
+  (the candles' own, on whichever axis they sit), or anchors a marker to the
+  candles, even from a study in its own pane; neither holds an axis, so the
+  price axis stays free to move. `plot: key` draws a shape on that plot's pane
+  and scale, or anchors a marker to that plot's series. Each target is its own
+  layer that follows scale reassignment and study moves, hides with the study,
+  reports hits where it is drawn, and is released when no longer returned or
+  when the study or its pane goes. Marks sent to the series the study's own
+  marks already use join that layer, so marks at one bar stack. A study's
+  layers stack in a fixed order, and a targeted layer made on a later pass
+  takes its study's place, without recomputing or recolouring any study. An
+  invalid target or style throws before any layer of that kind changes; the
+  rest of that pass is not rolled back, and its bar colours are not published.
+  Outputs that name no target render and stack exactly as before.
+  `IndicatorOutputTarget` and `IndicatorMarker` are exported, and
+  `IndicatorDrawings` takes an optional callback that picks the price scale
+  from each frame's context.
 - CSV export supports explicit study instances, inclusive UTC ranges and
   display-aligned plot values with effective runtime offsets. Candle plots expand
   into OHLC fields; projected times are identified without exposing future replay

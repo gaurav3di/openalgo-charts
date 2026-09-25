@@ -595,7 +595,8 @@ price-overlay overrides survive both calls and can be cleared individually.
 
 Levels, unbound price drawings, attached price primitives and study-owned range
 intent follow the first local plot. A drawing that names a `plot` follows that
-plot's scale; a price-pane drawing follows the candles' own scale without binding one. Plot
+plot's scale; a price-pane drawing follows the scale the price pane quotes prices on, the
+candles' own, without binding one. Plot
 markers, including marker groups that name a plot, follow their series. The move
 preserves handles and data without recalculation. Target ranges stay intact;
 formatting is shared by plots assigned to the same ID. Explicit plot formats

@@ -675,8 +675,10 @@ layer.setVisible(false);
 ```
 
 The constructor takes an optional callback returning the scale to measure prices on,
-read on every frame. `new IndicatorDrawings(() => series.priceScale())` keeps the shapes
-on that series' scale wherever the series goes, without binding the layer to an axis.
+read on every frame with that frame's render context. `new IndicatorDrawings(() => series.priceScale())`
+keeps the shapes on that series' scale wherever the series goes, without binding the layer
+to an axis, and `new IndicatorDrawings((rc) => rc.readoutPriceScale)` measures them on the
+scale the pane quotes prices on, which is what a study's price-pane shapes use.
 
 ## Drawing and marker targets
 
@@ -688,7 +690,7 @@ returned by `markers` can name where it goes with two optional fields, together 
 
 | Field | Drawing | Marker |
 |---|---|---|
-| `overlay: true` | Drawn on the price pane in the instrument's units, measured on the candles' own scale, whichever axis that is. | Anchored to the instrument's candles, so `belowBar` sits under the low. Drawn once the chart has a primary series. |
+| `overlay: true` | Drawn on the price pane in the instrument's units, measured on the scale that pane quotes prices on: the candles' own, whichever axis that is. | Anchored to the instrument's candles, so `belowBar` sits under the low. Drawn once the chart has a primary series. |
 | `plot: 'key'` | Drawn on that declared plot's pane and measured on its effective scale. | Anchored to that plot's series: its pane, its scale and its values. |
 
 With neither field, an output stays where it always went: drawings in the study's own
@@ -739,9 +741,13 @@ What the runtime does with a target:
   holds an axis of its own, so neither stops the price axis from moving.
 - **Hiding and removal.** Hiding the study hides every target. A target that a later
   calculation no longer returns is released rather than kept empty, and removing the study,
-  or the pane it lives in, releases all of them. A layer made after the study was added,
-  for a target returned again or for the first time, takes the study's place in the
-  stack, below the studies added after it.
+  or the pane it lives in, releases all of them.
+- **Stacking.** A study's layers stack in a fixed order: its own marks, its marker
+  targets, its own shapes, then its drawing targets, with each kind's targets taking the
+  price pane first and then the plots in declaration order. A targeted layer made after
+  the study was added, for a target returned again or for the first time, takes that
+  place, below the studies added after it. Nothing is recomputed or recoloured to do it.
+  A descriptor that names no target stacks exactly as before.
 - **Hits.** A `box` or `label` with an `id` or `tooltip`, and a marker with an `id`, report
   through `subscribeClick` where they are drawn: on the price pane or on the plot's axis.
 - **Saved state.** Targets are descriptor data, so a restored layout routes the same way.
@@ -753,8 +759,11 @@ What the runtime does with a target:
   bar colours, levels and alerts: those before the failing output stay applied, and those
   after it wait for the next pass that succeeds.
 
-Marks in different targets do not stack against each other at a shared bar, since each
-layer stacks only its own.
+Marks sent to the series the study's own marks already use, `overlay: true` from a study
+on the price pane with `markerAnchor: 'price'` or `plot` naming the first plot, join the
+study's own layer in the order they were returned, so marks at one bar stack one under
+the other. Marks on different series, the candles and a plot, are measured against
+different values and do not stack against each other.
 
 ## Trading sessions
 
