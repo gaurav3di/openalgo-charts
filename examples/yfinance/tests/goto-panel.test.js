@@ -59,7 +59,10 @@ function setup(interval) {
   gate = null;
   app = { req: { symbol: 'AAA', interval, period: '1mo' }, focusPane: 1 };
   app.load = vi.fn(async () => {
-    if (gate) await gate.promise;
+    // The real load awaits its fetch before render() rebuilds, so the rebuild
+    // lands while the panel's request is under way, never inside navigate().
+    await (gate ? gate.promise : Promise.resolve());
+    await Promise.resolve();
     app.req.period = dom.doc.getElementById('period').value;
     // render(): the pane's overlays are released first, then its chart.
     pane.overlays.destroy();

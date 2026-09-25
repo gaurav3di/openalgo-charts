@@ -421,6 +421,30 @@ describe('widget go-to panel', () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
+  it('reports nothing once closed, even when its host lets the request finish', async () => {
+    const { widget, root } = make({ feed: rangeFeed([]) });
+    await flush();
+    let settle!: (result: DateNavigationResult) => void;
+    const navigate = vi.fn(() => new Promise<DateNavigationResult>(resolve => { settle = resolve; }));
+    const cancel = vi.fn();
+    const status = vi.fn();
+    const ctx = Object.create(widget.context, { status: { value: status } }) as typeof widget.context;
+    openDateNavigation(ctx, undefined, { navigate, cancel });
+    const panel = root.querySelector('.oac-goto')!;
+    panel.querySelectorAll('input')[0].value = '2023-10-16';
+    panel.querySelector('[data-action="go-to"]')!.click();
+    await flush();
+    expect(navigate).toHaveBeenCalledTimes(1);
+    panel.querySelector('.oac-dialog__head button')!.click();
+    await flush();
+    expect(cancel).toHaveBeenCalledTimes(1);
+    const message = panel.querySelector('.oac-goto__message')!;
+    settle({ status: 'partial', history: 'exhausted', from: at(2023, 1, 2, 9, 15), to: at(2023, 1, 2, 9, 15) });
+    await flush();
+    expect(status).not.toHaveBeenCalled();
+    expect(message.textContent).toBe('Loading history');
+  });
+
   it('offers the panel from the compact controls', async () => {
     const { root } = make({ mobile: 'always' });
     root.querySelector('[data-mobile-action="more"]')!.click();
