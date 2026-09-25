@@ -92,7 +92,9 @@ Host registrations use `custom:<provider.id>` and cannot replace a built-in row.
 The inventory honours [drawing policies](/docs/drawing-tools#drawing-policies). A drawing
 with `policy.listed: false` has no row and is left out of its group's row. One with
 `policy.editable: false` offers no `visibility`, `lock` or `remove`, and neither does a
-group holding it. One with `policy.selectable: false` offers no `select`.
+group holding it. One with `policy.selectable: false` offers no `select`. A group that
+holds an unlisted drawing removes only its listed members, as one undo step, and
+`ungroup` leaves it as it is.
 
 ## Register a profile with supported actions
 

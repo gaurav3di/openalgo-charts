@@ -322,7 +322,7 @@ chart has a different interval loaded.
 | `sendBehindSeries(id)` / `bringAboveSeries(id)` | Cross the series: below zero paints under the candles. |
 | `copy(target?)` / `cut(target?)` / `paste()` | Clipboard, all async. See [Drawing Clipboard](/docs/drawing-clipboard). |
 | `clipboard()` | The `DrawingClipboard` behind those three, for reporting why a copy did not reach the OS clipboard. |
-| `undo()` / `redo()` / `canUndo()` / `canRedo()` | History. A paste of several drawings is one step. |
+| `undo()` / `redo()` / `canUndo()` / `canRedo()` | History. A paste of several drawings is one step. `canUndo()` and `canRedo()` report only a step that still changes something. |
 | `toJSON()` / `fromJSON(data)` | Explicit serialisation: a `{ version: 2, drawings }` document out; a document or a 1.9.x bare array in, upgraded by `migrateDrawings`. |
 | `setOptions(patch)` | `magnet`, `stayInDrawingMode`, `historyLimit`, `defaultStyle`, `pasteOffsetBars`, `pasteOffsetPixels`, `clipboard`. |
 | `cancel()` / `popAnchor()` | Drop the anchors placed so far (the tool disarms unless `stayInDrawingMode` keeps it); remove the last anchor of a variable-anchor shape still being placed. Escape and Backspace, once the host wires them. |
@@ -398,20 +398,26 @@ draw.remove(mark.id, { force: true });
 | Flag | `false` means | Binds |
 |---|---|---|
 | `selectable` | Never joins the selection. A click passes through to what lies under it, and nothing hovers or drags it. | Every caller: `select()` ignores it. |
-| `editable` | Read-only. It still selects, copies and duplicates, but nothing moves, reshapes, restyles, hides, locks, cuts or deletes it, and undo and redo never change it. | User operations. Every mutating controller method treats a call as the user's unless it passes `{ force: true }`. A restore and a linked chart's commit always apply. |
+| `editable` | Read-only. It still selects, copies and duplicates, but nothing moves, reshapes, restyles, hides, locks, cuts, deletes or regroups it, and undo and redo never change it. `createGroup` leaves it in its group, and a group holding it cannot be renamed or removed. | User operations. Every mutating controller method treats a call as the user's unless it passes `{ force: true }`. A restore and a linked chart's commit always apply. |
 | `persistent` | Transient. Left out of `toJSON()`, the chart state and every saved layout, while it renders and undoes as usual in the session. | Every caller: the serializer. A restore replaces it with what was saved. |
-| `listed` | Left out of the object inventory (`ChartObjects`) and every objects panel. | Every caller of the inventory. |
+| `listed` | Left out of the object inventory (`ChartObjects`), every objects panel and every group-wide action there, and out of the widget's alert source picker. | Every caller of the inventory. |
+
+Placing a drawing with a restriction, a patch that carries `policy`, and every forced call
+are the host's own acts, so none of them is an undo step. A policy is never history either:
+every recorded step takes the drawing's policy as it is now, so no undo or redo brings an
+older one back, and a step a new restriction has left with nothing to do is dropped.
 
 A copy is the user's own drawing: paste and duplicate never carry a policy. A policy is
 data, so it survives a save and a restore for a persistent drawing, and the migration keeps
 only the four boolean flags; strip `policy` before `fromJSON` when importing a document you
-do not trust. Stacking order (front, back, either side of the series) is outside the policy.
+do not trust, the way the yfinance host does for every layout file it imports. Stacking order (front, back, either side of the series) is outside the policy.
 
 The widget draws every edit control for a read-only selection disabled with the note
 "read-only" (context menu, properties dialog, rail, mobile bar) and keeps copy and duplicate.
 The [Objects](/docs/objects) panel leaves unlisted drawings out and offers a read-only one
 no hide, lock or remove. The yfinance reference host's **Mark ... for This Session** menu
-row places a read-only, transient, unlisted line and clears them with `force`.
+row places a read-only, transient, unlisted line, puts it back after every rebuild or
+restore, and clears the marks with `force`.
 
 ## Keyboard shortcuts
 

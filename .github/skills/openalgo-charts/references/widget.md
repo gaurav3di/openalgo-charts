@@ -369,7 +369,10 @@ widget a read-only selection keeps its copy and duplicate actions while every
 edit control is drawn disabled with the note "read-only": context menu rows, the
 properties dialog (fields, lock, visibility, delete, restore defaults), the rail's
 lock, eye and trash, and the mobile selection bar. The text and level editors
-decline to open on it. See [drawing policies](drawing-tools.md#drawing-policies).
+decline to open on it. In a selection that mixes the two, Cut, Delete and the trash
+tooltip count only the drawings they take. **Group selected** is off for a
+selection of read-only drawings only, and the alert editor's drawing picker leaves
+unlisted drawings out. See [drawing policies](drawing-tools.md#drawing-policies).
 
 The panel uses the shared overlay for pointer containment, focus trapping, Escape
 and focus restoration. Its scrollable list fits the actual container, including
