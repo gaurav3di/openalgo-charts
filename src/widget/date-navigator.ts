@@ -29,7 +29,11 @@ import {
 export interface DateNavigationTarget {
   /** The date to show, or the start of the range. */
   from: number;
-  /** Inclusive end of a range: bars that open at or before it. Omit to centre `from` at the current zoom. */
+  /**
+   * Inclusive end of a range: bars that open at or before it, a bar a day or
+   * longer counting from the local midnight of its first day. Omit to centre
+   * `from` at the current zoom.
+   */
   to?: number;
 }
 
@@ -88,8 +92,12 @@ interface Frame {
 
 function frameOf(b: Bucketing, zone: string): Frame {
   if (b.mode === 'interval') {
-    const open = b.seconds >= 86400 ? (t: number): number => startOfZonedDay(t, zone) : (t: number): number => t;
-    return { open, close: t => open(t) + b.seconds };
+    if (b.seconds < 86400) return { open: t => t, close: t => t + b.seconds };
+    const open = (t: number): number => startOfZonedDay(t, zone);
+    // Across a clock change a day is 23 or 25 hours, so the close is the local
+    // midnight that ends the bar's last day. Half a day past the fixed length
+    // lands inside that next day whichever way the clock moved.
+    return { open, close: t => startOfZonedDay(open(t) + b.seconds + 43200, zone) };
   }
   return { open: t => bucketStartOf(b, t, zone), close: t => nextBucketStart(b, t, zone) ?? t };
 }
@@ -129,7 +137,7 @@ function place(chart: Chart, frame: Frame, from: number, to: number | undefined,
   // History only falls short when its first bar still counts from after the request.
   const history = reach !== undefined && reach !== 'loaded' && n > 0 && frame.open(bars[0].time) > from ? reach : undefined;
   const start = firstWhere(n, i => frame.close(bars[i].time) > from);
-  const stop = to === undefined ? start : firstWhere(n, i => bars[i].time > to) - 1;
+  const stop = to === undefined ? start : firstWhere(n, i => frame.open(bars[i].time) > to) - 1;
   if (start >= n || stop < start) return history === undefined ? { status: 'no-data' } : { status: 'no-data', history };
   const index = (i: number): number => chart.dataLayer.timeToIndex(bars[i].time) ?? i;
   let a: number;

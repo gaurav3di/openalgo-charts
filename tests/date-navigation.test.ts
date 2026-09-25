@@ -50,10 +50,11 @@ beforeAll(() => {
 const charts: Chart[] = [];
 afterEach(() => { for (const chart of charts.splice(0)) if (!chart.isDestroyed) chart.destroy(); });
 
-function makeChart(bars: readonly Bar[], interval = '1d'): Chart {
+function makeChart(bars: readonly Bar[], interval = '1d', timezone?: string): Chart {
   const chart = new Chart(fakeDocument().createElement('div'), {
     document: fakeDocument(), pixelRatio: () => 1, shortcuts: false,
     raf: { schedule: (cb: () => void) => { cb(); return 1; }, cancel: () => {} },
+    ...(timezone === undefined ? {} : { timezone }),
   });
   chart.applySize(800, 600);
   chart.addSeries('candlestick').setData(bars);
@@ -162,6 +163,49 @@ describe('date placement on loaded history', () => {
       const named = new DateNavigator({ chart, interval: () => '1d' });
       expect(await named.goTo({ from: bars[10].time })).toMatchObject({ status: 'placed', from: bars[10].time });
     } finally { off(); }
+  });
+});
+
+describe('date placement across daylight saving changes', () => {
+  // A day is 23 or 25 hours and a week 167 or 169 around a change, so a bar's
+  // end has to come from the calendar, not from its open plus a fixed length.
+  const NY = 'America/New_York';
+  const local = (y: number, m: number, d: number, hh = 0, mm = 0): number => zonedWallClockToUtcSeconds(y, m, d, hh, mm, 0, NY);
+
+  it('lands a date on its own daily bar on both sides of a change', async () => {
+    const days = (y: number, m: number, d: number, count: number): Bar[] =>
+      Array.from({ length: count }, (_, i) => bar(local(y, m, d + i), 100 + i));
+    const spring = days(2024, 3, 4, 14);
+    const chart = makeChart(spring, '1d', NY);
+    const navigator = new DateNavigator({ chart });
+    expect(await navigator.goTo({ from: local(2024, 3, 11) })).toMatchObject({ status: 'placed', from: local(2024, 3, 11) });
+    expect(await navigator.goTo({ from: local(2024, 3, 10, 23, 30) })).toMatchObject({ status: 'placed', from: local(2024, 3, 10) });
+    expect(await navigator.goTo({ from: local(2024, 3, 11), to: local(2024, 3, 12, 23, 59) }))
+      .toMatchObject({ status: 'placed', from: local(2024, 3, 11), to: local(2024, 3, 12) });
+
+    const autumn = makeChart(days(2024, 10, 28, 14), '1d', NY);
+    const back = new DateNavigator({ chart: autumn });
+    // The 25-hour day: its last hour still belongs to it.
+    expect(await back.goTo({ from: local(2024, 11, 3, 23, 30) })).toMatchObject({ status: 'placed', from: local(2024, 11, 3) });
+    expect(await back.goTo({ from: local(2024, 11, 4) })).toMatchObject({ status: 'placed', from: local(2024, 11, 4) });
+  });
+
+  it('lands a date on its own weekly bar in a week that changes the clock', async () => {
+    const weeks = Array.from({ length: 12 }, (_, i) => bar(local(2024, 2, 5 + 7 * i), 100 + i));
+    const chart = makeChart(weeks, '1w', NY);
+    const navigator = new DateNavigator({ chart });
+    expect(await navigator.goTo({ from: local(2024, 3, 11) })).toMatchObject({ status: 'placed', from: local(2024, 3, 11) });
+    expect(await navigator.goTo({ from: local(2024, 3, 13) })).toMatchObject({ status: 'placed', from: local(2024, 3, 11) });
+    expect(await navigator.goTo({ from: local(2024, 3, 10, 23, 30) })).toMatchObject({ status: 'placed', from: local(2024, 3, 4) });
+  });
+
+  it('keeps a session-stamped daily bar inside a range that ends on its date', async () => {
+    const bars = dailySessions(2024, 1, 1, 30);
+    const chart = makeChart(bars);
+    const navigator = new DateNavigator({ chart });
+    // A range end before the 09:15 stamp still names that day's bar, as a start does.
+    expect(await navigator.goTo({ from: at(2024, 1, 8), to: at(2024, 1, 12, 8, 0) }))
+      .toMatchObject({ status: 'placed', from: at(2024, 1, 8, 9, 15), to: at(2024, 1, 12, 9, 15) });
   });
 });
 
