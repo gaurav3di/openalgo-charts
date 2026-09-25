@@ -65,6 +65,12 @@ export interface ChartObjectDrawing {
   visible?: boolean;
   locked?: boolean;
   zIndex?: number;
+  /**
+   * The drawing tier's policy flags the inventory honours: `listed` false
+   * leaves the drawing out, `selectable` false withholds select, and
+   * `editable` false withholds hide, lock and remove.
+   */
+  policy?: { readonly selectable?: boolean; readonly editable?: boolean; readonly listed?: boolean };
 }
 
 export interface ChartObjectDrawingGroup {
@@ -338,9 +344,12 @@ export class ChartObjects {
       });
     }
     if (draw) {
+      // An unlisted drawing is not in the inventory at all, so no row, group
+      // or group-wide action reaches it from here.
+      const listed = (drawing: ChartObjectDrawing | undefined): drawing is ChartObjectDrawing => drawing?.policy?.listed !== false;
       const membership = new Map<string, string>();
       for (const group of draw.groups?.() ?? []) {
-        const members = group.members.flatMap(id => { const drawing = draw.get(id); return drawing ? [drawing] : []; });
+        const members = group.members.map(id => draw.get(id)).filter(listed);
         if (!members.length) continue;
         const id = 'group:' + group.id;
         for (const member of members) membership.set(member.id, id);
@@ -348,15 +357,21 @@ export class ChartObjects {
           if (draw.updateMany) draw.updateMany(members.map(member => ({ id: member.id, patch: value })));
           else for (const member of members) draw.update(member.id, value);
         };
+        const pickable = members.filter(member => member.policy?.selectable !== false);
         add(id, group.id, { kind: 'group', name: group.name, paneIndex: members[0].paneIndex,
           visible: members.some(member => member.visible !== false), locked: members.every(member => member.locked === true),
-          selected: members.every(member => selected.includes(member.id)),
-        }, { select: () => draw.select(members.map(member => member.id)), setVisible: visible => patch({ visible }),
-          setLocked: locked => patch({ locked }),
-          ...(draw.removeGroup ? { remove: () => { draw.removeGroup!(group.id, true); } } : {}),
+          selected: pickable.length > 0 && pickable.every(member => selected.includes(member.id)),
+        }, {
+          ...(pickable.length ? { select: () => draw.select(pickable.map(member => member.id)) } : {}),
+          // A group-wide switch that skipped a read-only member would leave
+          // the group half done, so a group holding one offers none.
+          ...(members.every(member => member.policy?.editable !== false) ? {
+            setVisible: (visible: boolean) => patch({ visible }), setLocked: (locked: boolean) => patch({ locked }),
+            ...(draw.removeGroup ? { remove: () => { draw.removeGroup!(group.id, true); } } : {}),
+          } : {}),
         });
       }
-      for (const drawing of [...draw.drawings()].sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0))) {
+      for (const drawing of [...draw.drawings()].filter(listed).sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0))) {
         const id = 'drawing:' + drawing.id;
         const canFocus = chart.dataLayer.length > 0 && drawing.points.length > 0
           && drawing.points.every(p => Number.isFinite(p.time) && Number.isFinite(p.price))
@@ -367,8 +382,11 @@ export class ChartObjects {
           locked: drawing.locked === true, selected: selected.includes(drawing.id),
         }, {
           ...(draw.reorder ? { reorder: (direction: -1 | 1) => draw.reorder!(drawing.id, direction) } : {}),
-          select: () => draw.select(drawing.id), setVisible: on => draw.update(drawing.id, { visible: on }),
-          setLocked: on => draw.update(drawing.id, { locked: on }), remove: () => { draw.remove(drawing.id); },
+          ...(drawing.policy?.selectable !== false ? { select: () => draw.select(drawing.id) } : {}),
+          ...(drawing.policy?.editable !== false ? {
+            setVisible: (on: boolean) => draw.update(drawing.id, { visible: on }),
+            setLocked: (on: boolean) => draw.update(drawing.id, { locked: on }), remove: () => { draw.remove(drawing.id); },
+          } : {}),
           ...(canFocus ? { focus: () => this._focusDrawing(drawing) } : {}), ...settings(id),
         });
       }

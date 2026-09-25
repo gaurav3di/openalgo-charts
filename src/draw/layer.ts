@@ -47,6 +47,9 @@ export type DrawingPointerKind = 'mouse' | 'touch' | 'pen';
 /** A `zIndex` a host forgot, or corrupted, paints with the series band. */
 const zOf = (d: Drawing): number => (Number.isFinite(d.zIndex) ? d.zIndex : 0);
 
+/** Read-only to the user (`policy.editable` false): selectable, never grabbed. */
+const readOnly = (d: Drawing): boolean => d.policy?.editable === false;
+
 /**
  * Paint order: by `zIndex`, ties by array position. `Array.prototype.sort` is
  * stable, which is what makes the tie rule hold without a second key.
@@ -222,7 +225,7 @@ export class DrawingLayer implements IPrimitive {
     const id = this._hovered;
     if (id === null || this._selected.includes(id)) return null;
     const d = this._drawings.find((x) => x.id === id);
-    return d === undefined || d.locked === true || d.visible === false ? null : d;
+    return d === undefined || d.locked === true || d.visible === false || readOnly(d) ? null : d;
   }
 
   public draw(ctx: CanvasRenderingContext2D, rc: PrimitiveRenderContext): void {
@@ -280,9 +283,11 @@ export class DrawingLayer implements IPrimitive {
     for (const d of hovered) {
       if (d !== null) this._drawHandles(ctx, rc, this._points(rc, d), d.tool, true);
     }
-    for (const d of this._handled()) this._drawHandles(ctx, rc, this._points(rc, d), d.tool, false);
+    // A selected read-only drawing shows its anchors at the hover weight: the
+    // selection is visible, and nothing claims it can be grabbed.
+    for (const d of this._handled()) this._drawHandles(ctx, rc, this._points(rc, d), d.tool, readOnly(d));
     if (this._below !== null) {
-      for (const d of this._below._handled()) this._drawHandles(ctx, rc, this._points(rc, d), d.tool, false);
+      for (const d of this._below._handled()) this._drawHandles(ctx, rc, this._points(rc, d), d.tool, readOnly(d));
     }
     if (this._snap !== null) this._drawSnapRing(ctx, rc, this._project(rc, this._snap.time, this._snap.price));
   }
@@ -368,6 +373,7 @@ export class DrawingLayer implements IPrimitive {
   private _hitHandle(x: number, y: number, rc: PrimitiveRenderContext): PrimitiveHit | null {
     const radius = this._handleRadius(rc) + 2;
     for (const sel of this._handled()) {
+      if (readOnly(sel)) continue;
       const pts = this._points(rc, sel);
       for (const i of handleIndices(sel.tool, pts.length)) {
         if (Math.hypot(x - pts[i].x, y - pts[i].y) <= radius) {
@@ -383,11 +389,13 @@ export class DrawingLayer implements IPrimitive {
 
   private _hitBody(x: number, y: number, rc: PrimitiveRenderContext): PrimitiveHit | null {
     const grab = this._grabRadius(rc);
-    let best: { id: string; distance: number } | null = null;
+    let best: { d: Drawing; distance: number } | null = null;
     // Reverse paint order, so the shape painted last wins a tie.
     for (let i = this._drawings.length - 1; i >= 0; i--) {
       const d = this._drawings[i];
-      if (d.visible === false || d.locked === true || !hasDrawingTool(d.tool)) continue;
+      // An unselectable drawing is not there to the pointer: the click goes
+      // through to whatever lies under it.
+      if (d.visible === false || d.locked === true || d.policy?.selectable === false || !hasDrawingTool(d.tool)) continue;
       const tool = getDrawingTool(d.tool);
       if (d.points.length < Math.max(1, tool.points)) continue;
       const dist = tool.distance(x, y, { pts: this._points(rc, d), drawing: d, rc });
@@ -395,14 +403,18 @@ export class DrawingLayer implements IPrimitive {
       // drawing with an unmappable anchor would otherwise swallow every click
       // on the pane.
       if (dist === null || !Number.isFinite(dist) || dist > grab) continue;
-      if (best === null || dist < best.distance) best = { id: d.id, distance: dist };
+      if (best === null || dist < best.distance) best = { d, distance: dist };
       // No lower shape can beat zero; reverse paint order already wins its tie.
       if (dist === 0) break;
     }
     if (best === null) return null;
+    // A read-only body selects on a click, and a press-drag on it pans the
+    // chart as it would on empty space, rather than arming a drag that the
+    // controller would refuse and leaving the chart frozen under the hand.
+    const fixed = readOnly(best.d);
     return {
-      externalId: `draw:${best.id}`,
-      zOrder: 'top', distance: best.distance, cursor: 'move', draggable: true,
+      externalId: `draw:${best.d.id}`,
+      zOrder: 'top', distance: best.distance, cursor: fixed ? 'pointer' : 'move', draggable: !fixed,
     };
   }
 }

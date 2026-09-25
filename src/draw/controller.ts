@@ -130,6 +130,18 @@ export interface DrawingControllerOptions {
 /** What `drawing:change` reports happened to the listed ids. */
 export type DrawingChangeKind = 'add' | 'update' | 'remove' | 'reorder' | 'undo' | 'redo';
 
+/** Options for a call that changes or deletes drawings. */
+export interface DrawingEditOptions {
+  /**
+   * Reach drawings whose policy sets `editable: false` as well. Without it
+   * they are left exactly as they are, which is what keeps every control a
+   * host wires to the user off them. The host that placed such a drawing
+   * passes it to move, restyle or retire it. A forced change to a read-only
+   * drawing is not recorded in the undo history.
+   */
+  force?: boolean;
+}
+
 /**
  * The pointer facts the chart attaches to every gesture payload. Read
  * defensively throughout: a host built against an older engine, or a
@@ -226,6 +238,9 @@ let nextId = 1;
 
 const sameIds = (a: readonly string[], b: readonly string[]): boolean =>
   a.length === b.length && a.every((id, i) => id === b[i]);
+
+/** Read-only to the user: `DrawingPolicy.editable` set to false. */
+const pinned = (d: Drawing | undefined): boolean => d?.policy?.editable === false;
 
 /**
  * The index of the one anchor that differs between two sets, or null when
@@ -481,8 +496,9 @@ export class DrawingController {
     if (!group || this._destroyed) return false;
     this._pushUndo();
     this._groups = this._groups.filter(item => item !== group);
-    if (removeDrawings) this._removeIds(group.members, false);
-    else { this._sync(); this._emitChange(group.members, 'update'); }
+    // Read-only members stay, ungrouped; with nothing else to delete, the
+    // group's own removal still has to be synced and recorded.
+    if (!removeDrawings || this._removeIds(group.members, false).length === 0) { this._sync(); this._emitChange(group.members, 'update'); }
     return true;
   }
 
@@ -641,9 +657,13 @@ export class DrawingController {
     return { ...value, paneIndex: drawing.paneIndex };
   }
 
-  /** Add a fully-specified drawing (import, or a host-authored one). */
+  /**
+   * Add a fully-specified drawing (import, or a host-authored one). One the
+   * user cannot edit is not a step the user can take back, so it is not
+   * recorded.
+   */
   public add(drawing: DrawingInput): Drawing {
-    this._pushUndo();
+    this._begin(drawing.policy?.editable !== false);
     const created = this._insert(drawing);
     this._sync();
     this._chart.emit('draw:add', { drawing: created });
@@ -684,10 +704,14 @@ export class DrawingController {
     return `d${nextId++}`;
   }
 
-  public update(id: string, patch: DrawingPatch): boolean {
+  /**
+   * Patch one drawing. False when there is no such drawing, or when it is
+   * read-only to the user and `options.force` is not set.
+   */
+  public update(id: string, patch: DrawingPatch, options: DrawingEditOptions = {}): boolean {
     const d = this.get(id);
-    if (d === undefined) return false;
-    this._pushUndo();
+    if (d === undefined || (pinned(d) && options.force !== true)) return false;
+    this._begin(!pinned(d) && patch.policy?.editable !== false);
     this._applyPatch(d, patch);
     this._sync();
     this._chart.emit('draw:update', { drawing: d });
@@ -698,14 +722,15 @@ export class DrawingController {
   /**
    * Patch several drawings as one undo entry: a colour change across a
    * multi-selection is one edit to the user, so it is one Ctrl+Z too. Ids that
-   * no longer exist are skipped; nothing is recorded when none exist.
+   * no longer exist are skipped, and so are read-only drawings unless
+   * `options.force` is set; nothing is recorded when nothing is left.
    */
-  public updateMany(patches: ReadonlyArray<{ id: string; patch: DrawingPatch }>): void {
+  public updateMany(patches: ReadonlyArray<{ id: string; patch: DrawingPatch }>, options: DrawingEditOptions = {}): void {
     const live = patches
       .map((p) => ({ d: this.get(p.id), patch: p.patch }))
-      .filter((p): p is { d: Drawing; patch: DrawingPatch } => p.d !== undefined);
+      .filter((p): p is { d: Drawing; patch: DrawingPatch } => p.d !== undefined && (options.force === true || !pinned(p.d)));
     if (live.length === 0) return;
-    this._pushUndo();
+    this._begin(live.some(({ d, patch }) => !pinned(d) && patch.policy?.editable !== false));
     for (const { d, patch } of live) this._applyPatch(d, patch);
     this._sync();
     for (const { d } of live) this._chart.emit('draw:update', { drawing: d });
@@ -727,26 +752,32 @@ export class DrawingController {
     if (patch.locked !== undefined) d.locked = patch.locked;
     if (patch.visible !== undefined) d.visible = patch.visible;
     if (patch.zIndex !== undefined && Number.isFinite(patch.zIndex)) d.zIndex = patch.zIndex;
+    if (patch.policy !== undefined) d.policy = { ...d.policy, ...patch.policy };
   }
 
-  public remove(id: string): boolean {
-    return this._removeIds([id], true).length > 0;
+  /** Delete one drawing. A read-only one goes only with `options.force`. */
+  public remove(id: string, options: DrawingEditOptions = {}): boolean {
+    return this._removeIds([id], true, options.force).length > 0;
   }
 
-  /** Delete several drawings as one undo entry. Unknown ids are ignored. */
-  public removeMany(ids: readonly string[]): void {
-    this._removeIds(ids, true);
+  /**
+   * Delete several drawings as one undo entry. Unknown ids are ignored, and
+   * read-only drawings stay unless `options.force` is set.
+   */
+  public removeMany(ids: readonly string[], options: DrawingEditOptions = {}): void {
+    this._removeIds(ids, true, options.force);
   }
 
   /**
    * The delete shared by `remove`, `removeMany`, `cut` and `clear`. Returns
    * what went, and records nothing when nothing did.
    */
-  private _removeIds(ids: readonly string[], pushUndo: boolean): Drawing[] {
-    const set = new Set(ids);
-    const removed = this._drawings.filter((d) => set.has(d.id));
+  private _removeIds(ids: readonly string[], pushUndo: boolean, force = false): Drawing[] {
+    const wanted = new Set(ids);
+    const removed = this._drawings.filter((d) => wanted.has(d.id) && (force || !pinned(d)));
     if (removed.length === 0) return [];
-    if (pushUndo) this._pushUndo();
+    if (pushUndo) this._begin(removed.some((d) => !pinned(d)));
+    const set = new Set(removed.map((d) => d.id));
     this._drawings = this._drawings.filter((d) => !set.has(d.id));
     this._selection = this._selection.filter((id) => !set.has(id));
     this._sync();
@@ -755,9 +786,10 @@ export class DrawingController {
     return removed;
   }
 
-  public clear(): void {
+  /** Delete every drawing the user may, as one undo entry; `options.force` takes the read-only ones too. */
+  public clear(options: DrawingEditOptions = {}): void {
     if (this._drawings.length === 0) return;
-    this._removeIds(this._drawings.map((d) => d.id), true);
+    this._removeIds(this._drawings.map((d) => d.id), true, options.force);
     this._setSelection([]);
   }
 
@@ -765,14 +797,15 @@ export class DrawingController {
 
   /**
    * Replace the selection, or with `additive` toggle each id into it (the
-   * shift-click gesture). Ids that name nothing are ignored, so the selection
-   * never refers to a drawing that is not there. Pass null to clear.
+   * shift-click gesture). Ids that name nothing, or a drawing whose policy
+   * says it cannot be selected, are ignored, so the selection only ever holds
+   * drawings that are there to act on. Pass null to clear.
    */
   public select(id: string | readonly string[] | null, additive = false): void {
     const wanted = id === null ? [] : typeof id === 'string' ? [id] : id;
     const known: string[] = [];
     for (const x of wanted) {
-      if (this.get(x) !== undefined && !known.includes(x)) known.push(x);
+      if (this._selectable(x) && !known.includes(x)) known.push(x);
     }
     if (!additive) {
       this._setSelection(known);
@@ -785,6 +818,11 @@ export class DrawingController {
       else next.push(x);
     }
     this._setSelection(next);
+  }
+
+  private _selectable(id: string): boolean {
+    const d = this.get(id);
+    return d !== undefined && d.policy?.selectable !== false;
   }
 
   /** The primary selection: the first id picked, or null. */
@@ -811,7 +849,7 @@ export class DrawingController {
 
   private _emitChange(ids: readonly string[], kind: DrawingChangeKind): void {
     if (this._pendingHistory !== null) {
-      this._pendingHistory.after = JSON.stringify(this.toJSON());
+      this._pendingHistory.after = this._historyText();
       this._pendingHistory = null;
     }
     this._chart.emit('drawing:change', { ids: ids.slice(), kind });
@@ -890,12 +928,12 @@ export class DrawingController {
   /**
    * Move drawings by a screen distance, `dx` right and `dy` down in media px,
    * as one undo entry. Pixels rather than data units so an arrow key moves a
-   * shape the same visible amount on every pane and scale. Locked drawings
-   * stay put.
+   * shape the same visible amount on every pane and scale. Locked and
+   * read-only drawings stay put.
    */
   public nudge(ids: readonly string[], dxPx: number, dyPx: number): void {
     if (dxPx === 0 && dyPx === 0) return;
-    const list = this._targets(ids).filter((d) => d.locked !== true);
+    const list = this._targets(ids).filter((d) => d.locked !== true && !pinned(d));
     if (list.length === 0) return;
     this._pushUndo();
     for (const d of list) {
@@ -911,15 +949,16 @@ export class DrawingController {
 
   /**
    * Clone drawings, offset like a paste so the copies are visibly new, and
-   * select the clones. One undo entry. Ids that name nothing are ignored.
+   * select the clones. One undo entry. Ids that name nothing are ignored. A
+   * clone is the user's own drawing, so it carries no policy.
    */
   public duplicate(ids: readonly string[]): Drawing[] {
     const sources = this._targets(ids);
     if (sources.length === 0) return [];
     this._pushUndo();
     const clones = sources.map((d) => {
-      const { id: _id, createdAt: _createdAt, ...rest } = cloneDrawing(d);
-      void _id; void _createdAt;
+      const { id: _id, createdAt: _createdAt, policy: _policy, ...rest } = cloneDrawing(d);
+      void _id; void _createdAt; void _policy;
       return this._insert({ ...rest, points: this._offsetPoints(d.points, d.paneIndex) });
     });
     this._sync();
@@ -951,10 +990,11 @@ export class DrawingController {
   /**
    * Copy, then delete. The delete happens **only** after the clipboard write
    * resolves successfully, so a refused write leaves the model exactly as it
-   * was rather than destroying a drawing that went nowhere.
+   * was rather than destroying a drawing that went nowhere. A read-only
+   * drawing cannot be deleted, so it is not cut either: it stays, uncopied.
    */
   public async cut(target?: string | readonly string[] | null): Promise<boolean> {
-    const list = this._targets(target);
+    const list = this._targets(target).filter((d) => !pinned(d));
     if (list.length === 0) return false;
     const ok = await this._clipboard.write(list);
     if (!ok) return false;
@@ -1064,23 +1104,26 @@ export class DrawingController {
 
   public undo(): boolean {
     this._onDragEnd();
-    const snap = this._undo.pop();
-    if (snap === undefined) return false;
-    this._redo.push(snap);
-    this._applyHistory(snap.after, snap.before, 'undo');
-    return true;
+    // A step that held nothing but changes to drawings now read-only does
+    // nothing any more, so the press goes on to the step before it.
+    for (let snap = this._undo.pop(); snap !== undefined; snap = this._undo.pop()) {
+      this._redo.push(snap);
+      if (this._applyHistory(snap.after, snap.before, 'undo')) return true;
+    }
+    return false;
   }
 
   public redo(): boolean {
     this._onDragEnd();
-    const snap = this._redo.pop();
-    if (snap === undefined) return false;
-    this._undo.push(snap);
-    this._applyHistory(snap.before, snap.after, 'redo');
-    return true;
+    for (let snap = this._redo.pop(); snap !== undefined; snap = this._redo.pop()) {
+      this._undo.push(snap);
+      if (this._applyHistory(snap.before, snap.after, 'redo')) return true;
+    }
+    return false;
   }
 
-  private _applyHistory(from: string, to: string, kind: 'undo' | 'redo'): void {
+  /** Move the model from one snapshot to the other; false when the policy left nothing to move. */
+  private _applyHistory(from: string, to: string, kind: 'undo' | 'redo'): boolean {
     const beforeDocument = migrateDrawings(JSON.parse(from));
     const afterDocument = migrateDrawings(JSON.parse(to));
     const before = beforeDocument.drawings;
@@ -1089,14 +1132,25 @@ export class DrawingController {
     const right = new Map(after.map(d => [d.id, d]));
     const beforeOrder = before.filter(d => right.has(d.id)).map(d => d.id);
     const afterOrder = after.filter(d => left.has(d.id)).map(d => d.id);
-    const ids = [...new Set([...left.keys(), ...right.keys()])].filter(id =>
-      JSON.stringify(left.get(id)) !== JSON.stringify(right.get(id))
-      || beforeOrder.indexOf(id) !== afterOrder.indexOf(id));
+    const moved = afterOrder.some(id => beforeOrder.indexOf(id) !== afterOrder.indexOf(id));
+    let held = false;
+    const ids = [...new Set([...left.keys(), ...right.keys()])].filter(id => {
+      const a = left.get(id);
+      const b = right.get(id);
+      if (JSON.stringify(a) === JSON.stringify(b) && beforeOrder.indexOf(id) === afterOrder.indexOf(id)) return false;
+      // History is what the user did, and a read-only drawing is not theirs
+      // to change: its content stays whatever a step says. Its place in the
+      // stack is outside the policy, so a step that only restacked it runs.
+      if ((pinned(a) || pinned(b) || pinned(this.get(id)))
+        && !(a && b && JSON.stringify({ ...a, zIndex: 0 }) === JSON.stringify({ ...b, zIndex: 0 }))) { held = true; return false; }
+      return true;
+    });
     const changed = new Set(ids);
     const previous = new Map(this._drawings.map(d => [d.id, d]));
     const beforeGroups = new Map((beforeDocument.groups ?? []).map(group => [group.id, group]));
     const afterGroups = new Map((afterDocument.groups ?? []).map(group => [group.id, group]));
     const changedGroups = new Set([...beforeGroups.keys(), ...afterGroups.keys()].filter(id => JSON.stringify(beforeGroups.get(id)) !== JSON.stringify(afterGroups.get(id))));
+    if (held && ids.length === 0 && changedGroups.size === 0 && !moved) return false;
     this._groups = this._groups.filter(group => !changedGroups.has(group.id));
     for (const id of changedGroups) { const group = afterGroups.get(id); if (group) this._groups.push(group); }
     // Property history patches in place. Removing and reinserting every edited
@@ -1126,21 +1180,36 @@ export class DrawingController {
       else if (old !== undefined) this._chart.emit('draw:remove', { drawing: old, history: true });
     }
     this._emitChange(ids, kind);
+    return true;
   }
 
-  /** Drop selected ids the model no longer holds, after a history jump. */
+  /** Drop selected ids the model no longer holds, or that can no longer be selected. */
   private _pruneSelection(): void {
-    const next = this._selection.filter((id) => this.get(id) !== undefined);
+    const next = this._selection.filter((id) => this._selectable(id));
     if (!sameIds(next, this._selection)) this._setSelection(next);
   }
 
   public canUndo(): boolean { return this._undo.length > 0; }
   public canRedo(): boolean { return this._redo.length > 0; }
 
-  /** Serialisable document, the same shape `ChartState.drawings` carries. */
+  /**
+   * Serialisable document, the same shape `ChartState.drawings` carries.
+   * Transient drawings (`policy.persistent` false) are left out, and so is
+   * their group membership.
+   */
   public toJSON(): DrawingsDocument {
-    return { version: DRAWING_STATE_VERSION, drawings: this._drawings.map(cloneDrawing),
-      ...(this._groups.length ? { groups: this._groups.map(group => ({ ...group, members: [...group.members] })) } : {}) };
+    return this._document(this._drawings.filter(d => d.policy?.persistent !== false));
+  }
+
+  /** `drawings` as a document, with the groups narrowed to them. */
+  private _document(drawings: readonly Drawing[]): DrawingsDocument {
+    const groups = migrateGroups(this._groups, drawings);
+    return { version: DRAWING_STATE_VERSION, drawings: drawings.map(cloneDrawing), ...(groups.length ? { groups } : {}) };
+  }
+
+  /** Every drawing, transient ones too: an undo in the session reaches them. */
+  private _historyText(): string {
+    return JSON.stringify(this._document(this._drawings));
   }
 
   /**
@@ -1212,7 +1281,9 @@ export class DrawingController {
   /** The chart's hit-test answer for the pointer position, whenever it changes. */
   private _onHover(p: { id?: string | null }): void {
     const id = p.id ?? null;
-    this._setHovered(id !== null && id.startsWith('draw:') ? id.slice('draw:'.length).split('#')[0] : null);
+    const hit = id !== null && id.startsWith('draw:') ? id.slice('draw:'.length).split('#')[0] : null;
+    // What cannot be selected is not a target for the keys either.
+    this._setHovered(hit !== null && this._selectable(hit) ? hit : null);
   }
 
   private _setHovered(id: string | null): void {
@@ -1560,7 +1631,7 @@ export class DrawingController {
     if (!p.id.startsWith('draw:')) return;
     const [rawId, handleStr] = p.id.slice('draw:'.length).split('#');
     const d = this.get(rawId);
-    if (d === undefined || d.locked === true) return;
+    if (d === undefined || d.locked === true || pinned(d) || !this._selectable(rawId)) return;
     const handle = handleStr === undefined ? null : Number(handleStr);
 
     this._notePointer(p);
@@ -1571,7 +1642,7 @@ export class DrawingController {
       // what it grabbed would be a surprise.
       if (handle === null && !this._selection.includes(rawId)) this.select(rawId);
       const moving = handle === null
-        ? this._targets(this._selection).filter((m) => m.locked !== true)
+        ? this._targets(this._selection).filter((m) => m.locked !== true && !pinned(m))
         : [d];
       // Snapshot once per gesture so undo restores the pre-drag position, not
       // an intermediate frame.
@@ -1782,9 +1853,11 @@ export class DrawingController {
       l.bottom.setSelected(this._selection);
       l.top.setSelected(this._selection);
     }
-    // A hover on a drawing that has just gone would otherwise outlive it
-    // until the pointer next moves.
-    if (this._hovered !== null && this.get(this._hovered) === undefined) this._setHovered(null);
+    // A hover or a selection on a drawing that has just gone, or has just
+    // been made unselectable, would otherwise outlive it until the pointer
+    // next moves.
+    this._pruneSelection();
+    if (this._hovered !== null && !this._selectable(this._hovered)) this._setHovered(null);
     this._chart.setDrawingState(this.toJSON());
   }
 
@@ -1849,10 +1922,20 @@ export class DrawingController {
 
   private _pushUndo(): void {
     this._onDragEnd();
-    const before = JSON.stringify(this.toJSON());
+    const before = this._historyText();
     this._pendingHistory = { before, after: before };
     this._undo.push(this._pendingHistory);
     if (this._undo.length > this._opts.historyLimit) this._undo.shift();
     this._redo = []; // a new edit invalidates the redo branch
+  }
+
+  /**
+   * Open an edit: recorded, or, for a change the history does not hold (a
+   * host placing or moving a read-only drawing), not recorded and leaving
+   * both branches alone. Either way a drag in progress ends first.
+   */
+  private _begin(record: boolean): void {
+    if (record) this._pushUndo();
+    else this._onDragEnd();
   }
 }
