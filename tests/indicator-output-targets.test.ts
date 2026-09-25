@@ -14,7 +14,6 @@
  * path fails here rather than in someone's chart.
  */
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { createHash } from 'node:crypto';
 import { Chart } from '../src/core/chart';
 import type { Pane, PaneRenderContext } from '../src/core/pane';
 import { registerIndicator, type IndicatorDescriptor } from '../src/model/indicator-registry';
@@ -73,7 +72,11 @@ function paint(chart: Chart, paneIndex: number, primitive: IPrimitive): unknown[
 const paneOf = (chart: Chart, primitive: IPrimitive): number => chart.panes().findIndex(pane => pane.hasPrimitive(primitive));
 const layers = <T>(pane: Pane, type: new (...args: never[]) => T): T[] =>
   pane.primitives().filter((p): p is T & IPrimitive => p instanceof type) as T[];
-const digest = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+/** SHA-256 of the JSON form, through the platform digest so the suite needs no runtime typings. */
+const digest = async (value: unknown): Promise<string> => {
+  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value)));
+  return Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('');
+};
 
 /** Every study-owned drawing and marker layer: its pane, its binding and what it paints. */
 function ownedLayers(chart: Chart, study: IndicatorApi): { kind: string; pane: number; scale: string | null; overlay: boolean; ops: unknown[] }[] {
@@ -120,7 +123,7 @@ const untargetedPrice: IndicatorDescriptor = {
 };
 
 describe('descriptors that name no target', () => {
-  it('keep one drawing layer and one marker layer, bound and painted exactly as before', () => {
+  it('keep one drawing layer and one marker layer, bound and painted exactly as before', async () => {
     registerIndicator(untargetedPane);
     registerIndicator(untargetedPrice);
     const { chart } = mount();
@@ -137,7 +140,224 @@ describe('descriptors that name no target', () => {
       { kind: 'IndicatorDrawings', pane: 0, overlay: false, scale: 'right' },
     ]);
     expect(paneLayers.every(layer => layer.ops.length > 0) && priceLayers.every(layer => layer.ops.length > 0)).toBe(true);
-    expect(digest(paneLayers.map(layer => layer.ops))).toBe('53bd135f90d67b4e86db39afd7837a05d8c2bc94d5308f2ccbc712af31fbd07d');
-    expect(digest(priceLayers.map(layer => layer.ops))).toBe('25f04af979b9d3e88e7b1a818355bb0671666a039180df3eedaeacfb705a9eb8');
+    expect(await digest(paneLayers.map(layer => layer.ops))).toBe('53bd135f90d67b4e86db39afd7837a05d8c2bc94d5308f2ccbc712af31fbd07d');
+    expect(await digest(priceLayers.map(layer => layer.ops))).toBe('25f04af979b9d3e88e7b1a818355bb0671666a039180df3eedaeacfb705a9eb8');
+  });
+});
+
+type Route = 'study' | 'price' | 'alt' | 'guide';
+const ROUTES = (['study', 'price', 'alt', 'guide'] as const).map(value => ({ label: value, value }));
+/** Where a routed output goes: nowhere special, the price pane, or a named plot. */
+const target = (route: Route): { overlay?: boolean; plot?: string } =>
+  route === 'price' ? { overlay: true } : route === 'study' ? {} : { plot: route };
+
+/** A local oscillator, a second local plot for another axis, and a guide on the candles. */
+const PLOTS: IndicatorDescriptor['plots'] = [
+  { key: 'osc', type: 'line', title: 'Osc' },
+  { key: 'alt', type: 'line', title: 'Alt' },
+  { key: 'guide', type: 'line', title: 'Guide', overlay: true },
+];
+const CALC: IndicatorDescriptor['calc'] = bars => ({
+  osc: bars.map((_, i) => 30 + i), alt: bars.map((_, i) => 500 + i), guide: bars.map(bar => bar.close),
+});
+
+let seq = 0;
+function routedDraws(): string {
+  const id = `targets-draws-${seq++}`;
+  registerIndicator({
+    id, name: 'Routed drawings', placement: 'pane', plots: PLOTS, calc: CALC,
+    inputs: [{ key: 'zone', type: 'select', label: 'Zone', default: 'price', options: ROUTES }],
+    draws: ({ bars, settings }) => {
+      const route = settings.zone as Route;
+      const [lo, hi] = route === 'alt' ? [510, 520] : route === 'study' ? [40, 50] : [112, 124];
+      return [
+        { kind: 'line', from: { time: bars[2].time, price: 32 }, to: { time: bars[30].time, price: 60 }, id: 'ray' } as never,
+        { kind: 'box', from: { time: bars[10].time, price: hi }, to: { time: bars[20].time, price: lo },
+          fillColor: '#26a69a', id: 'zone', ...target(route) } as never,
+      ];
+    },
+  });
+  return id;
+}
+
+const owned = (study: IndicatorApi): { primitive: IPrimitive; overlay: boolean }[] =>
+  (study as unknown as { renderResources(): { primitives: { primitive: IPrimitive; overlay: boolean }[] } }).renderResources().primitives;
+const drawingObjects = (study: IndicatorApi): IPrimitive[] =>
+  owned(study).filter(({ primitive }) => primitive instanceof IndicatorDrawings).map(({ primitive }) => primitive);
+/** The study's drawing layers: pane, binding, placement role and which shapes each holds. */
+function drawLayers(chart: Chart, study: IndicatorApi): { pane: number; scale: string | null; overlay: boolean; ids: (string | undefined)[] }[] {
+  return owned(study).filter(({ primitive }) => primitive instanceof IndicatorDrawings).map(({ primitive, overlay }) => {
+    const pane = paneOf(chart, primitive);
+    return {
+      pane, scale: chart.panes()[pane]?.primitiveScaleId(primitive) ?? null, overlay,
+      ids: (primitive as unknown as { _items: { id?: string }[] })._items.map(item => item.id),
+    };
+  });
+}
+const drawingsOn = (chart: Chart, paneIndex: number): IPrimitive[] =>
+  layers(chart.panes()[paneIndex], IndicatorDrawings) as unknown as IPrimitive[];
+const allDrawings = (chart: Chart): number => chart.panes().reduce((sum, _, i) => sum + drawingsOn(chart, i).length, 0);
+const click = (el: FakeElement, x: number, y: number): void => {
+  el.dispatch('pointerdown', pointer('down', x, y));
+  el.dispatch('pointerup', pointer('up', x, y));
+};
+const paneTop = (chart: Chart, paneIndex: number): number => (chart as unknown as ChartInternals)._paneLayout()[paneIndex].top;
+
+describe('drawing targets', () => {
+  it('sends a price-pane drawing to pane zero on its right scale and keeps the rest in the study pane', () => {
+    const { chart } = mount();
+    const study = chart.addIndicator(routedDraws());
+    expect(drawLayers(chart, study)).toEqual([
+      { pane: 1, scale: 'right', overlay: false, ids: ['ray'] },
+      { pane: 0, scale: 'right', overlay: true, ids: ['zone'] },
+    ]);
+  });
+
+  it('binds a plot target to that plot pane and effective scale, beside differently bound layers', () => {
+    const id = routedDraws();
+    const { chart } = mount();
+    const alt = chart.addIndicator(id, { zone: 'alt' }, { plotPriceScaleIds: { alt: 'left' } });
+    const guide = chart.addIndicator(id, { zone: 'guide' }, { plotPriceScaleIds: { guide: 'overlay:guide' } });
+    expect(drawLayers(chart, alt)).toEqual([
+      { pane: alt.paneIndex, scale: 'right', overlay: false, ids: ['ray'] },
+      { pane: alt.paneIndex, scale: 'left', overlay: false, ids: ['zone'] },
+    ]);
+    expect(drawLayers(chart, guide)).toEqual([
+      { pane: guide.paneIndex, scale: 'right', overlay: false, ids: ['ray'] },
+      { pane: 0, scale: 'overlay:guide', overlay: true, ids: ['zone'] },
+    ]);
+  });
+
+  it('follows plot and whole-study scale reassignment without moving price-pane layers', () => {
+    const id = routedDraws();
+    const { chart } = mount();
+    const study = chart.addIndicator(id, { zone: 'alt' });
+    const guide = chart.addIndicator(id, { zone: 'guide' });
+    const bound = (item: IndicatorApi) => drawLayers(chart, item).map(layer => `${layer.pane}:${layer.scale}`);
+    expect(study.setPlotPriceScales({ alt: 'overlay:alt' })).toBe(true);
+    expect(bound(study)).toEqual([`${study.paneIndex}:right`, `${study.paneIndex}:overlay:alt`]);
+    expect(study.setPlotPriceScales({ alt: null })).toBe(true);
+    expect(bound(study)).toEqual([`${study.paneIndex}:right`, `${study.paneIndex}:right`]);
+    expect(study.setPriceScale('left')).toBe(true);
+    expect(bound(study)).toEqual([`${study.paneIndex}:left`, `${study.paneIndex}:left`]);
+    expect(guide.setPriceScale('left')).toBe(true);
+    expect(bound(guide)).toEqual([`${guide.paneIndex}:left`, '0:right']);
+    study.setSettings({ zone: 'price' });
+    expect(bound(study)).toEqual([`${study.paneIndex}:left`, '0:right']);
+    expect(study.setPriceScale(null)).toBe(true);
+    expect(bound(study)).toEqual([`${study.paneIndex}:right`, '0:right']);
+  });
+
+  it('moves a shape between targets when settings change and releases the layer it left', () => {
+    const { chart } = mount();
+    const study = chart.addIndicator(routedDraws());
+    const [local] = drawingObjects(study);
+    study.setSettings({ zone: 'alt' });
+    expect(drawLayers(chart, study)).toEqual([
+      { pane: 1, scale: 'right', overlay: false, ids: ['ray'] },
+      { pane: 1, scale: 'right', overlay: false, ids: ['zone'] },
+    ]);
+    expect(drawingsOn(chart, 0)).toHaveLength(0);
+    study.setSettings({ zone: 'study' });
+    expect(drawLayers(chart, study)).toEqual([{ pane: 1, scale: 'right', overlay: false, ids: ['ray', 'zone'] }]);
+    expect(drawingObjects(study)).toEqual([local]);
+    expect(allDrawings(chart)).toBe(1);
+  });
+
+  it('hides and shows every target layer with the study', () => {
+    const { chart } = mount();
+    const study = chart.addIndicator(routedDraws(), { zone: 'price' });
+    const painted = () => ownedLayers(chart, study).filter(layer => layer.kind === 'IndicatorDrawings').map(layer => layer.ops.length > 0);
+    expect(painted()).toEqual([true, true]);
+    study.setVisible(false);
+    expect(painted()).toEqual([false, false]);
+    study.setVisible(true);
+    expect(painted()).toEqual([true, true]);
+  });
+
+  it('keeps price-pane layers on pane zero through moves and releases them with the study or its pane', () => {
+    const id = routedDraws();
+    const { chart } = mount();
+    const study = chart.addIndicator(id, { zone: 'price' });
+    const other = chart.addIndicator(id, { zone: 'alt' });
+    expect(chart.moveIndicator(other.id, chart.panes().length)).toBe(true);
+    expect(drawLayers(chart, other).map(layer => layer.pane)).toEqual([other.paneIndex, other.paneIndex]);
+    expect(chart.moveIndicator(study.id, other.paneIndex)).toBe(true);
+    expect(drawLayers(chart, study).map(layer => layer.pane)).toEqual([other.paneIndex, 0]);
+    expect(drawingsOn(chart, 0)).toHaveLength(1);
+    const removable = chart.addIndicator(id, { zone: 'price' });
+    expect(drawingsOn(chart, 0)).toHaveLength(2);
+    expect(chart.removePane(removable.paneIndex)).toBe(true);
+    expect(drawingsOn(chart, 0)).toHaveLength(1);
+    study.remove();
+    expect(drawingsOn(chart, 0)).toHaveLength(0);
+    other.remove();
+    expect(allDrawings(chart)).toBe(0);
+  });
+
+  it('reports clicks on a routed box where it is drawn: on pane zero and on its plot scale', () => {
+    const { chart, el } = mount();
+    const clicks: string[] = [];
+    chart.subscribeClick(id => { clicks.push(id); });
+    const study = chart.addIndicator(routedDraws(), { zone: 'price' });
+    click(el, chart.timeToCoordinate(BARS[15].time), chart.priceToCoordinate(118, 0)!);
+    expect(clicks).toEqual(['zone']);
+    study.setSettings({ zone: 'alt' });
+    expect(study.setPlotPriceScales({ alt: 'left' })).toBe(true);
+    const y = paneTop(chart, study.paneIndex) + chart.panes()[study.paneIndex].scaleFor('left').priceToY(515);
+    click(el, chart.timeToCoordinate(BARS[15].time), y);
+    expect(clicks).toEqual(['zone', 'zone']);
+  });
+
+  it('restores routed layers from saved state with their bindings', () => {
+    const id = routedDraws();
+    const { chart } = mount();
+    chart.addIndicator(id, { zone: 'price' });
+    chart.addIndicator(id, { zone: 'alt' }, { plotPriceScaleIds: { alt: 'left' } });
+    const state = JSON.parse(JSON.stringify(chart.getState()));
+    expect(chart.restoreState(state)).toMatchObject({ applied: true, indicators: 2 });
+    const [price, alt] = chart.indicators();
+    expect(drawLayers(chart, price)).toEqual([
+      { pane: price.paneIndex, scale: 'right', overlay: false, ids: ['ray'] },
+      { pane: 0, scale: 'right', overlay: true, ids: ['zone'] },
+    ]);
+    expect(drawLayers(chart, alt)).toEqual([
+      { pane: alt.paneIndex, scale: 'right', overlay: false, ids: ['ray'] },
+      { pane: alt.paneIndex, scale: 'left', overlay: false, ids: ['zone'] },
+    ]);
+    expect(allDrawings(chart)).toBe(4);
+  });
+
+  it('gives each instance and each target a layer of its own', () => {
+    const id = routedDraws();
+    const { chart } = mount();
+    const first = chart.addIndicator(id, { zone: 'price' });
+    const second = chart.addIndicator(id, { zone: 'price' });
+    const kept = drawingObjects(second);
+    expect(drawingsOn(chart, 0)).toHaveLength(2);
+    first.setSettings({ zone: 'study' });
+    expect(drawingsOn(chart, 0)).toEqual([kept[1]]);
+    first.remove();
+    expect(drawingObjects(second)).toEqual(kept);
+    expect(drawLayers(chart, second).map(layer => layer.ids)).toEqual([['ray'], ['zone']]);
+  });
+
+  it.each([{ plot: 'missing' }, { plot: 'alt', overlay: true }])('rejects the target %j before changing any layer', bad => {
+    const id = `targets-invalid-draws-${seq++}`;
+    registerIndicator({
+      id, name: 'Invalid', placement: 'pane', plots: PLOTS, calc: CALC,
+      inputs: [{ key: 'bad', type: 'boolean', label: 'Bad', default: true }],
+      draws: ({ bars, settings }) => [{ kind: 'line', from: { time: bars[1].time, price: 110 }, to: { time: bars[9].time, price: 120 },
+        ...(settings.bad === true ? bad : { overlay: true }) } as never],
+    });
+    const { chart } = mount();
+    expect(() => chart.addIndicator(id)).toThrow(/declared plot or the price pane/);
+    expect(chart.panes()).toHaveLength(1);
+    expect(allDrawings(chart)).toBe(0);
+    const study = chart.addIndicator(id, { bad: false });
+    const before = drawLayers(chart, study);
+    study.setSettings({ bad: true });
+    expect(study.dataStatus()?.state).toBe('error');
+    expect(drawLayers(chart, study)).toEqual(before);
   });
 });

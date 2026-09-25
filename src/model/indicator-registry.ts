@@ -360,6 +360,32 @@ export interface DrawAnchor {
 }
 
 /**
+ * Where one returned drawing is drawn, when the study's own layer is the wrong
+ * place for it. A study in its own pane still has things to say about the
+ * candles (a supply zone, a projected target), and a study whose plots sit on
+ * two axes has shapes measured on each. Naming no target keeps the shape in
+ * the study's own layer, exactly as before.
+ *
+ * Each distinct target gets a layer of its own, owned by the instance: it
+ * hides with the study, is released with it, and is released as soon as a
+ * calculation returns nothing for that target.
+ */
+export interface IndicatorOutputTarget {
+  /**
+   * A declared plot key. The shape is drawn on that plot's pane and measured on
+   * its effective price scale, and follows the plot through a scale
+   * reassignment or a study move. An `overlay` plot takes it to the price pane.
+   */
+  plot?: string;
+  /**
+   * Draw on the price pane, measured on its right scale in the instrument's
+   * own units, and stay there when the study moves. Naming a plot as well is
+   * rejected: a plot already decides its pane.
+   */
+  overlay?: boolean;
+}
+
+/**
  * A free-standing shape an indicator paints in its own pane, anchored to time
  * and price rather than to a bar index.
  *
@@ -368,8 +394,9 @@ export interface DrawAnchor {
  * a measured-move projection are all geometry between two arbitrary points, and
  * a column of one value per bar cannot express any of them. Anchors are times,
  * so a shape stays put when history is paged in and every logical index shifts.
+ * Any shape can name an {@link IndicatorOutputTarget} to be drawn elsewhere.
  */
-export type IndicatorDrawing =
+export type IndicatorDrawing = IndicatorOutputTarget & (
   | {
       kind: 'line';
       from: DrawAnchor;
@@ -457,7 +484,7 @@ export type IndicatorDrawing =
       fillColor?: string;
       /** Fill alpha, 0..1. Defaults to 0.12. */
       opacity?: number;
-    };
+    });
 
 /** `calc` output: one array per plot key, aligned 1:1 with the input bars. */
 export type IndicatorValues = Record<string, readonly (number | null)[]>;
@@ -877,10 +904,11 @@ export interface IndicatorDescriptor {
     settings: Readonly<IndicatorSettings>;
   }): readonly IndicatorTableSpec[];
   /**
-   * Optional free-standing shapes drawn in the indicator's pane: trendlines
-   * between pivots, supply and demand boxes, projection labels. Runs after
-   * every `calc`, like `markers` and `table`, and the returned list replaces the
-   * previous one wholesale, so returning `[]` clears the layer.
+   * Optional free-standing shapes: trendlines between pivots, supply and
+   * demand boxes, projection labels. Drawn in the indicator's pane unless a
+   * shape names another pane or plot (see {@link IndicatorOutputTarget}). Runs
+   * after every `calc`, like `markers` and `table`, and the returned list
+   * replaces the previous one wholesale, so returning `[]` clears every layer.
    */
   draws?(ctx: {
     bars: readonly Bar[];

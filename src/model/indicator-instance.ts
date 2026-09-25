@@ -45,6 +45,7 @@ import {
   type IndicatorDescriptor,
   type IndicatorLevelContext,
   type IndicatorLineStyle,
+  type IndicatorOutputTarget,
   type IndicatorSettings,
   type IndicatorStore,
   type IndicatorValues,
@@ -408,6 +409,8 @@ export class IndicatorInstance implements IndicatorApi {
   private _table: ChartTable | null = null;
   private _tables = new Map<string, { table: ChartTable; overlay: boolean }>();
   private _draws: IndicatorDrawings | null = null;
+  /** Drawing layers for explicit targets: `null` is the price pane, a string names a plot. */
+  private readonly _drawLayers = new Map<string | null, IndicatorDrawings>();
   private _background: IndicatorBackground | null = null;
   /**
    * Time of the newest bar the alerts have already judged. Bars at or before it
@@ -548,6 +551,47 @@ export class IndicatorInstance implements IndicatorApi {
     return fillPriceScale(this._d, fill, override, assignments, paneIndex);
   }
 
+  /**
+   * The targeted layer an output belongs to: `undefined` for the study's own
+   * layer, `null` for the price pane, or a declared plot key. Thrown before any
+   * layer changes, so one bad target rejects the whole pass.
+   */
+  private _targetKey({ plot, overlay }: IndicatorOutputTarget): string | null | undefined {
+    if (plot === undefined) return overlay === true ? null : undefined;
+    if (overlay === true || !this._d.plots.some(item => item.key === plot)) {
+      throw new Error('Indicator output target must name one declared plot or the price pane');
+    }
+    return plot;
+  }
+
+  /** Split outputs by target. The untargeted list keeps its identity when nothing is routed. */
+  private _route<T extends IndicatorOutputTarget>(items: readonly T[]): [readonly T[], Map<string | null, T[]>] {
+    const local: T[] = [];
+    const groups = new Map<string | null, T[]>();
+    for (const item of items) {
+      const key = this._targetKey(item);
+      if (key === undefined) local.push(item);
+      else if (groups.has(key)) groups.get(key)!.push(item);
+      else groups.set(key, [item]);
+    }
+    return [groups.size > 0 ? local : items, groups];
+  }
+
+  /** A price-pane target, or one following a plot that draws on the candles, stays on pane zero. */
+  private _overlayTarget(key: string | null): boolean {
+    return key === null || this._d.plots.some(plot => plot.key === key && plot.overlay === true);
+  }
+
+  /**
+   * Pane and scale of a targeted drawing layer. A price-pane shape is in the
+   * instrument's units, so it takes the right axis the way an overlay plot does
+   * by default, whatever scale the study's own plots were moved to.
+   */
+  private _drawTarget(key: string | null, override = this._scaleOverride, assignments = this._plotScaleOverrides): [number, PriceScaleId] {
+    const plot = this._d.plots.find(item => item.key === key);
+    return plot ? [this._plotPane(plot), this._plotScale(plot, override, assignments)] : [0, 'right'];
+  }
+
   public priceScaleId(): PriceScaleId | null { return this._scaleOverride; }
 
   public plotPriceScaleId(plotKey: string): PriceScaleId | null {
@@ -619,6 +663,10 @@ export class IndicatorInstance implements IndicatorApi {
     const local = this._localScale(scaleId, assignments);
     if (local !== this._localScale()) for (const primitive of [...this._levels, this._draws, ...this._attachedPrimitives]) {
       if (primitive !== null) primitives.push({ primitive, scaleId: local });
+    }
+    for (const [key, primitive] of this._drawLayers) {
+      const scale = this._drawTarget(key, scaleId, assignments)[1];
+      if (scale !== this._drawTarget(key)[1]) primitives.push({ primitive, scaleId: scale });
     }
     // Descriptor code can fail or reenter. Resolve it before moving resources,
     // then let a newer settings, pane or assignment owner keep its result.
@@ -692,6 +740,7 @@ export class IndicatorInstance implements IndicatorApi {
     }
     this._syncBarColors(bars);
     this._draws?.setVisible(on);
+    for (const layer of this._drawLayers.values()) layer.setVisible(on);
     this._background?.setVisible(on);
     this._legend?.setOptions({ hidden: !on });
     this._host.emit?.('objects:change', {});
@@ -713,6 +762,7 @@ export class IndicatorInstance implements IndicatorApi {
     for (const primitive of [this._legend, ...this._levels, this._markers, this._table, this._draws, this._background, ...this._attachedPrimitives]) {
       if (primitive !== null) primitives.push({ primitive, overlay: primitive === this._markers && (this._markerSeries === this._host.primarySeries?.() || series.some(item => item.api === this._markerSeries && item.overlay)) });
     }
+    for (const [key, primitive] of this._drawLayers) primitives.push({ primitive, overlay: this._overlayTarget(key) });
     return { series, primitives };
   }
 
@@ -913,15 +963,37 @@ export class IndicatorInstance implements IndicatorApi {
    */
   private _syncDraws(bars: readonly Bar[]): void {
     if (this._d.draws === undefined) return;
-    const items = this._d.draws({ bars, values: this._values, settings: this._descriptorSettings() });
-    if (this._draws === null) {
-      if (items.length === 0 || this._host.addIndicatorPrimitive === undefined) return;
+    const all = this._d.draws({ bars, values: this._values, settings: this._descriptorSettings() });
+    const [items, groups] = this._route(all);
+    // Check every shape before any layer changes, so a rejected pass leaves
+    // each target as the last good one drew it.
+    if (groups.size > 0) new IndicatorDrawings().setItems(all);
+    if (this._draws === null && items.length > 0 && this._host.addIndicatorPrimitive !== undefined) {
       this._draws = new IndicatorDrawings();
       this._draws.setVisible(this._visible);
       this._host.addIndicatorPrimitive(this._draws, this.paneIndex);
       this._host.bindIndicatorPrimitiveScale?.(this._draws, this._localScale());
     }
-    this._draws.setItems(items);
+    this._draws?.setItems(items);
+    // A vacated target is released rather than kept empty: its binding would
+    // otherwise hold an axis in use, or refuse an axis move, for nothing.
+    for (const [key, layer] of this._drawLayers) {
+      if (groups.has(key)) continue;
+      this._host.removeIndicatorPrimitive?.(layer);
+      this._drawLayers.delete(key);
+    }
+    for (const [key, list] of groups) {
+      let layer = this._drawLayers.get(key);
+      if (layer === undefined) {
+        if (this._host.addIndicatorPrimitive === undefined) return;
+        const [pane, scale] = this._drawTarget(key);
+        this._drawLayers.set(key, layer = new IndicatorDrawings());
+        layer.setVisible(this._visible);
+        this._host.addIndicatorPrimitive(layer, pane);
+        this._host.bindIndicatorPrimitiveScale?.(layer, scale);
+      }
+      layer.setItems(list);
+    }
   }
 
   /**
@@ -1284,6 +1356,7 @@ export class IndicatorInstance implements IndicatorApi {
     this._table?.setRows([]);
     for (const { table } of this._tables.values()) table.setRows([]);
     this._draws?.setItems([]);
+    for (const layer of this._drawLayers.values()) layer.setItems([]);
     this._background?.setColors([], bars);
     for (const level of this._levels) this._host.removeIndicatorLevel(level);
     this._levels = [];
@@ -1649,6 +1722,8 @@ export class IndicatorInstance implements IndicatorApi {
     for (const { table } of this._tables.values()) this._host.removeIndicatorTable(table);
     this._tables.clear();
     if (this._draws !== null) { this._host.removeIndicatorPrimitive?.(this._draws); this._draws = null; }
+    for (const layer of this._drawLayers.values()) this._host.removeIndicatorPrimitive?.(layer);
+    this._drawLayers.clear();
     if (this._background !== null) { this._host.removeIndicatorPrimitive?.(this._background); this._background = null; }
     this._host.setIndicatorRange?.(this.id, this.paneIndex, this._localScale(), null, []);
     // Withdraw the candle colours before anything else forgets who owned them.
