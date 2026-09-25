@@ -181,3 +181,131 @@ test('a routed box follows candles on the left axis and leaves the axis free to 
   await page.screenshot({ path: info.outputPath('output-targets-axis-moved-back.png') });
   expect(errors).toEqual([]);
 });
+
+/** A blank page with a chart host, collecting page errors. */
+async function blank(page: Page): Promise<string[]> {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.setViewportSize({ width: 960, height: 700 });
+  await page.route('**/output-targets.html', route => route.fulfill({
+    contentType: 'text/html', body: '<!doctype html><html><head><style>html,body{margin:0;height:100%;background:#101010}#chart{height:100%}</style></head><body><div id="chart"></div></body></html>',
+  }));
+  await page.goto('/output-targets.html');
+  return errors;
+}
+
+test('a study keeps its marks under its shapes on the candles when a later study restacks the pane', async ({ page }, info) => {
+  const errors = await blank(page);
+  await page.evaluate(async () => {
+    const bundle = '/dist/openalgo-charts.mjs';
+    const lib = await import(bundle) as typeof Charts;
+    const chart = lib.createChart(document.querySelector<HTMLElement>('#chart')!, { branding: false, theme: lib.darkTheme });
+    const source = chart.addSeries('candlestick');
+    source.setData(Array.from({ length: 60 }, (_, i) => ({ time: 1700000000 + i * 60, open: 99, high: 102, low: 98, close: 100 + Math.sin(i) })));
+    const plots = [{ key: 'osc', type: 'line' as const, title: 'Osc', style: { color: '#ffffff' } }];
+    const calc = (rows: readonly unknown[]) => ({ osc: rows.map((_, i) => 30 + (i % 10)) });
+    lib.registerIndicator({
+      id: 'native-restack-sample', name: 'Sample', placement: 'pane', inputs: [], plots, calc,
+      // The dot sits inside the opaque box, so it shows only if the box is drawn under it.
+      markers: ({ bars }) => [{ time: bars[27].time, position: 'atPrice', price: 100, shape: 'circle', size: 'big', color: '#eecc22', overlay: true }],
+      draws: ({ bars }) => [{ kind: 'box', from: { time: bars[20].time, price: 104 }, to: { time: bars[35].time, price: 96 },
+        color: '#cc2244', fillColor: '#cc2244', opacity: 1, overlay: true }],
+    });
+    // A later study whose price-pane label first appears on a live bar, which restacks the pane.
+    lib.registerIndicator({
+      id: 'native-restack-late', name: 'Late', placement: 'pane', inputs: [], plots, calc,
+      draws: ({ bars }) => (bars.length > 60 ? [{ kind: 'label', at: { time: bars[45].time, price: 100 }, text: 'LATE',
+        color: '#9933cc', textColor: '#9933cc', overlay: true }] : []),
+    });
+    const study = chart.addIndicator('native-restack-sample');
+    chart.addIndicator('native-restack-late');
+    chart.setVisibleLogicalRange({ from: -2, to: 62 });
+    window.__outputTargets = { chart, study, clicks: [] };
+    (window as unknown as { __tick: () => void }).__tick = () => source.update({ time: 1700000000 + 60 * 60, open: 99, high: 102, low: 98, close: 100 });
+  });
+  await painted(page);
+  const before = await inkByPane(page);
+  expect(before[0].box).toBeGreaterThan(1000);
+  expect(before[0].dot).toBe(0);
+  expect(before[0].label).toBe(0);
+  await page.evaluate(() => (window as unknown as { __tick: () => void }).__tick());
+  await painted(page);
+  const after = await inkByPane(page);
+  expect(after[0].label).toBeGreaterThan(20);
+  expect(after[0].box).toBeGreaterThan(1000);
+  expect(after[0].dot).toBe(0);
+  await page.screenshot({ path: info.outputPath('output-targets-restacked.png') });
+  expect(errors).toEqual([]);
+});
+
+test('marks sent to the candles stack with the study\'s own marks there instead of covering them', async ({ page }, info) => {
+  const errors = await blank(page);
+  await page.evaluate(async () => {
+    const bundle = '/dist/openalgo-charts.mjs';
+    const lib = await import(bundle) as typeof Charts;
+    const chart = lib.createChart(document.querySelector<HTMLElement>('#chart')!, { branding: false, theme: lib.darkTheme });
+    chart.addSeries('candlestick')
+      .setData(Array.from({ length: 60 }, (_, i) => ({ time: 1700000000 + i * 60, open: 99, high: 102, low: 98, close: 100 + Math.sin(i) })));
+    lib.registerIndicator({
+      id: 'native-shared-anchor', name: 'Shared anchor', placement: 'onchart', markerAnchor: 'price', inputs: [],
+      plots: [{ key: 'mid', type: 'line', title: 'Mid', style: { color: '#ffffff' } }],
+      calc: bars => ({ mid: bars.map(bar => bar.close) }),
+      // Same bar, same size, same position: one layer stacks them, two layers draw one over the other.
+      markers: ({ bars }) => [
+        { time: bars[30].time, position: 'belowBar', shape: 'circle', size: 'big', color: '#eecc22' },
+        { time: bars[30].time, position: 'belowBar', shape: 'circle', size: 'big', color: '#9933cc', overlay: true },
+      ],
+    });
+    const study = chart.addIndicator('native-shared-anchor');
+    chart.setVisibleLogicalRange({ from: -2, to: 62 });
+    window.__outputTargets = { chart, study, clicks: [] };
+  });
+  await painted(page);
+  const ink = await inkByPane(page);
+  expect(ink).toHaveLength(1);
+  expect(ink[0].dot).toBeGreaterThan(20);
+  expect(ink[0].label).toBeGreaterThan(20);
+  await page.screenshot({ path: info.outputPath('output-targets-shared-anchor.png') });
+  expect(errors).toEqual([]);
+});
+
+test('a price-pane box measures on the price pane when the candles live on another pane', async ({ page }, info) => {
+  const errors = await blank(page);
+  await page.evaluate(async () => {
+    const bundle = '/dist/openalgo-charts.mjs';
+    const lib = await import(bundle) as typeof Charts;
+    const chart = lib.createChart(document.querySelector<HTMLElement>('#chart')!, { branding: false, theme: lib.darkTheme });
+    // The candles on pane 1, quoting 98 to 102; pane 0 holds only the guide, quoting 90 to 110.
+    chart.addSeries('candlestick', { paneIndex: 1 })
+      .setData(Array.from({ length: 60 }, (_, i) => ({ time: 1700000000 + i * 60, open: 99, high: 102, low: 98, close: 100 + Math.sin(i) })));
+    lib.registerIndicator({
+      id: 'native-candles-elsewhere', name: 'Candles elsewhere', placement: 'pane', inputs: [],
+      plots: [
+        { key: 'osc', type: 'line', title: 'Osc', style: { color: '#ffffff' } },
+        { key: 'guide', type: 'line', title: 'Guide', overlay: true, style: { color: '#888888' } },
+      ],
+      calc: bars => ({ osc: bars.map((_, i) => 30 + (i % 10)), guide: bars.map((_, i) => 100 + 10 * Math.sin(i / 4)) }),
+      // Priced where only pane 0's own scale can show it: above the candles' whole range.
+      draws: ({ bars }) => [{ kind: 'box', from: { time: bars[20].time, price: 105 }, to: { time: bars[35].time, price: 103 },
+        color: '#cc2244', fillColor: '#cc2244', opacity: 1, id: 'zone', overlay: true }],
+    });
+    const study = chart.addIndicator('native-candles-elsewhere');
+    chart.setVisibleLogicalRange({ from: -2, to: 62 });
+    const clicks: string[] = [];
+    chart.subscribeClick(id => { clicks.push(id); });
+    window.__outputTargets = { chart, study, clicks };
+  });
+  await painted(page);
+  const ink = await inkByPane(page);
+  expect(ink[0].box).toBeGreaterThan(200);
+  expect(ink[1].box).toBe(0);
+  const point = await page.evaluate(() => {
+    const { chart } = window.__outputTargets;
+    const box = document.querySelector('#chart')!.getBoundingClientRect();
+    return { x: box.left + chart.timeToCoordinate(1700000000 + 27 * 60), y: box.top + chart.priceToCoordinate(104, 0)! };
+  });
+  await page.mouse.click(point.x, point.y);
+  await expect.poll(() => page.evaluate(() => window.__outputTargets.clicks)).toEqual(['zone']);
+  await page.screenshot({ path: info.outputPath('output-targets-candles-elsewhere.png') });
+  expect(errors).toEqual([]);
+});
