@@ -57,3 +57,41 @@ The companion audit has additionally reproduced changing-length, volume-anchor,
 overflow and partial-output disagreements. Its fixes and release gates are tracked
 in that repository. Both companion packages are authorized for 0.7.0 only after
 their numerical audit and distribution checks; the chart release remains 2.5.4.
+
+## Wider compiled comparisons
+
+The next comparison covers selected numerical columns from 45 of the 105 shipped
+descriptors. Each runs on six 192-bar fixtures: rising, flat, oscillating, absent
+prices, absent volume and zero volume. All 270 programs are compiled once and
+the same serialized program is executed by both companion engines. Parameters,
+output ordering and units are matched explicitly. Secondary smoothing, bands,
+displaced plots and the remaining 60 descriptors are not certified by this run.
+
+At the recorded development revisions, the two engines differ in 960 output
+cells, all from Gaussian weights or the choppiness logarithm. Portable elementary
+arithmetic is being implemented to resolve them. Agreement elsewhere in this
+finite corpus is differential evidence, not an independent formula proof.
+
+The chart comparison separates numerical bits, absence and differences beyond
+the exploratory `1e-12` relative/absolute threshold. That threshold helps locate
+issues; it is not a waiver in either engine's exact publication gate. The chart
+has 57 cases with an absence or beyond-threshold difference. Investigation must
+distinguish a defective recurrence from a documented convention before changing
+results.
+
+Known distinctions include:
+
+- Bandwidth and historical volatility use percentage display units in the chart;
+  the corresponding language readings are ratios and require multiplication by
+  100 in the compared expression.
+- The native parabolic stop clamps against previous price ranges. The existing
+  language call explicitly specifies an unclamped recurrence. Matching its name
+  and parameters alone does not make those algorithms equivalent.
+- Several native recursive studies remain unavailable after an interior source
+  hole, while the language recurrences preserve their prior state and resume.
+- Native extrema, zero-denominator handling and missing-volume defaults can
+  change availability even when complete, ordinary inputs agree.
+
+These remain open audit items. The wider comparison does not replace the
+independently derived Hull and directional fixtures above or establish complete
+numerical coverage.
