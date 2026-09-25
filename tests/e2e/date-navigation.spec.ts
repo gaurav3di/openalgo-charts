@@ -166,23 +166,29 @@ test('widget go-to explains an empty request in place and fits a range', async (
 
 test('widget go-to panel closed while loading leaves the view where the user left it', async ({ page }, info) => {
   const errors = await mountWidget(page, 1100, { gated: true });
-  const centre = () => page.evaluate(() => {
+  // The view as the user left it: the time of its rightmost bar, and its bar
+  // spacing. Not the middle of the view: the first page is shorter than the
+  // default view, so the middle can fall before the first bar and name no time.
+  // A placement that went ahead would move the right edge to the requested date.
+  const edge = () => page.evaluate(() => {
     const chart = window.__goto.widget.chart;
     const view = chart.getVisibleLogicalRange();
-    return chart.dataLayer.indexToTime(Math.round((view.from + view.to) / 2));
+    const last = chart.primaryBars().length - 1;
+    return { time: chart.dataLayer.indexToTime(Math.min(Math.floor(view.to), last)), spacing: chart.timeScale.barSpacing };
   });
   const panel = await openPanel(page, 1100);
   await panel.locator('input[type=date]').first().fill('2023-10-16');
   await panel.getByRole('button', { name: 'Go', exact: true }).click();
   await expect(panel.locator('.oac-goto__message')).toHaveText('Loading history');
-  const shown = await centre();
+  const shown = await edge();
+  expect(shown.time).toBeDefined();
   await panel.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(panel).toBeHidden();
   await page.evaluate(() => window.__goto.release());
   await expect.poll(() => page.evaluate(() => window.__goto.widget.series.getData()[0].time))
     .toBeLessThanOrEqual(await page.evaluate(() => window.__goto.at(2023, 10, 16)));
   await paint(page);
-  expect(await centre()).toBe(shown);
+  expect(await edge()).toEqual(shown);
   await expect(page.locator('.oac-statusline')).not.toContainText('Showing');
   await page.screenshot({ path: info.outputPath('dismissed.png') });
   expect(errors).toEqual([]);
@@ -321,7 +327,10 @@ test('reference host drops a go-to request on a wheel zoom while the longer peri
   let release!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
   await page.route('**/api/history**', async route => { await held; await route.continue(); });
-  const target = await daysBack(page, 200);
+  // Two years back needs the 5y period. A nearer date widens to 1y, which the
+  // first load already fetched: the bar cache then serves it with no request,
+  // so nothing is on the wire to hold and the load finishes before any zoom.
+  const target = await daysBack(page, 730);
   await page.getByRole('button', { name: 'Go to a date or range' }).click();
   const panel = page.locator('.oac-goto');
   await panel.locator('input[type=date]').first().fill(target);
@@ -333,7 +342,7 @@ test('reference host drops a go-to request on a wheel zoom while the longer peri
   await page.mouse.wheel(0, -240);
   await expect(message).toHaveText('');
   release();
-  await page.waitForFunction(() => (window as any).__oac.app.req.period === '1y' && !(window as any).__oac.app.loading, undefined, { timeout: 20_000 });
+  await page.waitForFunction(() => (window as any).__oac.app.req.period === '5y' && !(window as any).__oac.app.loading, undefined, { timeout: 20_000 });
   // The rebuild takes the panel, and a dropped request is not reopened.
   await expect(page.locator('.oac-goto')).toHaveCount(0);
   await expect(page.locator('#status')).not.toHaveText(/^Showing /);
